@@ -11,24 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out agg-rust (path dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: larsbrubaker/agg-rust
-          path: ../agg-rust
-
-      - name: Check out clipper2-rust (path dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: larsbrubaker/clipper2-rust
-          path: ../clipper2-rust
-
-      - name: Check out tess2-rust (path dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: larsbrubaker/tess2-rust
-          path: ../tess2-rust
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -51,24 +33,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check out agg-rust (path dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: larsbrubaker/agg-rust
-          path: ../agg-rust
-
-      - name: Check out clipper2-rust (path dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: larsbrubaker/clipper2-rust
-          path: ../clipper2-rust
-
-      - name: Check out tess2-rust (path dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: larsbrubaker/tess2-rust
-          path: ../tess2-rust
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
