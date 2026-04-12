@@ -12,6 +12,7 @@ pub mod splitter;
 pub mod tab_view;
 pub mod text_field;
 pub mod tree_view;
+pub mod window;
 
 pub use button::Button;
 pub use checkbox::Checkbox;
@@ -27,3 +28,4 @@ pub use splitter::Splitter;
 pub use tab_view::TabView;
 pub use text_field::TextField;
 pub use tree_view::{NodeIcon, TreeView};
+pub use window::Window;

@@ -14,7 +14,7 @@ use agg_gui::{
     App, Button, Checkbox, Color, CompOp, Container, FlexColumn, FlexRow,
     Font, Framebuffer, GfxCtx, Key as AggKey, Label, Modifiers, MouseButton as AggMouseButton,
     NodeIcon, ProgressBar, RadioGroup, Rect, ScrollView, Separator, Size, SizedBox, Slider,
-    Spacer, Splitter, TabView, TextField, TreeView, Widget,
+    Spacer, Splitter, Stack, TabView, TextField, TreeView, Widget, Window,
 };
 use agg_gui::event::{Event as AggEvent, EventResult as AggEventResult};
 
@@ -180,7 +180,50 @@ fn build_demo_ui(font: Arc<Font>) -> App {
         .add_tab("Text",    Box::new(TextDemoWidget::new(Arc::clone(&font))))
         .add_tab("Layout",  Box::new(build_layout_content(Arc::clone(&font))))
         .add_tab("Tree",    Box::new(build_tree_demo(Arc::clone(&font))));
-    App::new(Box::new(tab_view))
+
+    let window = build_demo_window(Arc::clone(&font));
+
+    let root = Stack::new()
+        .add(Box::new(tab_view))
+        .add(Box::new(window));
+
+    App::new(Box::new(root))
+}
+
+fn build_demo_window(font: Arc<Font>) -> Window {
+    let mut content = FlexColumn::new()
+        .with_gap(10.0)
+        .with_padding(14.0)
+        .with_background(Color::rgb(0.97, 0.97, 0.98));
+
+    content.push(Box::new(Label::new("agg-gui — Phase 8", Arc::clone(&font))
+        .with_font_size(15.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    content.push(Box::new(Label::new("Floating Window widget", Arc::clone(&font))
+        .with_font_size(12.0)
+        .with_color(Color::rgb(0.4, 0.4, 0.45))), 0.0);
+
+    content.push(Box::new(Separator::horizontal()), 0.0);
+
+    content.push(Box::new(Label::new("Drag the title bar to move.", Arc::clone(&font))
+        .with_font_size(12.0)
+        .with_color(Color::rgb(0.3, 0.3, 0.35))), 0.0);
+
+    content.push(Box::new(Label::new("Click × to close.", Arc::clone(&font))
+        .with_font_size(12.0)
+        .with_color(Color::rgb(0.3, 0.3, 0.35))), 0.0);
+
+    content.push(Box::new(Separator::horizontal()), 0.0);
+
+    content.push(Box::new(
+        Button::new("OK", Arc::clone(&font))
+            .with_font_size(13.0)
+            .on_click(|| println!("OK"))
+    ), 0.0);
+
+    Window::new("About", font, Box::new(content))
+        .with_bounds(Rect::new(60.0, 200.0, 280.0, 220.0))
 }
 
 fn build_basics_content(font: Arc<Font>) -> Container {

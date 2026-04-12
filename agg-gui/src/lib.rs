@@ -43,7 +43,8 @@ pub use text::{Font, TextMetrics};
 pub use widget::{App, Widget};
 pub use widgets::{Button, Checkbox, Container, FlexColumn, FlexRow, Label, LabelAlign,
                   NodeIcon, Padding, ProgressBar, RadioGroup, ScrollView, Separator,
-                  SizedBox, Slider, Spacer, Splitter, Stack, TabView, TextField, TreeView};
+                  SizedBox, Slider, Spacer, Splitter, Stack, TabView, TextField, TreeView,
+                  Window};
 
 // Re-export AGG types so callers don't need to import agg-rust directly.
 pub use agg_rust::trans_affine::TransAffine;
