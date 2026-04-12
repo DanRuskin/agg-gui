@@ -1,9 +1,8 @@
 //! WASM demo crate for agg-gui — Phase 8 (WebGL2).
 //!
-//! The entire demo (tab bar + content) is rendered by agg-gui into an AGG
-//! framebuffer, which is then uploaded as a WebGL2 texture and blitted to the
-//! canvas as a fullscreen quad.  A rotating 3D cube is rendered on top via a
-//! separate GL draw pass.
+//! The widget tree is rendered via `GlGfxCtx` (tess2 tessellation → WebGL2
+//! draw calls) directly to the canvas.  A rotating 3D cube is drawn on top
+//! each frame by `CubeGlRenderer`.
 //!
 //! WASM exports:
 //! - `render(width, height)` — full-frame render (void; GL writes to canvas)
@@ -23,7 +22,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use agg_gui::{
     App, Button, Checkbox, Color, CompOp, Container, DrawCtx, Event, EventResult, FlexColumn, FlexRow,
-    Font, Framebuffer, GfxCtx, Key, Label, Modifiers, MouseButton, NodeIcon, ProgressBar,
+    Font, Key, Label, Modifiers, MouseButton, NodeIcon, ProgressBar,
     RadioGroup, Rect, ScrollView, Separator, Size, SizedBox, Slider, Spacer, Splitter,
     Stack, TabView, TextField, TreeView, Widget, Window,
 };
@@ -41,8 +40,16 @@ fn make_font() -> Arc<Font> {
 // ---------------------------------------------------------------------------
 
 thread_local! {
-    static DEMO_APP: RefCell<Option<App>> = RefCell::new(None);
-    static GL_STATE:  RefCell<Option<GlState>> = RefCell::new(None);
+    static DEMO_APP:  RefCell<Option<App>>       = RefCell::new(None);
+    static GL_STATE:  RefCell<Option<GlState>>   = RefCell::new(None);
+    /// Persistent GL 2-D drawing context — created once, reset each frame.
+    static GL_CTX:    RefCell<Option<GlGfxCtx>>  = RefCell::new(None);
+}
+
+/// Initialise panic hook so Rust panics appear in the browser console.
+#[wasm_bindgen(start)]
+pub fn wasm_start() {
+    console_error_panic_hook::set_once();
 }
 
 fn ensure_demo_app() {
@@ -58,6 +65,22 @@ fn ensure_gl_state() {
         if cell.borrow().is_none() {
             let gl = init_webgl2();
             *cell.borrow_mut() = Some(unsafe { GlState::new(gl) });
+        }
+    });
+}
+
+/// Ensure the persistent `GlGfxCtx` is created (uses `GL_STATE`'s context).
+fn ensure_gl_ctx(width: f32, height: f32) {
+    // Get the Rc<glow::Context> from GL_STATE without keeping GL_STATE borrowed.
+    let gl_rc = GL_STATE.with(|cell| {
+        cell.borrow().as_ref().map(|s| s.gl_rc())
+    });
+    let gl_rc = gl_rc.expect("GL_STATE must be initialised before ensure_gl_ctx");
+
+    GL_CTX.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        if borrow.is_none() {
+            *borrow = Some(unsafe { GlGfxCtx::new(gl_rc, width, height) });
         }
     });
 }
@@ -684,47 +707,52 @@ fn parse_js_key(key: &str) -> Option<Key> {
 
 /// Full-frame render.  Direct GL path: the widget tree is painted via
 /// `GlGfxCtx` (tess2 tessellation → WebGL2 draw calls).  No off-screen
-/// framebuffer is used.  The rotating 3D cube is drawn last, on top of
-/// the 2D widget content.
+/// framebuffer is used.  The rotating 3D cube is drawn last, on top.
 #[wasm_bindgen]
 pub fn render(width: u32, height: u32) {
     ensure_demo_app();
     ensure_gl_state();
+    ensure_gl_ctx(width as f32, height as f32);
 
+    // ── 1. GL clear ─────────────────────────────────────────────────────────
     GL_STATE.with(|gl_cell| {
-        let mut gl_borrow = gl_cell.borrow_mut();
-        let state = match gl_borrow.as_mut() {
-            Some(s) => s,
-            None => return,
-        };
-
-        // --- Setup GL state for 2D rendering ---
-        let gl_rc = state.gl_rc();
-        unsafe {
-            use glow::HasContext;
-            gl_rc.viewport(0, 0, width as i32, height as i32);
-            gl_rc.clear_color(0.1, 0.1, 0.1, 1.0);
-            gl_rc.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-            gl_rc.enable(glow::BLEND);
-            gl_rc.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-            gl_rc.disable(glow::DEPTH_TEST);
-            gl_rc.disable(glow::SCISSOR_TEST);
-        }
-
-        // --- 2D widget paint pass via GlGfxCtx ---
-        let mut gl_ctx = unsafe { GlGfxCtx::new(gl_rc, width as f32, height as f32) };
-
-        DEMO_APP.with(|app_cell| {
-            let mut app_borrow = app_cell.borrow_mut();
-            if let Some(app) = app_borrow.as_mut() {
-                app.layout(Size::new(width as f64, height as f64));
-                app.paint(&mut gl_ctx);
+        if let Some(state) = gl_cell.borrow().as_ref() {
+            let gl = state.gl_rc();
+            unsafe {
+                use glow::HasContext;
+                gl.viewport(0, 0, width as i32, height as i32);
+                gl.clear_color(0.1, 0.1, 0.1, 1.0);
+                gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                gl.disable(glow::DEPTH_TEST);
+                gl.disable(glow::SCISSOR_TEST);
             }
-        });
+        }
+    });
 
-        // --- 3D cube on top (rendered during widget draw pass sequence) ---
-        let cube_rect = CUBE_SCREEN_RECT.with(|r| r.get());
-        unsafe { state.draw_cube_only(cube_rect, width as i32, height as i32); }
+    // ── 2. Reset GL_CTX for this frame then paint ────────────────────────────
+    GL_CTX.with(|ctx_cell| {
+        let mut ctx_borrow = ctx_cell.borrow_mut();
+        if let Some(gl_ctx) = ctx_borrow.as_mut() {
+            gl_ctx.reset(width as f32, height as f32);
+
+            DEMO_APP.with(|app_cell| {
+                let mut app_borrow = app_cell.borrow_mut();
+                if let Some(app) = app_borrow.as_mut() {
+                    app.layout(Size::new(width as f64, height as f64));
+                    app.paint(gl_ctx);
+                }
+            });
+        }
+    });
+
+    // ── 3. Draw rotating 3D cube on top ─────────────────────────────────────
+    let cube_rect = CUBE_SCREEN_RECT.with(|r| r.get());
+    GL_STATE.with(|gl_cell| {
+        if let Some(state) = gl_cell.borrow_mut().as_mut() {
+            unsafe { state.draw_cube_only(cube_rect, width as i32, height as i32); }
+        }
     });
 }
 

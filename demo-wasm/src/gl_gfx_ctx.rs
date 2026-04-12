@@ -70,10 +70,11 @@ pub struct GlGfxCtx {
     gl: Rc<glow::Context>,
     viewport: (f32, f32),
 
-    // GL resources for the solid-colour pipeline
+    // GL resources for the solid-colour pipeline (created once, reused every frame)
     prog: glow::Program,
     vao:  glow::VertexArray,
     vbo:  glow::Buffer,
+    ibo:  glow::Buffer,     // persistent index buffer — no per-draw alloc
     res_loc:   Option<glow::UniformLocation>,
     color_loc: Option<glow::UniformLocation>,
 
@@ -99,33 +100,40 @@ pub struct GlGfxCtx {
 }
 
 impl GlGfxCtx {
-    /// Create a new `GlGfxCtx` backed by `gl`.
+    /// Create a new `GlGfxCtx` backed by `gl`.  Call once; reuse every frame
+    /// via [`reset`].
     ///
     /// # Safety
     /// `gl` must be a valid WebGL2 / OpenGL context.
     pub unsafe fn new(gl: Rc<glow::Context>, width: f32, height: f32) -> Self {
-        let prog = compile_program(&gl, SOLID_VERT, SOLID_FRAG);
+        let prog = match compile_program(&gl, SOLID_VERT, SOLID_FRAG) {
+            Ok(p) => p,
+            Err(e) => {
+                web_sys::console::error_1(&format!("GlGfxCtx: shader error: {e}").into());
+                panic!("GlGfxCtx shader compile/link failed");
+            }
+        };
         let res_loc   = gl.get_uniform_location(prog, "u_resolution");
         let color_loc = gl.get_uniform_location(prog, "u_color");
 
-        let vao = gl.create_vertex_array().unwrap();
-        let vbo = gl.create_buffer().unwrap();
+        let vao = gl.create_vertex_array().expect("create VAO");
+        let vbo = gl.create_buffer().expect("create VBO");
+        let ibo = gl.create_buffer().expect("create IBO");
 
+        // Bind VAO so attribute pointer and IBO binding are saved inside it.
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        // a_pos layout: vec2 (8 bytes per vertex)
+        // a_pos layout: vec2 f32 (8 bytes per vertex, stride=8, offset=0)
         gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
         gl.enable_vertex_attrib_array(0);
+        // Bind IBO inside the VAO so the VAO remembers it.
+        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ibo));
         gl.bind_vertex_array(None);
-
-        // Enable alpha blending for all draws.
-        gl.enable(glow::BLEND);
-        gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
 
         Self {
             gl,
             viewport: (width, height),
-            prog, vao, vbo,
+            prog, vao, vbo, ibo,
             res_loc, color_loc,
             fill_color:   Color::rgba(0.0, 0.0, 0.0, 1.0),
             stroke_color: Color::rgba(0.0, 0.0, 0.0, 1.0),
@@ -140,9 +148,21 @@ impl GlGfxCtx {
         }
     }
 
-    /// Resize the viewport (call when the canvas size changes).
-    pub fn resize(&mut self, width: f32, height: f32) {
+    /// Reset drawing state for a new frame.  Does NOT recreate GL resources.
+    pub fn reset(&mut self, width: f32, height: f32) {
         self.viewport = (width, height);
+        self.fill_color   = Color::rgba(0.0, 0.0, 0.0, 1.0);
+        self.stroke_color = Color::rgba(0.0, 0.0, 0.0, 1.0);
+        self.line_width   = 1.0;
+        self.global_alpha = 1.0;
+        self.state_stack  = vec![(TransAffine::new(), None)];
+        self.contours.clear();
+        self.current_contour.clear();
+        self.pen          = [0.0; 2];
+        self.font         = None;
+        self.font_size    = 16.0;
+        // Disable any lingering scissor from the previous frame.
+        unsafe { self.gl.disable(glow::SCISSOR_TEST); }
     }
 
     // ---- internal helpers --------------------------------------------------
@@ -179,25 +199,25 @@ impl GlGfxCtx {
 
     /// Submit triangles with the given colour.
     ///
-    /// `verts` is a flat slice of screen-space [f32;2] XY pairs.
+    /// `verts` is a slice of screen-space [f32;2] XY pairs.
     /// `indices` is a list of triangle vertex indices into `verts`.
     unsafe fn draw_triangles(&self, verts: &[[f32; 2]], indices: &[u32], color: Color) {
         if verts.is_empty() || indices.is_empty() { return; }
 
         let a = (color.a * self.global_alpha as f32).clamp(0.0, 1.0);
-        let r = color.r;
-        let g = color.g;
-        let b = color.b;
 
         self.gl.use_program(Some(self.prog));
         if let Some(ref loc) = self.res_loc {
             self.gl.uniform_2_f32(Some(loc), self.viewport.0, self.viewport.1);
         }
         if let Some(ref loc) = self.color_loc {
-            self.gl.uniform_4_f32(Some(loc), r, g, b, a);
+            self.gl.uniform_4_f32(Some(loc), color.r, color.g, color.b, a);
         }
 
+        // Bind VAO (restores attribute pointer, VBO association, and IBO binding).
         self.gl.bind_vertex_array(Some(self.vao));
+
+        // Upload vertex data.
         self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
         self.gl.buffer_data_u8_slice(
             glow::ARRAY_BUFFER,
@@ -205,9 +225,8 @@ impl GlGfxCtx {
             glow::STREAM_DRAW,
         );
 
-        // Index buffer — create per-draw (simple but correct)
-        let ibo = self.gl.create_buffer().unwrap();
-        self.gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ibo));
+        // Upload index data to the persistent IBO (already bound in the VAO).
+        self.gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ibo));
         self.gl.buffer_data_u8_slice(
             glow::ELEMENT_ARRAY_BUFFER,
             bytemuck::cast_slice(indices),
@@ -217,7 +236,6 @@ impl GlGfxCtx {
         self.gl.draw_elements(glow::TRIANGLES, indices.len() as i32,
                               glow::UNSIGNED_INT, 0);
 
-        self.gl.delete_buffer(ibo);
         self.gl.bind_vertex_array(None);
     }
 
@@ -385,12 +403,8 @@ impl DrawCtx for GlGfxCtx {
 
     fn clear(&mut self, color: Color) {
         unsafe {
-            self.gl.clear_color(
-                color.r as f32 / 255.0,
-                color.g as f32 / 255.0,
-                color.b as f32 / 255.0,
-                color.a as f32 / 255.0,
-            );
+            // Color fields are already [0, 1] f32 — no conversion needed.
+            self.gl.clear_color(color.r, color.g, color.b, color.a);
             self.gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
         }
     }
@@ -642,19 +656,30 @@ fn subdivide_cubic_screen<F: FnMut(f32, f32)>(
 // GL helper
 // ---------------------------------------------------------------------------
 
-unsafe fn compile_program(gl: &glow::Context, vert_src: &str, frag_src: &str) -> glow::Program {
-    let prog = gl.create_program().expect("create_program");
+unsafe fn compile_program(
+    gl: &glow::Context,
+    vert_src: &str,
+    frag_src: &str,
+) -> Result<glow::Program, String> {
+    let prog = gl.create_program().map_err(|e| format!("create_program: {e}"))?;
     for (src, kind) in [(vert_src, glow::VERTEX_SHADER), (frag_src, glow::FRAGMENT_SHADER)] {
-        let sh = gl.create_shader(kind).unwrap();
+        let sh = gl.create_shader(kind).map_err(|e| format!("create_shader: {e}"))?;
         gl.shader_source(sh, src);
         gl.compile_shader(sh);
-        assert!(gl.get_shader_compile_status(sh),
-            "shader compile error: {}", gl.get_shader_info_log(sh));
+        if !gl.get_shader_compile_status(sh) {
+            let log = gl.get_shader_info_log(sh);
+            gl.delete_shader(sh);
+            gl.delete_program(prog);
+            return Err(format!("shader compile error: {log}"));
+        }
         gl.attach_shader(prog, sh);
         gl.delete_shader(sh);
     }
     gl.link_program(prog);
-    assert!(gl.get_program_link_status(prog),
-        "program link error: {}", gl.get_program_info_log(prog));
-    prog
+    if !gl.get_program_link_status(prog) {
+        let log = gl.get_program_info_log(prog);
+        gl.delete_program(prog);
+        return Err(format!("program link error: {log}"));
+    }
+    Ok(prog)
 }
