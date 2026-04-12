@@ -8,8 +8,8 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      background: #0e0e10;
-      color: #e0e0e0;
+      background: #f0f0f2;
+      color: #1d1d1f;
       font-family: system-ui, -apple-system, sans-serif;
       height: 100vh;
       display: flex;
@@ -22,61 +22,61 @@
       align-items: center;
       gap: 16px;
       padding: 10px 20px;
-      background: #16161a;
-      border-bottom: 1px solid #2a2a2f;
+      background: #ffffff;
+      border-bottom: 1px solid #d8d8db;
       flex-shrink: 0;
     }
 
     header h1 {
       font-size: 1.1rem;
       font-weight: 600;
-      letter-spacing: 0.03em;
-      color: #f0f0f0;
+      letter-spacing: 0.02em;
+      color: #1d1d1f;
     }
 
-    header h1 span { color: #6a9fea; }
+    header h1 span { color: #2563eb; }
 
     .badge {
       font-size: 0.7rem;
       padding: 2px 8px;
-      background: #2a3a5a;
-      color: #6a9fea;
+      background: #dbeafe;
+      color: #1d4ed8;
       border-radius: 10px;
-      border: 1px solid #3a5080;
+      border: 1px solid #bfdbfe;
     }
 
     .spacer { flex: 1; }
 
     header a {
-      color: #888;
+      color: #6b7280;
       text-decoration: none;
       font-size: 0.8rem;
     }
 
-    header a:hover { color: #ccc; }
+    header a:hover { color: #1d1d1f; }
 
     /* Tab bar */
     .tabs {
       display: flex;
       gap: 2px;
       padding: 0 16px;
-      background: #16161a;
-      border-bottom: 1px solid #2a2a2f;
+      background: #ffffff;
+      border-bottom: 1px solid #d8d8db;
       flex-shrink: 0;
     }
 
     .tab {
       padding: 8px 18px;
       font-size: 0.85rem;
-      color: #888;
+      color: #6b7280;
       cursor: pointer;
       border-bottom: 2px solid transparent;
       transition: color 0.15s, border-color 0.15s;
       user-select: none;
     }
 
-    .tab:hover { color: #ccc; }
-    .tab.active { color: #e0e0e0; border-bottom-color: #6a9fea; }
+    .tab:hover { color: #1d1d1f; }
+    .tab.active { color: #1d1d1f; border-bottom-color: #2563eb; }
     .tab.disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* Canvas area */
@@ -87,6 +87,7 @@
       justify-content: stretch;
       overflow: hidden;
       position: relative;
+      background: #f0f0f2;
     }
 
     canvas {
@@ -101,7 +102,7 @@
       bottom: 12px;
       right: 16px;
       font-size: 0.72rem;
-      color: #555;
+      color: #9ca3af;
       pointer-events: none;
     }
 
@@ -111,9 +112,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #0e0e10;
+      background: #f0f0f2;
       font-size: 0.9rem;
-      color: #555;
+      color: #9ca3af;
     }
 
     #loading.hidden { display: none; }
@@ -122,7 +123,7 @@
 <body>
   <header>
     <h1>agg-<span>gui</span></h1>
-    <span class="badge">Phase 1</span>
+    <span class="badge">Phase 2</span>
     <div class="spacer"></div>
     <a href="https://github.com/larsbrubaker/agg-gui" target="_blank">GitHub</a>
   </header>

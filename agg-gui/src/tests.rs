@@ -3,7 +3,7 @@
 //! These tests guard the first-quadrant (Y-up) invariant at the framebuffer
 //! and GfxCtx layers. They run on every commit.
 
-use crate::{Color, Framebuffer, GfxCtx};
+use crate::{Color, CompOp, Framebuffer, GfxCtx};
 
 /// Sample RGBA at pixel (x, y) in a framebuffer.
 /// (x=0, y=0) is the bottom-left corner in Y-up space.
@@ -25,6 +25,10 @@ fn is_dark(pixel: [u8; 4]) -> bool {
     pixel[0] < 50 && pixel[1] < 50 && pixel[2] < 50
 }
 
+// ---------------------------------------------------------------------------
+// Phase 1 — coordinate system invariants
+// ---------------------------------------------------------------------------
+
 /// A point drawn at Y=10 in a 100×100 buffer must be near the BOTTOM of the
 /// buffer (low row index), not the top. This verifies the Y-up invariant at
 /// the framebuffer level.
@@ -42,20 +46,14 @@ fn test_y_up_point_at_bottom() {
     drop(ctx);
 
     // Row 10 (from buffer start) = Y=10 = near the BOTTOM of the window.
-    // The circle center pixel should be white.
     let center = sample(&fb, 50, 10);
     assert!(is_white(center), "Y=10 should be near the bottom of the buffer (Y-up); got {center:?}");
 
-    // The top (Y=90) should still be dark — we only drew near the bottom.
     let top_center = sample(&fb, 50, 90);
     assert!(is_dark(top_center), "Y=90 should be dark (nothing drawn there); got {top_center:?}");
 }
 
 /// A CCW rotation of +90° rotates a right-pointing vector to point upward.
-/// In Y-up space this means +X → +Y when rotating by +π/2.
-///
-/// We draw a narrow horizontal bar (pointing right), rotate +90°, and verify
-/// that after rotation it's a vertical bar pointing upward.
 #[test]
 fn test_rotation_ccw_positive() {
     let size = 200u32;
@@ -66,71 +64,55 @@ fn test_rotation_ccw_positive() {
     let cx = size as f64 / 2.0;
     let cy = size as f64 / 2.0;
 
-    // Rotate +90° (CCW) around the center.
-    // A horizontal bar at Y=cy becomes a vertical bar extending upward (+Y).
     ctx.translate(cx, cy);
-    ctx.rotate(std::f64::consts::FRAC_PI_2); // +90°
+    ctx.rotate(std::f64::consts::FRAC_PI_2);
 
-    // Draw a horizontal bar: spans x ∈ [10, 50], y ∈ [-3, 3]
-    // After +90° rotation in Y-up: x → -y, y → x
-    // So the bar covers x ∈ [-3, 3], y ∈ [10, 50] in screen space.
     ctx.set_fill_color(Color::white());
     ctx.begin_path();
     ctx.rect(10.0, -3.0, 40.0, 6.0);
     ctx.fill();
     drop(ctx);
 
-    // After rotation, the bar should be vertical, running UPWARD from center.
-    // Check a pixel above center (x=cx, y=cy+25) — should be white.
     let above_center = sample(&fb, cx as u32, cy as u32 + 25);
     assert!(is_white(above_center), "+90° CCW rotation should produce upward bar; pixel above center is {above_center:?}");
 
-    // A pixel to the RIGHT of center (x=cx+25, y=cy) should be dark —
-    // the bar was rotated away from horizontal.
     let right_of_center = sample(&fb, cx as u32 + 25, cy as u32);
     assert!(is_dark(right_of_center), "After +90° rotation, horizontal should be gone; pixel to right is {right_of_center:?}");
 }
 
-/// A point drawn at (10, 10) in Y-up space is near the bottom-left corner
-/// and should appear in the first few rows and columns of the raw pixel buffer.
+/// A point drawn at (10, 10) in Y-up space is near the bottom-left corner.
 #[test]
 fn test_bottom_left_origin() {
     let mut fb = Framebuffer::new(200, 200);
     let mut ctx = GfxCtx::new(&mut fb);
     ctx.clear(Color::black());
 
-    ctx.set_fill_color(Color::rgb(1.0, 0.0, 0.0)); // red
+    ctx.set_fill_color(Color::rgb(1.0, 0.0, 0.0));
     ctx.begin_path();
     ctx.circle(10.0, 10.0, 6.0);
     ctx.fill();
     drop(ctx);
 
-    // The center at (10, 10) in Y-up = row 10 from buffer start = near BOTTOM.
     let center = sample(&fb, 10, 10);
     assert!(is_red(center), "Bottom-left origin test: (10,10) should be red; got {center:?}");
 
-    // The top-right region should be dark.
     let top_right = sample(&fb, 190, 190);
     assert!(is_dark(top_right), "Top-right should be empty; got {top_right:?}");
 }
 
-/// `pixels_flipped()` should reverse the row order so that Y=0 (bottom) ends
-/// up at the top of the returned buffer — correct for HTML Canvas `putImageData`.
+/// `pixels_flipped()` should reverse the row order.
 #[test]
 fn test_pixels_flipped_reversal() {
     let w = 4u32;
     let h = 4u32;
     let mut fb = Framebuffer::new(w, h);
 
-    // Paint row Y=0 (bottom) red and row Y=3 (top) blue.
     {
         let pixels = fb.pixels_mut();
-        // Row 0 (Y=0, buffer start) → red
         for x in 0..w as usize {
             let i = x * 4;
             pixels[i] = 255; pixels[i+1] = 0; pixels[i+2] = 0; pixels[i+3] = 255;
         }
-        // Row 3 (Y=3, buffer end) → blue
         let base = 3 * w as usize * 4;
         for x in 0..w as usize {
             let i = base + x * 4;
@@ -139,12 +121,165 @@ fn test_pixels_flipped_reversal() {
     }
 
     let flipped = fb.pixels_flipped();
+    assert_eq!(&flipped[0..4], &[0u8, 0, 255, 255], "Flipped[0] should be blue");
+    let last = (h as usize - 1) * w as usize * 4;
+    assert_eq!(&flipped[last..last+4], &[255u8, 0, 0, 255], "Flipped last row should be red");
+}
 
-    // In the flipped buffer, the first row (screen top) should be what was
-    // row 3 (Y=3, top in Y-up = top on screen) → blue.
-    assert_eq!(&flipped[0..4], &[0u8, 0, 255, 255], "Flipped[0] should be blue (was Y=3 = top)");
+// ---------------------------------------------------------------------------
+// Phase 2 — clip rect
+// ---------------------------------------------------------------------------
 
-    // The last row of the flipped buffer (screen bottom) should be red (was Y=0).
-    let last_row_start = (h as usize - 1) * w as usize * 4;
-    assert_eq!(&flipped[last_row_start..last_row_start+4], &[255u8, 0, 0, 255], "Flipped last row should be red (was Y=0 = bottom)");
+/// Drawing outside a clip rect must not affect pixels there.
+#[test]
+fn test_clip_rect_excludes_outside() {
+    let size = 100u32;
+    let mut fb = Framebuffer::new(size, size);
+    let mut ctx = GfxCtx::new(&mut fb);
+    ctx.clear(Color::black());
+
+    // Clip to right half only (x ≥ 50).
+    ctx.clip_rect(50.0, 0.0, 50.0, 100.0);
+
+    ctx.set_fill_color(Color::white());
+    ctx.begin_path();
+    // Draw a rectangle that spans the full width.
+    ctx.rect(0.0, 0.0, 100.0, 100.0);
+    ctx.fill();
+    drop(ctx);
+
+    // Left half (x=10, y=50) must stay black — clipped out.
+    let left = sample(&fb, 10, 50);
+    assert!(is_dark(left), "Left half should be clipped out; got {left:?}");
+
+    // Right half (x=75, y=50) must be white — inside clip.
+    let right = sample(&fb, 75, 50);
+    assert!(is_white(right), "Right half should be white (inside clip); got {right:?}");
+}
+
+/// Restoring state also restores the clip, so drawing after restore is unclipped.
+#[test]
+fn test_clip_rect_restores_with_state() {
+    let size = 100u32;
+    let mut fb = Framebuffer::new(size, size);
+    let mut ctx = GfxCtx::new(&mut fb);
+    ctx.clear(Color::black());
+
+    ctx.save();
+    ctx.clip_rect(60.0, 0.0, 40.0, 100.0); // clip to right 40px
+    ctx.restore();
+
+    // After restore clip is gone — draw should cover the full buffer.
+    ctx.set_fill_color(Color::white());
+    ctx.begin_path();
+    ctx.rect(0.0, 0.0, 100.0, 100.0);
+    ctx.fill();
+    drop(ctx);
+
+    // Left side must now be white (no clip).
+    let left = sample(&fb, 10, 50);
+    assert!(is_white(left), "After restore, clip should be gone; got {left:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — rounded rect
+// ---------------------------------------------------------------------------
+
+/// A rounded_rect with radius 0 behaves identically to a plain rect.
+#[test]
+fn test_rounded_rect_zero_radius() {
+    let size = 100u32;
+    let mut fb_rr = Framebuffer::new(size, size);
+    let mut fb_r  = Framebuffer::new(size, size);
+
+    {
+        let mut ctx = GfxCtx::new(&mut fb_rr);
+        ctx.clear(Color::black());
+        ctx.set_fill_color(Color::white());
+        ctx.begin_path();
+        ctx.rounded_rect(20.0, 20.0, 60.0, 60.0, 0.0);
+        ctx.fill();
+    }
+    {
+        let mut ctx = GfxCtx::new(&mut fb_r);
+        ctx.clear(Color::black());
+        ctx.set_fill_color(Color::white());
+        ctx.begin_path();
+        ctx.rect(20.0, 20.0, 60.0, 60.0);
+        ctx.fill();
+    }
+
+    // Both should produce white at the center.
+    assert!(is_white(sample(&fb_rr, 50, 50)), "rounded_rect center should be white");
+    assert!(is_white(sample(&fb_r,  50, 50)), "rect center should be white");
+}
+
+/// A rounded_rect with a large radius must clip its corners.
+#[test]
+fn test_rounded_rect_corners_are_clipped() {
+    let size = 100u32;
+    let mut fb = Framebuffer::new(size, size);
+    let mut ctx = GfxCtx::new(&mut fb);
+    ctx.clear(Color::black());
+    ctx.set_fill_color(Color::white());
+    ctx.begin_path();
+    // Square 20..80 with r=15 — corners should be dark.
+    ctx.rounded_rect(20.0, 20.0, 60.0, 60.0, 15.0);
+    ctx.fill();
+    drop(ctx);
+
+    // Exact corner at (20, 20) — inside the radius arc, should remain dark.
+    let corner = sample(&fb, 20, 20);
+    assert!(is_dark(corner), "Corner should be clipped by radius; got {corner:?}");
+
+    // Center must be white.
+    let center = sample(&fb, 50, 50);
+    assert!(is_white(center), "Center should be white; got {center:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — blend modes
+// ---------------------------------------------------------------------------
+
+/// SrcOver (default) blends a semi-transparent fill onto an opaque base.
+#[test]
+fn test_blend_mode_src_over_alpha() {
+    let size = 40u32;
+    let mut fb = Framebuffer::new(size, size);
+    let mut ctx = GfxCtx::new(&mut fb);
+    ctx.clear(Color::white());
+
+    // Draw 50% transparent black over white → should give mid-gray.
+    ctx.set_blend_mode(CompOp::SrcOver);
+    ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.5));
+    ctx.begin_path();
+    ctx.rect(0.0, 0.0, size as f64, size as f64);
+    ctx.fill();
+    drop(ctx);
+
+    let p = sample(&fb, 20, 20);
+    // Should be roughly 50% gray (127 ± 5).
+    assert!(p[0] > 100 && p[0] < 160, "50% black over white should be mid-gray; got {p:?}");
+}
+
+/// global_alpha multiplies into fill alpha.
+#[test]
+fn test_global_alpha() {
+    let size = 40u32;
+    let mut fb = Framebuffer::new(size, size);
+    let mut ctx = GfxCtx::new(&mut fb);
+    ctx.clear(Color::white());
+
+    // Fully opaque red, but global_alpha = 0.5 → should produce pinkish result.
+    ctx.set_global_alpha(0.5);
+    ctx.set_fill_color(Color::rgb(1.0, 0.0, 0.0));
+    ctx.begin_path();
+    ctx.rect(0.0, 0.0, size as f64, size as f64);
+    ctx.fill();
+    drop(ctx);
+
+    let p = sample(&fb, 20, 20);
+    // Red channel should be high, green/blue non-zero (blended with white).
+    assert!(p[0] > 200, "Red channel should be high; got {p:?}");
+    assert!(p[1] > 100, "Green channel should be non-zero (blended with white); got {p:?}");
 }

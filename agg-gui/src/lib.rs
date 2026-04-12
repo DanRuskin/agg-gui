@@ -35,10 +35,10 @@ pub use framebuffer::Framebuffer;
 pub use geometry::{Point, Rect, Size};
 pub use gfx_ctx::GfxCtx;
 
-// Re-export AGG transform so callers can use set_transform without
-// importing agg-rust directly.
+// Re-export AGG types so callers don't need to import agg-rust directly.
 pub use agg_rust::trans_affine::TransAffine;
 pub use agg_rust::math_stroke::{LineCap, LineJoin};
+pub use agg_rust::comp_op::CompOp;
 
 #[cfg(test)]
 mod tests;
