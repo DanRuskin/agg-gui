@@ -433,7 +433,7 @@ pub fn measure_text_metrics(font: &Font, text: &str, size: f64) -> TextMetrics {
 }
 
 /// Measure text advance width without rasterizing.
-pub(crate) fn measure_advance(font: &Font, text: &str, size: f64) -> f64 {
+pub fn measure_advance(font: &Font, text: &str, size: f64) -> f64 {
     let scale = size / font.units_per_em() as f64;
     font.with_rb_face(|face| {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
@@ -445,4 +445,184 @@ pub(crate) fn measure_advance(font: &Font, text: &str, size: f64) -> f64 {
             .map(|p| p.x_advance as f64 * scale)
             .sum()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FONT_BYTES: &[u8] =
+        include_bytes!("../../demo/assets/CascadiaCode.ttf");
+
+    fn test_font() -> Arc<Font> {
+        Arc::new(Font::from_slice(FONT_BYTES).expect("font ok"))
+    }
+
+    /// Verify that shape_and_flatten_text produces a sane number of
+    /// contour points at typical UI font sizes.
+    ///
+    /// Before the fix, subdivide_quad tested flatness in font units
+    /// (~2048 upm), producing ~1000 sub-divisions per Bézier segment
+    /// instead of ~4 — this test would time-out or produce millions of
+    /// points under the broken implementation.
+    #[test]
+    fn test_flatten_point_count_is_sane() {
+        let font = test_font();
+        let sizes: &[f64] = &[10.0, 13.0, 14.0, 24.0, 34.0];
+        let texts: &[&str] = &[
+            "Hello",
+            "The quick brown fox",
+            "Caption — 10px  The quick brown fox",
+            "agg-gui",
+            "Aa",
+        ];
+
+        for &size in sizes {
+            for &text in texts {
+                let contours =
+                    shape_and_flatten_text(&font, text, size, 0.0, 0.0, 0.5);
+
+                let total_pts: usize = contours.iter().map(|c| c.len()).sum();
+                let char_count = text.chars().count().max(1);
+                let pts_per_char = total_pts / char_count;
+
+                // A well-formed glyph at any typical size should produce
+                // between 4 and 300 points per character.  Anything above
+                // ~500 means over-subdivision is happening again.
+                assert!(
+                    pts_per_char <= 500,
+                    "size={size} text={text:?}: {pts_per_char} pts/char \
+                     (total {total_pts}) — too many, subdivision loop likely"
+                );
+                assert!(
+                    total_pts > 0 || text.trim().is_empty(),
+                    "size={size} text={text:?}: zero points produced"
+                );
+            }
+        }
+    }
+
+    /// Print raw contour coordinates for a single character.
+    #[test]
+    fn test_dump_single_char_coords() {
+        use crate::gl_renderer::tessellate_fill;
+        let font = test_font();
+        for ch in ['W', 'i', 'd', 'g', 'e', 't', 's'] {
+            let s = ch.to_string();
+            let contours = shape_and_flatten_text(&font, &s, 13.0, 10.0, 50.0, 0.5);
+            let total: usize = contours.iter().map(|c| c.len()).sum();
+            eprintln!("{:?}: {} contours, {} pts", ch, contours.len(), total);
+            // Print bounding box of each contour
+            for (ci, c) in contours.iter().enumerate() {
+                if c.is_empty() { continue; }
+                let xs: Vec<f32> = c.iter().map(|p| p[0]).collect();
+                let ys: Vec<f32> = c.iter().map(|p| p[1]).collect();
+                let xmin = xs.iter().cloned().fold(f32::INFINITY, f32::min);
+                let xmax = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let ymin = ys.iter().cloned().fold(f32::INFINITY, f32::min);
+                let ymax = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                eprintln!("  contour {ci}: {}/{} pts  x:[{xmin:.1},{xmax:.1}] y:[{ymin:.1},{ymax:.1}]",
+                    c.len(), c.len());
+            }
+            let result = tessellate_fill(&contours);
+            eprintln!("  tess: {:?}", result.as_ref().map(|(v,i)| (v.len()/2, i.len()/3)));
+        }
+    }
+
+    /// Simulate the text draw calls that happen on the very first WASM
+    /// render frame (Basics tab + window visible) and assert the full
+    /// pipeline (shape → flatten → tessellate) completes in < 200 ms.
+    ///
+    /// This test catches both infinite-subdivision loops and algorithmic
+    /// slowness that would cause a tab-kill dialog in the browser.
+    /// WASM is ~5× slower than native, so 200 ms native ≈ 1 s WASM — fine.
+    #[test]
+    fn test_first_frame_text_pipeline_is_fast() {
+        use crate::gl_renderer::tessellate_fill;
+        use std::time::Instant;
+
+        let font = test_font();
+        let t0 = Instant::now();
+
+        // All fill_text calls expected on the first rendered frame:
+        //   tab bar (TabView), window title + label (Window),
+        //   button labels (Button), text field placeholders (TextField).
+        let calls: &[(&str, f64)] = &[
+            // tab bar labels (13 pt)
+            ("Basics",   13.0),
+            ("Widgets",  13.0),
+            ("Text",     13.0),
+            ("Layout",   13.0),
+            ("Tree",     13.0),
+            // floating window
+            ("3D Demo",                  16.0),
+            ("WebGL2 — rotating cube",   11.0),
+            // Basics tab buttons
+            ("Primary Action",  14.0),
+            ("Secondary",       14.0),
+            ("Destructive",     14.0),
+            // text field placeholders
+            ("Type something\u{2026}",  14.0),
+            ("Another field",           14.0),
+        ];
+
+        let mut total_pts  = 0usize;
+        let mut total_tris = 0usize;
+
+        for &(text, size) in calls {
+            let contours = shape_and_flatten_text(&font, text, size, 10.0, 50.0, 0.5);
+            total_pts += contours.iter().map(|c| c.len()).sum::<usize>();
+
+            if let Some((verts, idx)) = tessellate_fill(&contours) {
+                total_tris += idx.len() / 3;
+                let _ = verts;
+            }
+        }
+
+        let elapsed = t0.elapsed();
+
+        // Sanity: we should have produced some geometry.
+        assert!(total_pts  > 0,  "no contour points produced");
+        assert!(total_tris > 0,  "no triangles tessellated");
+
+        // Performance gate: must finish in under 200 ms natively.
+        assert!(
+            elapsed.as_millis() < 200,
+            "first-frame text pipeline took {}ms (pts={total_pts} tris={total_tris}) — \
+             too slow, would hang browser (WASM is ~5× slower)",
+            elapsed.as_millis()
+        );
+
+        eprintln!(
+            "first-frame text: {total_pts} pts, {total_tris} tris in {}ms",
+            elapsed.as_millis()
+        );
+    }
+
+    /// Verify that all contour points are in screen-pixel range for the
+    /// given font size (not left in raw font units).
+    #[test]
+    fn test_flatten_output_is_in_screen_space() {
+        let font = test_font();
+        // Place text at (100, 200) at size 16.
+        let contours =
+            shape_and_flatten_text(&font, "Hello", 16.0, 100.0, 200.0, 0.5);
+
+        assert!(!contours.is_empty(), "should produce contours for 'Hello'");
+
+        for (ci, contour) in contours.iter().enumerate() {
+            for &[x, y] in contour {
+                // Screen-space points should be near (100±50, 200±30) at 16pt.
+                // Font-unit coordinates would be in the hundreds–thousands.
+                assert!(
+                    x > 50.0 && x < 300.0,
+                    "contour {ci}: x={x} looks like font units, not screen px"
+                );
+                assert!(
+                    y > 150.0 && y < 280.0,
+                    "contour {ci}: y={y} looks like font units, not screen px"
+                );
+            }
+        }
+    }
 }
