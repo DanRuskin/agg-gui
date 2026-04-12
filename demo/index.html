@@ -55,31 +55,7 @@
 
     header a:hover { color: #1d1d1f; }
 
-    /* Tab bar */
-    .tabs {
-      display: flex;
-      gap: 2px;
-      padding: 0 16px;
-      background: #ffffff;
-      border-bottom: 1px solid #d8d8db;
-      flex-shrink: 0;
-    }
-
-    .tab {
-      padding: 8px 18px;
-      font-size: 0.85rem;
-      color: #6b7280;
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      transition: color 0.15s, border-color 0.15s;
-      user-select: none;
-    }
-
-    .tab:hover { color: #1d1d1f; }
-    .tab.active { color: #1d1d1f; border-bottom-color: #2563eb; }
-    .tab.disabled { opacity: 0.4; cursor: not-allowed; }
-
-    /* Canvas area */
+    /* Canvas area — fills everything below the header */
     .canvas-wrap {
       flex: 1;
       display: flex;
@@ -123,17 +99,10 @@
 <body>
   <header>
     <h1>agg-<span>gui</span></h1>
-    <span class="badge">Phase 6</span>
+    <span class="badge">Phase 7</span>
     <div class="spacer"></div>
     <a href="https://github.com/larsbrubaker/agg-gui" target="_blank">GitHub</a>
   </header>
-
-  <div class="tabs">
-    <div class="tab active" data-tab="basics">Basics</div>
-    <div class="tab" data-tab="text">Text</div>
-    <div class="tab" data-tab="layout">Layout</div>
-    <div class="tab" data-tab="tree">Tree</div>
-  </div>
 
   <div class="canvas-wrap">
     <canvas id="canvas" tabindex="0"></canvas>

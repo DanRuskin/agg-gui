@@ -1,13 +1,16 @@
-// agg-gui demo — Phase 5 frontend
+// agg-gui demo — Phase 7 frontend
 //
-// Loads the WASM module, renders the active tab's scene, and handles
-// tab switching + event forwarding to the widget tree.
+// The full UI (tab bar + content) is rendered by agg-gui on the canvas.
+// This file loads the WASM module and forwards browser events to it.
 
-type RenderFn = (width: number, height: number) => Uint8Array;
+type RenderFn  = (width: number, height: number) => Uint8Array;
+type MouseXYFn = (x: number, y: number) => void;
+type MouseXYBFn = (x: number, y: number, button: number) => void;
+type WheelFn   = (x: number, y: number, delta_y: number) => void;
+type KeyFn     = (key: string, shift: boolean, ctrl: boolean, alt: boolean) => void;
+type VoidFn    = () => void;
 
 let wasmModule: Record<string, unknown> | null = null;
-let renderers: Record<string, RenderFn> = {};
-let activeTab = "basics";
 
 // --- Canvas setup ---
 
@@ -19,8 +22,7 @@ const statusEl = document.getElementById("status")!;
 // --- Render loop ---
 
 function render() {
-  const fn = renderers[activeTab] ?? renderers["basics"];
-  if (!fn) return;
+  if (!wasmModule) return;
 
   const wrap = canvas.parentElement!;
   const dpr = window.devicePixelRatio || 1;
@@ -31,15 +33,13 @@ function render() {
     canvas.width = w;
     canvas.height = h;
   }
-
   if (w === 0 || h === 0) return;
 
   const t0 = performance.now();
-  const pixels = fn(w, h);
+  const pixels = (wasmModule["render"] as RenderFn)(w, h);
   const imageData = new ImageData(
     new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength),
-    w,
-    h,
+    w, h,
   );
   ctx2d.putImageData(imageData, 0, 0);
 
@@ -47,99 +47,61 @@ function render() {
   statusEl.textContent = `${w}×${h}  ${ms}ms`;
 }
 
-// --- Tab handling ---
+// --- Canvas coordinate helper ---
 
-document.querySelectorAll<HTMLElement>(".tab:not(.disabled)").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-    tab.classList.add("active");
-    activeTab = tab.dataset.tab!;
-    render();
-  });
-});
-
-// --- Canvas event forwarding to WASM widget tree ---
-
-// Convert a MouseEvent's clientX/Y to canvas physical pixels (Y-down from
-// canvas top-left, matching what App::on_mouse_* expects before Y-flip).
 function canvasPos(e: MouseEvent): [number, number] {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  const x = (e.clientX - rect.left) * dpr;
-  const y = (e.clientY - rect.top)  * dpr;
-  return [x, y];
+  return [(e.clientX - rect.left) * dpr, (e.clientY - rect.top) * dpr];
 }
 
-function isBasicsTab(): boolean { return activeTab === "basics" && wasmModule !== null; }
-function isLayoutTab(): boolean { return activeTab === "layout" && wasmModule !== null; }
-function isTreeTab(): boolean   { return activeTab === "tree"   && wasmModule !== null; }
-
-// Helper to call a WASM export by name.
-function wasm<T extends (...args: unknown[]) => unknown>(name: string): T {
-  return (wasmModule as Record<string, T>)[name];
-}
+// --- Event forwarding ---
 
 canvas.addEventListener("mousemove", (e) => {
-  if (wasmModule === null) return;
+  if (!wasmModule) return;
   const [x, y] = canvasPos(e);
-  if (isBasicsTab())      { wasm<(x:number,y:number)=>void>("on_mouse_move")(x,y); render(); }
-  else if (isLayoutTab()) { wasm<(x:number,y:number)=>void>("on_layout_mouse_move")(x,y); render(); }
-  else if (isTreeTab())   { wasm<(x:number,y:number)=>void>("on_tree_mouse_move")(x,y); render(); }
+  (wasmModule["on_mouse_move"] as MouseXYFn)(x, y);
+  render();
 });
 
 canvas.addEventListener("mousedown", (e) => {
-  if (wasmModule === null) return;
+  if (!wasmModule) return;
   e.preventDefault();
   canvas.focus();
   const [x, y] = canvasPos(e);
-  if (isBasicsTab())      { wasm<(x:number,y:number,b:number)=>void>("on_mouse_down")(x,y,e.button); render(); }
-  else if (isLayoutTab()) { wasm<(x:number,y:number,b:number)=>void>("on_layout_mouse_down")(x,y,e.button); render(); }
-  else if (isTreeTab())   { wasm<(x:number,y:number,b:number)=>void>("on_tree_mouse_down")(x,y,e.button); render(); }
+  (wasmModule["on_mouse_down"] as MouseXYBFn)(x, y, e.button);
+  render();
 });
 
 canvas.addEventListener("mouseup", (e) => {
-  if (wasmModule === null) return;
+  if (!wasmModule) return;
   const [x, y] = canvasPos(e);
-  if (isBasicsTab())      { wasm<(x:number,y:number,b:number)=>void>("on_mouse_up")(x,y,e.button); render(); }
-  else if (isLayoutTab()) { wasm<(x:number,y:number,b:number)=>void>("on_layout_mouse_up")(x,y,e.button); render(); }
-  else if (isTreeTab())   { wasm<(x:number,y:number,b:number)=>void>("on_tree_mouse_up")(x,y,e.button); render(); }
+  (wasmModule["on_mouse_up"] as MouseXYBFn)(x, y, e.button);
+  render();
 });
 
 canvas.addEventListener("mouseleave", () => {
-  if (wasmModule === null) return;
-  if (isBasicsTab())      { wasm<()=>void>("on_mouse_leave")(); render(); }
-  else if (isLayoutTab()) { wasm<()=>void>("on_layout_mouse_leave")(); render(); }
-  else if (isTreeTab())   { wasm<()=>void>("on_tree_mouse_leave")(); render(); }
+  if (!wasmModule) return;
+  (wasmModule["on_mouse_leave"] as VoidFn)();
+  render();
 });
 
-// Mouse wheel — Layout and Tree tabs.
 canvas.addEventListener("wheel", (e) => {
-  if (!isLayoutTab() && !isTreeTab()) return;
+  if (!wasmModule) return;
   e.preventDefault();
   const [x, y] = canvasPos(e);
-  const dpr = window.devicePixelRatio || 1;
-  const delta_y = -(e.deltaY / (e.deltaMode === 0 ? 40.0 : 1.0)) / dpr;
-  if (isLayoutTab()) wasm<(x:number,y:number,d:number)=>void>("on_layout_mouse_wheel")(x,y,delta_y);
-  else               wasm<(x:number,y:number,d:number)=>void>("on_tree_mouse_wheel")(x,y,delta_y);
+  const delta_y = e.deltaY / (e.deltaMode === 0 ? 40.0 : 1.0);
+  (wasmModule["on_mouse_wheel"] as WheelFn)(x, y, delta_y);
   render();
 }, { passive: false });
 
-// Keyboard — Basics tab (text fields) and Tree tab (navigation).
 canvas.addEventListener("keydown", (e) => {
-  if (wasmModule === null) return;
-  if (isBasicsTab()) {
-    if (e.key !== "Tab") e.preventDefault();
-    wasm<(k:string,s:boolean,c:boolean,a:boolean)=>void>("on_key_down")(e.key,e.shiftKey,e.ctrlKey,e.altKey);
-    render();
-  } else if (isTreeTab()) {
-    // Prevent arrow keys from scrolling the page.
-    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
-    wasm<(k:string,s:boolean,c:boolean,a:boolean)=>void>("on_tree_key_down")(e.key,e.shiftKey,e.ctrlKey,e.altKey);
-    render();
-  }
+  if (!wasmModule) return;
+  if (e.key !== "Tab") e.preventDefault();
+  (wasmModule["on_key_down"] as KeyFn)(e.key, e.shiftKey, e.ctrlKey, e.altKey);
+  render();
 });
 
-// Prevent right-click context menu on canvas.
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // --- Resize observer ---
@@ -156,11 +118,6 @@ async function init() {
     await wasm.default({ module_or_path: wasmUrl });
 
     wasmModule = wasm as unknown as Record<string, unknown>;
-    renderers["basics"]  = wasm.render_basics as RenderFn;
-    renderers["text"]    = wasm.render_text   as RenderFn;
-    renderers["layout"]  = wasm.render_layout as RenderFn;
-    renderers["tree"]    = wasm.render_tree   as RenderFn;
-
     loadingEl.classList.add("hidden");
     render();
   } catch (e) {

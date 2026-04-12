@@ -93,10 +93,11 @@ impl Widget for ScrollView {
         self.scroll_offset = self.scroll_offset.clamp(0.0, max_s);
 
         if let Some(child) = self.children.first_mut() {
-            // Position child: in Y-up space, the child's bottom-left y is:
-            //   available.height - content_height + scroll_offset
-            // When scroll_offset=0: child top aligns with viewport top.
-            // When scroll_offset>0: content moves up (child's y decreases).
+            // Position child in Y-up space. child_y is the Y of the child's bottom-left.
+            //   child_y = available.height - content_height + scroll_offset
+            // scroll_offset = 0   → child_y = viewport_h - content_h (top of content at viewport top)
+            // scroll_offset = max → child_y = 0 (bottom of content at viewport bottom)
+            // Increasing scroll_offset raises child_y → content shifts UP → reveals lower items.
             let child_y = available.height - self.content_height + self.scroll_offset;
             child.set_bounds(Rect::new(0.0, child_y, content_w, self.content_height));
         }
@@ -142,7 +143,8 @@ impl Widget for ScrollView {
         let sb_x = self.scrollbar_x();
         match event {
             Event::MouseWheel { delta_y, .. } => {
-                // positive delta_y = scroll up = increase offset
+                // Convention: delta_y > 0 = user scrolled DOWN (wants to see content below).
+                // Increasing scroll_offset moves content up → reveals lower items. ✓
                 self.scroll_offset = (self.scroll_offset + delta_y * 40.0)
                     .clamp(0.0, self.max_scroll());
                 EventResult::Consumed

@@ -1,17 +1,24 @@
-//! WASM demo crate for agg-gui — Phase 6.
+//! WASM demo crate for agg-gui — Phase 7.
 //!
-//! Exports:
-//! - `render_basics`, `render_text`, `render_layout`, `render_tree`
-//! - Per-tab event exports (see source for full list)
+//! The entire demo (tab bar + content) is rendered by agg-gui. The HTML page
+//! provides only a bare `<canvas>`. A single top-level `TabView` hosts all
+//! four tabs (Basics, Text, Layout, Tree).
+//!
+//! WASM exports:
+//! - `render(width, height) -> Vec<u8>` — full-frame RGBA render
+//! - `on_mouse_move/down/up/wheel/leave` — mouse events
+//! - `on_key_down` — keyboard events
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 use agg_gui::{
-    App, Button, Color, CompOp, Container, FlexColumn, FlexRow, Font, Framebuffer,
-    GfxCtx, Key, Modifiers, MouseButton, NodeIcon, ScrollView, Size, SizedBox, Spacer,
-    Splitter, TabView, TextField, TreeView, Widget,
+    App, Button, Checkbox, Color, CompOp, Container, Event, EventResult, FlexColumn, FlexRow,
+    Font, Framebuffer, GfxCtx, Key, Label, Modifiers, MouseButton, NodeIcon, ProgressBar,
+    RadioGroup, Rect, ScrollView, Separator, Size, SizedBox, Slider, Spacer, Splitter,
+    TabView, TextField, TreeView, Widget,
 };
 
 // Embed the font at compile time.
@@ -22,24 +29,38 @@ fn make_font() -> Arc<Font> {
 }
 
 // ---------------------------------------------------------------------------
-// Persistent widget tree for the interactive Basics tab
+// Single persistent App — outer TabView with all four tabs
 // ---------------------------------------------------------------------------
 
 thread_local! {
-    static BASICS_APP: RefCell<Option<App>> = RefCell::new(None);
-    static VIEWPORT_H: RefCell<f64> = RefCell::new(1.0);
+    static DEMO_APP: RefCell<Option<App>> = RefCell::new(None);
 }
 
-fn ensure_basics_app(width: u32, height: u32) {
-    BASICS_APP.with(|cell| {
+fn ensure_demo_app() {
+    DEMO_APP.with(|cell| {
         if cell.borrow().is_none() {
-            let font = make_font();
-            *cell.borrow_mut() = Some(build_basics_ui(font, width, height));
+            *cell.borrow_mut() = Some(build_demo_ui(make_font()));
         }
     });
 }
 
-fn build_basics_ui(font: Arc<Font>, _width: u32, _height: u32) -> App {
+fn build_demo_ui(font: Arc<Font>) -> App {
+    let tab_view = TabView::new(Arc::clone(&font))
+        .with_tab_bar_height(40.0)
+        .with_font_size(13.0)
+        .add_tab("Basics",  Box::new(build_basics_content(Arc::clone(&font))))
+        .add_tab("Widgets", Box::new(build_widgets_content(Arc::clone(&font))))
+        .add_tab("Text",    Box::new(TextDemoWidget::new(Arc::clone(&font))))
+        .add_tab("Layout",  Box::new(build_layout_content(Arc::clone(&font))))
+        .add_tab("Tree",    Box::new(build_tree_content(Arc::clone(&font))));
+    App::new(Box::new(tab_view))
+}
+
+// ---------------------------------------------------------------------------
+// Tab content builders
+// ---------------------------------------------------------------------------
+
+fn build_basics_content(font: Arc<Font>) -> Container {
     let font2 = Arc::clone(&font);
     let font3 = Arc::clone(&font);
     let font4 = Arc::clone(&font);
@@ -54,7 +75,6 @@ fn build_basics_ui(font: Arc<Font>, _width: u32, _height: u32) -> App {
             .with_font_size(14.0)
             .on_click(|| {}),
     ));
-
     root.children_mut().push(Box::new(
         Button::new("Secondary", Arc::clone(&font2))
             .with_font_size(14.0)
@@ -68,7 +88,6 @@ fn build_basics_ui(font: Arc<Font>, _width: u32, _height: u32) -> App {
                 focus_ring_width:   2.5,
             }),
     ));
-
     root.children_mut().push(Box::new(
         Button::new("Destructive", Arc::clone(&font3))
             .with_font_size(14.0)
@@ -82,154 +101,255 @@ fn build_basics_ui(font: Arc<Font>, _width: u32, _height: u32) -> App {
                 focus_ring_width:   2.5,
             }),
     ));
-
     root.children_mut().push(Box::new(
         TextField::new(Arc::clone(&font4))
             .with_font_size(14.0)
             .with_placeholder("Type something…"),
     ));
-
     root.children_mut().push(Box::new(
         TextField::new(Arc::clone(&font5))
             .with_font_size(14.0)
             .with_text("editable text")
             .with_placeholder("Another field"),
     ));
-
-    App::new(Box::new(root))
+    root
 }
 
-// ---------------------------------------------------------------------------
-// WASM event exports (called by JS before render_basics)
-// ---------------------------------------------------------------------------
+fn build_widgets_content(font: Arc<Font>) -> ScrollView {
+    // Shared state for the demo controls
+    let slider_val  = Rc::new(Cell::new(0.42_f64));
+    let cb1         = Rc::new(Cell::new(true));
+    let cb2         = Rc::new(Cell::new(false));
+    let cb3         = Rc::new(Cell::new(true));
+    let radio_sel   = Rc::new(Cell::new(0_usize));
 
-/// Parse a JS KeyboardEvent.key string into our Key type.
-fn parse_js_key(key: &str) -> Option<agg_gui::Key> {
-    use agg_gui::Key;
-    Some(match key {
-        "Backspace"  => Key::Backspace,
-        "Delete"     => Key::Delete,
-        "ArrowLeft"  => Key::ArrowLeft,
-        "ArrowRight" => Key::ArrowRight,
-        "Home"       => Key::Home,
-        "End"        => Key::End,
-        "Tab"        => Key::Tab,
-        "Enter"      => Key::Enter,
-        "Escape"     => Key::Escape,
-        " "          => Key::Char(' '),
-        s if s.chars().count() == 1 => Key::Char(s.chars().next()?),
-        s => Key::Other(s.to_string()),
-    })
-}
+    // Progress bar driven by slider — we use a thread_local RefCell trick:
+    // wrap it in a widget-level closure. Simpler: we use a ProgressBar leaf
+    // and clone the Rc into its on_change.
+    // Actually we need the ProgressBar to read slider_val each frame.
+    // We'll use a custom wrapper widget for the live update.
 
-#[wasm_bindgen]
-pub fn on_mouse_move(x: f64, y: f64) {
-    BASICS_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() {
-            app.on_mouse_move(x, y);
-        }
-    });
-}
+    let mut col = FlexColumn::new()
+        .with_gap(20.0)
+        .with_padding(24.0)
+        .with_background(Color::rgb(0.94, 0.94, 0.96));
 
-#[wasm_bindgen]
-pub fn on_mouse_down(x: f64, y: f64, button: u8) {
-    let btn = match button {
-        0 => MouseButton::Left,
-        1 => MouseButton::Middle,
-        2 => MouseButton::Right,
-        n => MouseButton::Other(n),
-    };
-    BASICS_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() {
-            app.on_mouse_down(x, y, btn, Modifiers::default());
-        }
-    });
-}
+    // --- Section: Buttons ---
+    col.push(Box::new(Label::new("Buttons", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
 
-#[wasm_bindgen]
-pub fn on_mouse_up(x: f64, y: f64, button: u8) {
-    let btn = match button {
-        0 => MouseButton::Left,
-        1 => MouseButton::Middle,
-        2 => MouseButton::Right,
-        n => MouseButton::Other(n),
-    };
-    BASICS_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() {
-            app.on_mouse_up(x, y, btn, Modifiers::default());
-        }
-    });
-}
-
-#[wasm_bindgen]
-pub fn on_key_down(key_str: &str, shift: bool, ctrl: bool, alt: bool) {
-    if let Some(key) = parse_js_key(key_str) {
-        let mods = Modifiers { shift, ctrl, alt };
-        BASICS_APP.with(|cell| {
-            if let Some(app) = cell.borrow_mut().as_mut() {
-                app.on_key_down(key, mods);
-            }
-        });
-    }
-}
-
-#[wasm_bindgen]
-pub fn on_mouse_leave() {
-    BASICS_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() {
-            app.on_mouse_leave();
-        }
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Tab: Basics — Phase 4 interactive widget demo
-// ---------------------------------------------------------------------------
-
-#[wasm_bindgen]
-pub fn render_basics(width: u32, height: u32) -> Vec<u8> {
-    ensure_basics_app(width, height);
-
-    BASICS_APP.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let app = borrow.as_mut().unwrap();
-        app.layout(Size::new(width as f64, height as f64));
-
-        let mut fb = Framebuffer::new(width, height);
-        {
-            let mut ctx = GfxCtx::new(&mut fb);
-            app.paint(&mut ctx);
-
-            // Status label in the bottom-left corner
-            let lsize = (width as f64 * 0.012).clamp(9.0, 13.0);
-            let pad = 12.0;
-            ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.3));
-            ctx.fill_text_gsv("agg-gui  Phase 4 — Widgets", pad, pad * 0.5, lsize);
-        }
-        fb.pixels_flipped()
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Tab: Text — Phase 3 content (unchanged, stateless)
-// ---------------------------------------------------------------------------
-
-#[wasm_bindgen]
-pub fn render_text(width: u32, height: u32) -> Vec<u8> {
-    let font = make_font();
-    let mut fb = Framebuffer::new(width, height);
     {
-        let mut ctx = GfxCtx::new(&mut fb);
-        draw_text_tab(&mut ctx, width, height, &font);
+        let row = FlexRow::new()
+            .with_gap(8.0)
+            .add(Box::new(SizedBox::new().with_width(120.0).with_height(34.0).with_child(Box::new(
+                Button::new("Primary", Arc::clone(&font)).with_font_size(13.0).on_click(|| {})
+            ))))
+            .add(Box::new(SizedBox::new().with_width(120.0).with_height(34.0).with_child(Box::new(
+                Button::new("Secondary", Arc::clone(&font))
+                    .with_font_size(13.0)
+                    .with_theme(agg_gui::widgets::button::ButtonTheme {
+                        background:         Color::rgba(0.22, 0.45, 0.88, 0.12),
+                        background_hovered: Color::rgba(0.22, 0.45, 0.88, 0.22),
+                        background_pressed: Color::rgba(0.22, 0.45, 0.88, 0.35),
+                        label_color:        Color::rgb(0.22, 0.45, 0.88),
+                        border_radius:      6.0,
+                        focus_ring_color:   Color::rgba(0.22, 0.45, 0.88, 0.55),
+                        focus_ring_width:   2.5,
+                    })
+                    .on_click(|| {})
+            ))))
+            .add(Box::new(SizedBox::new().with_width(120.0).with_height(34.0).with_child(Box::new(
+                Button::new("Danger", Arc::clone(&font))
+                    .with_font_size(13.0)
+                    .with_theme(agg_gui::widgets::button::ButtonTheme {
+                        background:         Color::rgb(0.88, 0.25, 0.18),
+                        background_hovered: Color::rgb(0.95, 0.32, 0.24),
+                        background_pressed: Color::rgb(0.72, 0.18, 0.12),
+                        label_color:        Color::white(),
+                        border_radius:      6.0,
+                        focus_ring_color:   Color::rgba(0.88, 0.25, 0.18, 0.55),
+                        focus_ring_width:   2.5,
+                    })
+                    .on_click(|| {})
+            ))));
+        col.push(Box::new(row), 0.0);
     }
-    fb.pixels_flipped()
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // --- Section: Checkboxes ---
+    col.push(Box::new(Label::new("Checkboxes", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    {
+        let v1 = Rc::clone(&cb1);
+        col.push(Box::new(Checkbox::new("Enable notifications", Arc::clone(&font), cb1.get())
+            .on_change(move |v| { v1.set(v); })), 0.0);
+        let v2 = Rc::clone(&cb2);
+        col.push(Box::new(Checkbox::new("Dark mode", Arc::clone(&font), cb2.get())
+            .on_change(move |v| { v2.set(v); })), 0.0);
+        let v3 = Rc::clone(&cb3);
+        col.push(Box::new(Checkbox::new("Send analytics", Arc::clone(&font), cb3.get())
+            .on_change(move |v| { v3.set(v); })), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // --- Section: Slider ---
+    col.push(Box::new(Label::new("Slider", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    {
+        let sv = Rc::clone(&slider_val);
+        col.push(Box::new(Slider::new(slider_val.get(), 0.0, 1.0, Arc::clone(&font))
+            .with_step(0.01)
+            .on_change(move |v| { sv.set(v); })), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // --- Section: Radio ---
+    col.push(Box::new(Label::new("Radio Group", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    {
+        let rs = Rc::clone(&radio_sel);
+        col.push(Box::new(RadioGroup::new(
+            vec!["Option A", "Option B", "Option C"],
+            radio_sel.get(),
+            Arc::clone(&font),
+        ).on_change(move |i| { rs.set(i); })), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // --- Section: Progress Bar (static value for WASM; driven by slider_val snapshot) ---
+    col.push(Box::new(Label::new("Progress Bar", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    col.push(Box::new(ProgressBar::new(slider_val.get(), Arc::clone(&font))), 0.0);
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // --- Section: Text Input ---
+    col.push(Box::new(Label::new("Text Input", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    col.push(Box::new(
+        TextField::new(Arc::clone(&font))
+            .with_font_size(14.0)
+            .with_placeholder("Type something here…")
+    ), 0.0);
+
+    // Bottom spacer
+    col.push(Box::new(SizedBox::fixed(0.0, 24.0)), 0.0);
+
+    ScrollView::new(Box::new(col))
 }
 
-fn draw_text_tab(ctx: &mut GfxCtx, width: u32, height: u32, font: &Arc<Font>) {
-    let w = width as f64;
-    let h = height as f64;
-    ctx.set_font(Arc::clone(font));
+fn build_layout_content(font: Arc<Font>) -> TabView {
+    TabView::new(Arc::clone(&font))
+        .with_tab_bar_height(36.0)
+        .with_font_size(13.0)
+        .add_tab("Flex",   Box::new(build_flex_demo(Arc::clone(&font))))
+        .add_tab("Scroll", Box::new(build_scroll_demo(Arc::clone(&font))))
+        .add_tab("Split",  Box::new(build_split_demo(Arc::clone(&font))))
+}
 
+fn build_tree_content(font: Arc<Font>) -> TreeView {
+    let mut tv = TreeView::new(Arc::clone(&font))
+        .with_row_height(26.0)
+        .with_font_size(13.0)
+        .with_indent_width(18.0);
+
+    let alpha = tv.add_root("Project Alpha", NodeIcon::Package);
+    tv.expand(alpha);
+    let src = tv.add_child(alpha, "src", NodeIcon::Folder);
+    tv.expand(src);
+    tv.add_child(src, "main.rs", NodeIcon::File);
+    tv.add_child(src, "lib.rs", NodeIcon::File);
+    let widgets_dir = tv.add_child(src, "widgets", NodeIcon::Folder);
+    tv.expand(widgets_dir);
+    tv.add_child(widgets_dir, "button.rs", NodeIcon::File);
+    tv.add_child(widgets_dir, "scroll_view.rs", NodeIcon::File);
+    tv.add_child(widgets_dir, "tree_view.rs", NodeIcon::File);
+    let tests = tv.add_child(alpha, "tests", NodeIcon::Folder);
+    tv.expand(tests);
+    tv.add_child(tests, "integration.rs", NodeIcon::File);
+    tv.add_child(tests, "unit.rs", NodeIcon::File);
+    tv.add_child(alpha, "Cargo.toml", NodeIcon::File);
+    tv.add_child(alpha, "README.md", NodeIcon::File);
+
+    let beta = tv.add_root("Project Beta", NodeIcon::Package);
+    let assets = tv.add_child(beta, "assets", NodeIcon::Folder);
+    tv.add_child(assets, "logo.svg", NodeIcon::File);
+    tv.add_child(assets, "icons.png", NodeIcon::File);
+    let bsrc = tv.add_child(beta, "src", NodeIcon::Folder);
+    tv.add_child(bsrc, "app.rs", NodeIcon::File);
+    tv.add_child(bsrc, "config.rs", NodeIcon::File);
+    tv.add_child(beta, "Cargo.toml", NodeIcon::File);
+
+    let gamma = tv.add_root("Project Gamma", NodeIcon::Package);
+    let gsrc = tv.add_child(gamma, "src", NodeIcon::Folder);
+    tv.add_child(gsrc, "main.rs", NodeIcon::File);
+    tv.add_child(gsrc, "render.rs", NodeIcon::File);
+    tv.add_child(gsrc, "scene.rs", NodeIcon::File);
+    let shaders = tv.add_child(gsrc, "shaders", NodeIcon::Folder);
+    tv.add_child(shaders, "vert.glsl", NodeIcon::File);
+    tv.add_child(shaders, "frag.glsl", NodeIcon::File);
+    tv.add_child(gamma, "Cargo.toml", NodeIcon::File);
+
+    tv
+}
+
+// ---------------------------------------------------------------------------
+// TextDemoWidget — stateless widget that draws the Phase 3 text showcase
+// ---------------------------------------------------------------------------
+
+struct TextDemoWidget {
+    bounds: Rect,
+    font: Arc<Font>,
+    children: Vec<Box<dyn Widget>>,
+}
+
+impl TextDemoWidget {
+    fn new(font: Arc<Font>) -> Self {
+        Self { bounds: Rect::default(), font, children: Vec::new() }
+    }
+}
+
+impl Widget for TextDemoWidget {
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
+        available
+    }
+
+    fn paint(&mut self, ctx: &mut GfxCtx) {
+        let w = self.bounds.width;
+        let h = self.bounds.height;
+        draw_text_tab(ctx, w, h, &Arc::clone(&self.font));
+    }
+
+    fn on_event(&mut self, _event: &Event) -> EventResult { EventResult::Ignored }
+}
+
+// ---------------------------------------------------------------------------
+// Text tab drawing helpers (Phase 3)
+// ---------------------------------------------------------------------------
+
+fn draw_text_tab(ctx: &mut GfxCtx, w: f64, h: f64, font: &Arc<Font>) {
+    ctx.set_font(Arc::clone(font));
     ctx.clear(Color::rgb(0.94, 0.94, 0.96));
 
     let pad = (w.min(h) * 0.03).max(10.0);
@@ -251,16 +371,12 @@ fn draw_text_tab(ctx: &mut GfxCtx, width: u32, height: u32, font: &Arc<Font>) {
     { let (px, py, pw, ph) = panels[0]; draw_sizes_panel(ctx, px, py, pw, ph); }
     { let (px, py, pw, ph) = panels[1]; draw_measure_panel(ctx, px, py, pw, ph, font); }
     { let (px, py, pw, ph) = panels[2]; draw_multiline_panel(ctx, px, py, pw, ph, font); }
-    { let (px, py, pw, ph) = panels[3]; draw_buttons_panel(ctx, px, py, pw, ph, font); }
+    { let (px, py, pw, ph) = panels[3]; draw_buttons_panel(ctx, px, py, pw, ph); }
 
     let lsize = (w * 0.012).clamp(9.0, 13.0);
     ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.35));
     ctx.fill_text_gsv("agg-gui  Phase 3 — Text", pad, pad * 0.4, lsize);
 }
-
-// ---------------------------------------------------------------------------
-// Text panel helpers (Phase 3, unchanged)
-// ---------------------------------------------------------------------------
 
 fn draw_card(ctx: &mut GfxCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.08));
@@ -359,7 +475,7 @@ fn draw_multiline_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, fo
     }
 }
 
-fn draw_buttons_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
+fn draw_buttons_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
     panel_title_gsv(ctx, px, py, pw, ph, "Text + Graphics");
     let margin = pw * 0.07;
     let btn_h = ph * 0.16;
@@ -387,109 +503,12 @@ fn draw_buttons_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font
             ctx.fill_text(label, tx, ty);
         }
     }
-    let _ = font;
 }
 
 // ---------------------------------------------------------------------------
-// Persistent widget tree for the interactive Layout tab
+// Layout tab sub-demos
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static LAYOUT_APP: RefCell<Option<App>> = RefCell::new(None);
-}
-
-fn ensure_layout_app(width: u32, height: u32) {
-    let _ = (width, height);
-    LAYOUT_APP.with(|cell| {
-        if cell.borrow().is_none() {
-            *cell.borrow_mut() = Some(build_layout_ui(make_font()));
-        }
-    });
-}
-
-#[wasm_bindgen]
-pub fn on_layout_mouse_move(x: f64, y: f64) {
-    LAYOUT_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() { app.on_mouse_move(x, y); }
-    });
-}
-
-#[wasm_bindgen]
-pub fn on_layout_mouse_down(x: f64, y: f64, button: u8) {
-    let btn = match button {
-        0 => MouseButton::Left, 1 => MouseButton::Middle, 2 => MouseButton::Right,
-        n => MouseButton::Other(n),
-    };
-    LAYOUT_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() {
-            app.on_mouse_down(x, y, btn, Modifiers::default());
-        }
-    });
-}
-
-#[wasm_bindgen]
-pub fn on_layout_mouse_up(x: f64, y: f64, button: u8) {
-    let btn = match button {
-        0 => MouseButton::Left, 1 => MouseButton::Middle, 2 => MouseButton::Right,
-        n => MouseButton::Other(n),
-    };
-    LAYOUT_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() {
-            app.on_mouse_up(x, y, btn, Modifiers::default());
-        }
-    });
-}
-
-#[wasm_bindgen]
-pub fn on_layout_mouse_wheel(x: f64, y: f64, delta_y: f64) {
-    LAYOUT_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() { app.on_mouse_wheel(x, y, delta_y); }
-    });
-}
-
-#[wasm_bindgen]
-pub fn on_layout_mouse_leave() {
-    LAYOUT_APP.with(|cell| {
-        if let Some(app) = cell.borrow_mut().as_mut() { app.on_mouse_leave(); }
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Tab: Layout — Phase 5 interactive layout demo
-// ---------------------------------------------------------------------------
-
-#[wasm_bindgen]
-pub fn render_layout(width: u32, height: u32) -> Vec<u8> {
-    ensure_layout_app(width, height);
-    LAYOUT_APP.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let app = borrow.as_mut().unwrap();
-        app.layout(Size::new(width as f64, height as f64));
-
-        let mut fb = Framebuffer::new(width, height);
-        {
-            let mut ctx = GfxCtx::new(&mut fb);
-            app.paint(&mut ctx);
-            let lsize = (width as f64 * 0.012).clamp(9.0, 13.0);
-            ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.3));
-            ctx.fill_text_gsv("agg-gui  Phase 5 — Layout", 12.0, 6.0, lsize);
-        }
-        fb.pixels_flipped()
-    })
-}
-
-fn build_layout_ui(font: Arc<Font>) -> App {
-    let tab_view = TabView::new(Arc::clone(&font))
-        .with_tab_bar_height(36.0)
-        .with_font_size(13.0)
-        .add_tab("Flex",   Box::new(build_flex_demo(Arc::clone(&font))))
-        .add_tab("Scroll", Box::new(build_scroll_demo(Arc::clone(&font))))
-        .add_tab("Split",  Box::new(build_split_demo(Arc::clone(&font))));
-    App::new(Box::new(tab_view))
-}
-
-/// Flex tab: a FlexColumn with a button row, a text field, a flex spacer,
-/// and a confirm button pinned to the bottom.
 fn build_flex_demo(font: Arc<Font>) -> FlexColumn {
     let fa = Arc::clone(&font);
     let fb = Arc::clone(&font);
@@ -517,7 +536,6 @@ fn build_flex_demo(font: Arc<Font>) -> FlexColumn {
         ))))
 }
 
-/// Scroll tab: a ScrollView wrapping a tall FlexColumn of buttons.
 fn build_scroll_demo(font: Arc<Font>) -> ScrollView {
     let mut col = FlexColumn::new()
         .with_gap(8.0)
@@ -537,7 +555,6 @@ fn build_scroll_demo(font: Arc<Font>) -> ScrollView {
     ScrollView::new(Box::new(col))
 }
 
-/// Split tab: a draggable splitter between two panels.
 fn build_split_demo(font: Arc<Font>) -> Splitter {
     let fa = Arc::clone(&font);
     let fb = Arc::clone(&font);
@@ -572,69 +589,37 @@ fn build_split_demo(font: Arc<Font>) -> Splitter {
 }
 
 // ---------------------------------------------------------------------------
-// Persistent widget tree for the Tree tab
+// Key parsing — unified for all tabs
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static TREE_APP: RefCell<Option<App>> = RefCell::new(None);
-}
-
-fn ensure_tree_app(width: u32, height: u32) {
-    let _ = (width, height);
-    TREE_APP.with(|cell| {
-        if cell.borrow().is_none() {
-            *cell.borrow_mut() = Some(build_tree_ui(make_font()));
-        }
-    });
-}
-
-#[wasm_bindgen] pub fn on_tree_mouse_move(x: f64, y: f64) {
-    TREE_APP.with(|c| { if let Some(a) = c.borrow_mut().as_mut() { a.on_mouse_move(x, y); } });
-}
-#[wasm_bindgen] pub fn on_tree_mouse_down(x: f64, y: f64, button: u8) {
-    let btn = match button { 0=>MouseButton::Left, 1=>MouseButton::Middle, 2=>MouseButton::Right, n=>MouseButton::Other(n) };
-    TREE_APP.with(|c| { if let Some(a) = c.borrow_mut().as_mut() { a.on_mouse_down(x, y, btn, Modifiers::default()); } });
-}
-#[wasm_bindgen] pub fn on_tree_mouse_up(x: f64, y: f64, button: u8) {
-    let btn = match button { 0=>MouseButton::Left, 1=>MouseButton::Middle, 2=>MouseButton::Right, n=>MouseButton::Other(n) };
-    TREE_APP.with(|c| { if let Some(a) = c.borrow_mut().as_mut() { a.on_mouse_up(x, y, btn, Modifiers::default()); } });
-}
-#[wasm_bindgen] pub fn on_tree_mouse_wheel(x: f64, y: f64, delta_y: f64) {
-    TREE_APP.with(|c| { if let Some(a) = c.borrow_mut().as_mut() { a.on_mouse_wheel(x, y, delta_y); } });
-}
-#[wasm_bindgen] pub fn on_tree_mouse_leave() {
-    TREE_APP.with(|c| { if let Some(a) = c.borrow_mut().as_mut() { a.on_mouse_leave(); } });
-}
-#[wasm_bindgen] pub fn on_tree_key_down(key_str: &str, shift: bool, ctrl: bool, alt: bool) {
-    let mods = Modifiers { shift, ctrl, alt };
-    let key = parse_js_key_tree(key_str);
-    if let Some(k) = key {
-        TREE_APP.with(|c| { if let Some(a) = c.borrow_mut().as_mut() { a.on_key_down(k, mods); } });
-    }
-}
-
-fn parse_js_key_tree(key: &str) -> Option<Key> {
+fn parse_js_key(key: &str) -> Option<Key> {
     Some(match key {
-        "ArrowUp"    => Key::ArrowUp,
-        "ArrowDown"  => Key::ArrowDown,
+        "Backspace"  => Key::Backspace,
+        "Delete"     => Key::Delete,
         "ArrowLeft"  => Key::ArrowLeft,
         "ArrowRight" => Key::ArrowRight,
-        "Enter"      => Key::Enter,
-        " "          => Key::Char(' '),
+        "ArrowUp"    => Key::ArrowUp,
+        "ArrowDown"  => Key::ArrowDown,
+        "Home"       => Key::Home,
+        "End"        => Key::End,
         "Tab"        => Key::Tab,
+        "Enter"      => Key::Enter,
         "Escape"     => Key::Escape,
-        _ => return None,
+        " "          => Key::Char(' '),
+        s if s.chars().count() == 1 => Key::Char(s.chars().next()?),
+        s => Key::Other(s.to_string()),
     })
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Tree — Phase 6 interactive tree demo
+// WASM render export
 // ---------------------------------------------------------------------------
 
 #[wasm_bindgen]
-pub fn render_tree(width: u32, height: u32) -> Vec<u8> {
-    ensure_tree_app(width, height);
-    TREE_APP.with(|cell| {
+pub fn render(width: u32, height: u32) -> Vec<u8> {
+    ensure_demo_app();
+
+    DEMO_APP.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let app = borrow.as_mut().unwrap();
         app.layout(Size::new(width as f64, height as f64));
@@ -643,62 +628,76 @@ pub fn render_tree(width: u32, height: u32) -> Vec<u8> {
         {
             let mut ctx = GfxCtx::new(&mut fb);
             app.paint(&mut ctx);
-            let lsize = (width as f64 * 0.012).clamp(9.0, 13.0);
-            ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.3));
-            ctx.fill_text_gsv("agg-gui  Phase 6 — TreeView", 12.0, 6.0, lsize);
         }
         fb.pixels_flipped()
     })
 }
 
-fn build_tree_ui(font: Arc<Font>) -> App {
-    let mut tv = TreeView::new(Arc::clone(&font))
-        .with_row_height(26.0)
-        .with_font_size(13.0)
-        .with_indent_width(18.0);
+// ---------------------------------------------------------------------------
+// WASM event exports — single unified set
+// ---------------------------------------------------------------------------
 
-    // Project Alpha — expanded
-    let alpha = tv.add_root("Project Alpha", NodeIcon::Package);
-    tv.expand(alpha);
+#[wasm_bindgen]
+pub fn on_mouse_move(x: f64, y: f64) {
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_move(x, y);
+        }
+    });
+}
 
-    let src = tv.add_child(alpha, "src", NodeIcon::Folder);
-    tv.expand(src);
-    tv.add_child(src, "main.rs", NodeIcon::File);
-    tv.add_child(src, "lib.rs", NodeIcon::File);
-    let widgets_dir = tv.add_child(src, "widgets", NodeIcon::Folder);
-    tv.expand(widgets_dir);
-    tv.add_child(widgets_dir, "button.rs", NodeIcon::File);
-    tv.add_child(widgets_dir, "scroll_view.rs", NodeIcon::File);
-    tv.add_child(widgets_dir, "tree_view.rs", NodeIcon::File);
+#[wasm_bindgen]
+pub fn on_mouse_down(x: f64, y: f64, button: u8) {
+    let btn = match button {
+        0 => MouseButton::Left, 1 => MouseButton::Middle, 2 => MouseButton::Right,
+        n => MouseButton::Other(n),
+    };
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_down(x, y, btn, Modifiers::default());
+        }
+    });
+}
 
-    let tests = tv.add_child(alpha, "tests", NodeIcon::Folder);
-    tv.expand(tests);
-    tv.add_child(tests, "integration.rs", NodeIcon::File);
-    tv.add_child(tests, "unit.rs", NodeIcon::File);
+#[wasm_bindgen]
+pub fn on_mouse_up(x: f64, y: f64, button: u8) {
+    let btn = match button {
+        0 => MouseButton::Left, 1 => MouseButton::Middle, 2 => MouseButton::Right,
+        n => MouseButton::Other(n),
+    };
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_up(x, y, btn, Modifiers::default());
+        }
+    });
+}
 
-    tv.add_child(alpha, "Cargo.toml", NodeIcon::File);
-    tv.add_child(alpha, "README.md", NodeIcon::File);
+#[wasm_bindgen]
+pub fn on_mouse_wheel(x: f64, y: f64, delta_y: f64) {
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_wheel(x, y, delta_y);
+        }
+    });
+}
 
-    // Project Beta — collapsed
-    let beta = tv.add_root("Project Beta", NodeIcon::Package);
-    let assets = tv.add_child(beta, "assets", NodeIcon::Folder);
-    tv.add_child(assets, "logo.svg", NodeIcon::File);
-    tv.add_child(assets, "icons.png", NodeIcon::File);
-    let bsrc = tv.add_child(beta, "src", NodeIcon::Folder);
-    tv.add_child(bsrc, "app.rs", NodeIcon::File);
-    tv.add_child(bsrc, "config.rs", NodeIcon::File);
-    tv.add_child(beta, "Cargo.toml", NodeIcon::File);
+#[wasm_bindgen]
+pub fn on_mouse_leave() {
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_leave();
+        }
+    });
+}
 
-    // Project Gamma — collapsed
-    let gamma = tv.add_root("Project Gamma", NodeIcon::Package);
-    let gsrc = tv.add_child(gamma, "src", NodeIcon::Folder);
-    tv.add_child(gsrc, "main.rs", NodeIcon::File);
-    tv.add_child(gsrc, "render.rs", NodeIcon::File);
-    tv.add_child(gsrc, "scene.rs", NodeIcon::File);
-    let shaders = tv.add_child(gsrc, "shaders", NodeIcon::Folder);
-    tv.add_child(shaders, "vert.glsl", NodeIcon::File);
-    tv.add_child(shaders, "frag.glsl", NodeIcon::File);
-    tv.add_child(gamma, "Cargo.toml", NodeIcon::File);
-
-    App::new(Box::new(tv))
+#[wasm_bindgen]
+pub fn on_key_down(key_str: &str, shift: bool, ctrl: bool, alt: bool) {
+    if let Some(key) = parse_js_key(key_str) {
+        let mods = Modifiers { shift, ctrl, alt };
+        DEMO_APP.with(|cell| {
+            if let Some(app) = cell.borrow_mut().as_mut() {
+                app.on_key_down(key, mods);
+            }
+        });
+    }
 }

@@ -1,16 +1,22 @@
-//! Native WGL demo for agg-gui — Phase 6.
+//! Native WGL demo for agg-gui — Phase 7.
 //!
-//! Renders a TabView demo (Flex, Scroll, Split, Tree) via AGG → Framebuffer
-//! → GL texture → full-screen quad.  Winit events are forwarded to [`App`].
+//! The entire demo UI (tab bar + content) is rendered by agg-gui via AGG →
+//! Framebuffer → GL texture → full-screen quad. Winit events are forwarded
+//! to a single [`App`] that owns a top-level TabView (Basics, Text, Layout, Tree).
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use agg_gui::{
-    App, Button, Color, FlexColumn, FlexRow, Font, Framebuffer, GfxCtx,
-    Key as AggKey, Modifiers, MouseButton as AggMouseButton, NodeIcon,
-    ScrollView, Size, SizedBox, Spacer, Splitter, TabView, TextField, TreeView,
+    App, Button, Checkbox, Color, CompOp, Container, FlexColumn, FlexRow,
+    Font, Framebuffer, GfxCtx, Key as AggKey, Label, Modifiers, MouseButton as AggMouseButton,
+    NodeIcon, ProgressBar, RadioGroup, Rect, ScrollView, Separator, Size, SizedBox, Slider,
+    Spacer, Splitter, TabView, TextField, TreeView, Widget,
 };
+use agg_gui::event::{Event as AggEvent, EventResult as AggEventResult};
 
 use glutin::config::ConfigTemplateBuilder;
 use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
@@ -125,18 +131,382 @@ impl GlPresenter {
 }
 
 // ---------------------------------------------------------------------------
-// Widget tree — Phase 5 layout demo (mirrors the WASM Layout tab)
+// TextDemoWidget — leaf widget that draws the Phase 3 text showcase
 // ---------------------------------------------------------------------------
 
-fn build_layout_ui(font: Arc<Font>) -> App {
+struct TextDemoWidget {
+    bounds: Rect,
+    font: Arc<Font>,
+    children: Vec<Box<dyn Widget>>,
+}
+
+impl TextDemoWidget {
+    fn new(font: Arc<Font>) -> Self {
+        Self { bounds: Rect::default(), font, children: Vec::new() }
+    }
+}
+
+impl Widget for TextDemoWidget {
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
+        available
+    }
+
+    fn paint(&mut self, ctx: &mut GfxCtx) {
+        let w = self.bounds.width;
+        let h = self.bounds.height;
+        let font = Arc::clone(&self.font);
+        draw_text_tab(ctx, w, h, &font);
+    }
+
+    fn on_event(&mut self, _event: &AggEvent) -> AggEventResult { AggEventResult::Ignored }
+}
+
+// ---------------------------------------------------------------------------
+// Widget tree — Phase 7: single TabView with all four tabs
+// ---------------------------------------------------------------------------
+
+fn build_demo_ui(font: Arc<Font>) -> App {
     let tab_view = TabView::new(Arc::clone(&font))
+        .with_tab_bar_height(40.0)
+        .with_font_size(13.0)
+        .add_tab("Basics",  Box::new(build_basics_content(Arc::clone(&font))))
+        .add_tab("Widgets", Box::new(build_widgets_content(Arc::clone(&font))))
+        .add_tab("Text",    Box::new(TextDemoWidget::new(Arc::clone(&font))))
+        .add_tab("Layout",  Box::new(build_layout_content(Arc::clone(&font))))
+        .add_tab("Tree",    Box::new(build_tree_demo(Arc::clone(&font))));
+    App::new(Box::new(tab_view))
+}
+
+fn build_basics_content(font: Arc<Font>) -> Container {
+    let font2 = Arc::clone(&font);
+    let font3 = Arc::clone(&font);
+    let font4 = Arc::clone(&font);
+    let font5 = Arc::clone(&font);
+
+    let mut root = Container::new()
+        .with_background(Color::rgb(0.94, 0.94, 0.96))
+        .with_padding(24.0);
+
+    root.children_mut().push(Box::new(
+        Button::new("Primary Action", Arc::clone(&font))
+            .with_font_size(14.0)
+            .on_click(|| println!("Primary")),
+    ));
+    root.children_mut().push(Box::new(
+        Button::new("Secondary", Arc::clone(&font2))
+            .with_font_size(14.0)
+            .on_click(|| println!("Secondary")),
+    ));
+    root.children_mut().push(Box::new(
+        Button::new("Destructive", Arc::clone(&font3))
+            .with_font_size(14.0)
+            .on_click(|| println!("Destructive")),
+    ));
+    root.children_mut().push(Box::new(
+        TextField::new(Arc::clone(&font4))
+            .with_font_size(14.0)
+            .with_placeholder("Type something…"),
+    ));
+    root.children_mut().push(Box::new(
+        TextField::new(Arc::clone(&font5))
+            .with_font_size(14.0)
+            .with_text("editable text")
+            .with_placeholder("Another field"),
+    ));
+    root
+}
+
+fn build_widgets_content(font: Arc<Font>) -> ScrollView {
+    let slider_val = Rc::new(Cell::new(0.42_f64));
+    let cb1        = Rc::new(Cell::new(true));
+    let cb2        = Rc::new(Cell::new(false));
+    let cb3        = Rc::new(Cell::new(true));
+    let radio_sel  = Rc::new(Cell::new(0_usize));
+
+    let mut col = FlexColumn::new()
+        .with_gap(20.0)
+        .with_padding(24.0)
+        .with_background(Color::rgb(0.94, 0.94, 0.96));
+
+    // Buttons
+    col.push(Box::new(Label::new("Buttons", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    {
+        let row = FlexRow::new()
+            .with_gap(8.0)
+            .add(Box::new(SizedBox::fixed(120.0, 34.0).with_child(Box::new(
+                Button::new("Primary", Arc::clone(&font)).with_font_size(13.0).on_click(|| {})
+            ))))
+            .add(Box::new(SizedBox::fixed(120.0, 34.0).with_child(Box::new(
+                Button::new("Secondary", Arc::clone(&font))
+                    .with_font_size(13.0)
+                    .with_theme(agg_gui::widgets::button::ButtonTheme {
+                        background:         Color::rgba(0.22, 0.45, 0.88, 0.12),
+                        background_hovered: Color::rgba(0.22, 0.45, 0.88, 0.22),
+                        background_pressed: Color::rgba(0.22, 0.45, 0.88, 0.35),
+                        label_color:        Color::rgb(0.22, 0.45, 0.88),
+                        border_radius:      6.0,
+                        focus_ring_color:   Color::rgba(0.22, 0.45, 0.88, 0.55),
+                        focus_ring_width:   2.5,
+                    })
+                    .on_click(|| {})
+            ))))
+            .add(Box::new(SizedBox::fixed(120.0, 34.0).with_child(Box::new(
+                Button::new("Danger", Arc::clone(&font))
+                    .with_font_size(13.0)
+                    .with_theme(agg_gui::widgets::button::ButtonTheme {
+                        background:         Color::rgb(0.88, 0.25, 0.18),
+                        background_hovered: Color::rgb(0.95, 0.32, 0.24),
+                        background_pressed: Color::rgb(0.72, 0.18, 0.12),
+                        label_color:        Color::white(),
+                        border_radius:      6.0,
+                        focus_ring_color:   Color::rgba(0.88, 0.25, 0.18, 0.55),
+                        focus_ring_width:   2.5,
+                    })
+                    .on_click(|| {})
+            ))));
+        col.push(Box::new(row), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Checkboxes
+    col.push(Box::new(Label::new("Checkboxes", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    {
+        let v1 = Rc::clone(&cb1);
+        col.push(Box::new(Checkbox::new("Enable notifications", Arc::clone(&font), cb1.get())
+            .on_change(move |v| { v1.set(v); })), 0.0);
+        let v2 = Rc::clone(&cb2);
+        col.push(Box::new(Checkbox::new("Dark mode", Arc::clone(&font), cb2.get())
+            .on_change(move |v| { v2.set(v); })), 0.0);
+        let v3 = Rc::clone(&cb3);
+        col.push(Box::new(Checkbox::new("Send analytics", Arc::clone(&font), cb3.get())
+            .on_change(move |v| { v3.set(v); })), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Slider
+    col.push(Box::new(Label::new("Slider", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    {
+        let sv = Rc::clone(&slider_val);
+        col.push(Box::new(Slider::new(slider_val.get(), 0.0, 1.0, Arc::clone(&font))
+            .with_step(0.01)
+            .on_change(move |v| { sv.set(v); })), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Radio
+    col.push(Box::new(Label::new("Radio Group", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    {
+        let rs = Rc::clone(&radio_sel);
+        col.push(Box::new(RadioGroup::new(
+            vec!["Option A", "Option B", "Option C"],
+            radio_sel.get(),
+            Arc::clone(&font),
+        ).on_change(move |i| { rs.set(i); })), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Progress Bar
+    col.push(Box::new(Label::new("Progress Bar", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    col.push(Box::new(ProgressBar::new(slider_val.get(), Arc::clone(&font))), 0.0);
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Text Input
+    col.push(Box::new(Label::new("Text Input", Arc::clone(&font))
+        .with_font_size(16.0)
+        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+
+    col.push(Box::new(
+        TextField::new(Arc::clone(&font))
+            .with_font_size(14.0)
+            .with_placeholder("Type something here…")
+    ), 0.0);
+
+    col.push(Box::new(SizedBox::fixed(0.0, 24.0)), 0.0);
+
+    ScrollView::new(Box::new(col))
+}
+
+fn build_layout_content(font: Arc<Font>) -> TabView {
+    TabView::new(Arc::clone(&font))
         .with_tab_bar_height(36.0)
         .with_font_size(13.0)
         .add_tab("Flex",   Box::new(build_flex_demo(Arc::clone(&font))))
         .add_tab("Scroll", Box::new(build_scroll_demo(Arc::clone(&font))))
         .add_tab("Split",  Box::new(build_split_demo(Arc::clone(&font))))
-        .add_tab("Tree",   Box::new(build_tree_demo(Arc::clone(&font))));
-    App::new(Box::new(tab_view))
+}
+
+// ---------------------------------------------------------------------------
+// Text tab draw helpers (Phase 3)
+// ---------------------------------------------------------------------------
+
+fn draw_text_tab(ctx: &mut GfxCtx, w: f64, h: f64, font: &Arc<Font>) {
+    ctx.set_font(Arc::clone(font));
+    ctx.clear(Color::rgb(0.94, 0.94, 0.96));
+
+    let pad = (w.min(h) * 0.03).max(10.0);
+    let gap = pad * 0.6;
+    let col_w = (w - pad * 2.0 - gap) / 2.0;
+    let row_h = (h - pad * 2.0 - gap) / 2.0;
+
+    let panels = [
+        (pad,               pad + row_h + gap, col_w, row_h),
+        (pad + col_w + gap, pad + row_h + gap, col_w, row_h),
+        (pad,               pad,               col_w, row_h),
+        (pad + col_w + gap, pad,               col_w, row_h),
+    ];
+    for &(px, py, pw, ph) in &panels { draw_card(ctx, px, py, pw, ph); }
+    { let (px, py, pw, ph) = panels[0]; draw_sizes_panel(ctx, px, py, pw, ph); }
+    { let (px, py, pw, ph) = panels[1]; draw_measure_panel(ctx, px, py, pw, ph, font); }
+    { let (px, py, pw, ph) = panels[2]; draw_multiline_panel(ctx, px, py, pw, ph, font); }
+    { let (px, py, pw, ph) = panels[3]; draw_buttons_panel_text(ctx, px, py, pw, ph); }
+
+    let lsize = (w * 0.012).clamp(9.0, 13.0);
+    ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.35));
+    ctx.fill_text_gsv("agg-gui  Phase 3 — Text", pad, pad * 0.4, lsize);
+}
+
+fn draw_card(ctx: &mut GfxCtx, x: f64, y: f64, w: f64, h: f64) {
+    ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.08));
+    ctx.set_blend_mode(CompOp::Multiply);
+    ctx.begin_path(); ctx.rounded_rect(x + 2.0, y - 2.0, w, h, 10.0); ctx.fill();
+    ctx.set_blend_mode(CompOp::SrcOver);
+    ctx.set_fill_color(Color::rgb(1.0, 1.0, 1.0));
+    ctx.begin_path(); ctx.rounded_rect(x, y, w, h, 10.0); ctx.fill();
+}
+
+fn panel_title_gsv(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, title: &str) {
+    let size = (pw * 0.055).clamp(10.0, 16.0);
+    ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.55));
+    ctx.fill_text_gsv(title, px + pw * 0.05, py + ph * 0.86, size);
+}
+
+fn draw_sizes_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
+    panel_title_gsv(ctx, px, py, pw, ph, "Font Sizes");
+    let margin = pw * 0.06;
+    let sizes: &[(f64, &str)] = &[
+        (10.0, "Caption — 10px  The quick brown fox"),
+        (13.0, "Body — 13px  The quick brown fox"),
+        (18.0, "Subhead — 18px  The quick"),
+        (24.0, "Heading — 24px  agg-gui"),
+        (34.0, "Display — 34px  Aa"),
+    ];
+    let mut y = py + ph * 0.82;
+    let adv = ph * 0.155;
+    ctx.set_fill_color(Color::rgba(0.05, 0.05, 0.1, 0.85));
+    for &(size, label) in sizes.iter() {
+        ctx.set_font_size(size);
+        ctx.fill_text(label, px + margin, y);
+        y -= adv;
+    }
+}
+
+fn draw_measure_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
+    panel_title_gsv(ctx, px, py, pw, ph, "Measure Text");
+    let margin = pw * 0.06;
+    let font_size = (pw * 0.08).clamp(14.0, 26.0);
+    ctx.set_font_size(font_size);
+    let samples = ["Hello", "World!", "agg-gui", "Rust"];
+    let col_w = (pw - margin * 2.0) / samples.len() as f64;
+    let base_y = py + ph * 0.5;
+    for (i, &word) in samples.iter().enumerate() {
+        let x = px + margin + col_w * i as f64;
+        let m = ctx.measure_text(word).unwrap_or_default();
+        ctx.set_stroke_color(Color::rgba(0.6, 0.6, 0.65, 0.5)); ctx.set_line_width(1.0);
+        ctx.begin_path(); ctx.move_to(x, base_y-2.0); ctx.line_to(x+m.width, base_y-2.0); ctx.stroke();
+        ctx.set_stroke_color(Color::rgba(0.2, 0.5, 0.9, 0.35));
+        ctx.begin_path(); ctx.move_to(x, base_y+m.ascent); ctx.line_to(x+m.width, base_y+m.ascent); ctx.stroke();
+        ctx.set_stroke_color(Color::rgba(0.9, 0.3, 0.3, 0.35));
+        ctx.begin_path(); ctx.move_to(x, base_y-m.descent); ctx.line_to(x+m.width, base_y-m.descent); ctx.stroke();
+        ctx.set_fill_color(Color::rgba(0.2, 0.5, 0.9, 0.07));
+        ctx.begin_path(); ctx.rect(x, base_y-m.descent, m.width, m.ascent+m.descent); ctx.fill();
+        ctx.set_fill_color(Color::rgba(0.05, 0.05, 0.1, 0.88));
+        ctx.fill_text(word, x, base_y);
+    }
+    let lsize = (pw * 0.032).clamp(7.0, 10.0);
+    let ly = py + ph * 0.22;
+    let lx = px + margin;
+    ctx.set_font_size(lsize);
+    ctx.set_fill_color(Color::rgba(0.2, 0.5, 0.9, 0.7));  ctx.fill_text("— ascent",   lx, ly);
+    ctx.set_fill_color(Color::rgba(0.9, 0.3, 0.3, 0.7));  ctx.fill_text("— descent",  lx, ly - lsize * 1.5);
+    ctx.set_fill_color(Color::rgba(0.5, 0.5, 0.55, 0.7)); ctx.fill_text("— baseline", lx, ly - lsize * 3.0);
+    let _ = font;
+}
+
+fn draw_multiline_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
+    panel_title_gsv(ctx, px, py, pw, ph, "Multi-line");
+    let margin = pw * 0.06;
+    let font_size = (pw * 0.055).clamp(11.0, 16.0);
+    ctx.set_font_size(font_size);
+    ctx.set_fill_color(Color::rgba(0.05, 0.05, 0.1, 0.85));
+    let line_h = font.line_height_px(font_size) * 1.25;
+    let x = px + margin;
+    let lines = [
+        "agg-gui renders text by", "shaping with rustybuzz,",
+        "extracting outlines via", "ttf-parser, and feeding",
+        "Bezier curves into AGG.", "",
+        "No glyph atlas. Kerning", "and hinting are preserved.",
+    ];
+    let mut y = py + ph * 0.82;
+    for line in lines.iter() {
+        if !line.is_empty() { ctx.fill_text(line, x, y); }
+        y -= line_h;
+    }
+}
+
+fn draw_buttons_panel_text(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
+    panel_title_gsv(ctx, px, py, pw, ph, "Text + Graphics");
+    let margin = pw * 0.07;
+    let btn_h = ph * 0.16;
+    let btn_r = btn_h * 0.35;
+    let bx = px + margin;
+    let bw = pw - margin * 2.0;
+    let buttons: &[(&str, Color, Color)] = &[
+        ("Primary Action",  Color::rgb(0.22, 0.45, 0.88), Color::white()),
+        ("Secondary",       Color::rgba(0.22, 0.45, 0.88, 0.12), Color::rgb(0.22, 0.45, 0.88)),
+        ("Destructive",     Color::rgb(0.88, 0.25, 0.18), Color::white()),
+        ("Disabled",        Color::rgba(0.0, 0.0, 0.0, 0.08), Color::rgba(0.0,0.0,0.0,0.3)),
+    ];
+    let spacing = (ph * 0.74) / buttons.len() as f64;
+    let font_size = (btn_h * 0.38).clamp(10.0, 16.0);
+    ctx.set_font_size(font_size);
+    for (i, &(label, bg, fg)) in buttons.iter().enumerate() {
+        let by = py + ph * 0.78 - i as f64 * spacing;
+        ctx.set_fill_color(bg);
+        ctx.set_blend_mode(CompOp::SrcOver);
+        ctx.begin_path(); ctx.rounded_rect(bx, by - btn_h * 0.5, bw, btn_h, btn_r); ctx.fill();
+        if let Some(m) = ctx.measure_text(label) {
+            let tx = bx + (bw - m.width) * 0.5;
+            let ty = by - m.ascent * 0.45 + m.descent * 0.45;
+            ctx.set_fill_color(fg);
+            ctx.fill_text(label, tx, ty);
+        }
+    }
 }
 
 fn build_tree_demo(font: Arc<Font>) -> TreeView {
@@ -292,7 +662,7 @@ fn main() {
     let event_loop = EventLoop::new().expect("EventLoop::new");
 
     let window_attributes = WindowAttributes::default()
-        .with_title("agg-gui — Phase 6 Demo")
+        .with_title("agg-gui — Phase 7 Demo")
         .with_inner_size(LogicalSize::new(1280u32, 720u32));
 
     let template = ConfigTemplateBuilder::new().with_alpha_size(0);
@@ -345,7 +715,7 @@ fn main() {
     let font = Arc::new(Font::from_slice(FONT_BYTES).expect("parse CascadiaCode.ttf"));
     let mut presenter = unsafe { GlPresenter::new(gl) };
     let mut fb = Framebuffer::new(size.width.max(1), size.height.max(1));
-    let mut app = build_layout_ui(Arc::clone(&font));
+    let mut app = build_demo_ui(Arc::clone(&font));
 
     // Last known cursor position (Y-down, physical pixels).
     let mut cursor_x = 0.0f64;
@@ -410,10 +780,11 @@ fn main() {
                 Event::WindowEvent {
                     event: WindowEvent::MouseWheel { delta, .. }, ..
                 } => {
-                    // Positive delta_y = scroll up = increase scroll_offset in ScrollView.
+                    // Winit: LineDelta y > 0 = wheel up = scroll content up = negative delta.
+                    // PixelDelta: y > 0 = physical scroll down = positive delta.
                     let delta_y = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => y as f64,
-                        winit::event::MouseScrollDelta::PixelDelta(d) => -d.y / 40.0,
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => -(y as f64),
+                        winit::event::MouseScrollDelta::PixelDelta(d) => d.y / 40.0,
                     };
                     app.on_mouse_wheel(cursor_x, cursor_y, delta_y);
                 }
@@ -438,7 +809,7 @@ fn render_frame(app: &mut App, fb: &mut Framebuffer, presenter: &mut GlPresenter
 
         let lsize = (w as f64 * 0.012).clamp(9.0, 13.0);
         ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.3));
-        ctx.fill_text_gsv("agg-gui  Phase 6 — Layout & Tree", 12.0, 6.0, lsize);
+        ctx.fill_text_gsv("agg-gui  Phase 7 — Full Widget UI", 12.0, 6.0, lsize);
     }
     unsafe { presenter.update_texture(fb) };
 }

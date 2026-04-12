@@ -427,6 +427,8 @@ impl Widget for TreeView {
             Event::FocusLost   => { self.focused = false; EventResult::Consumed }
 
             Event::MouseWheel { delta_y, .. } => {
+                // Convention: delta_y > 0 = user scrolled DOWN (wants to see content below).
+                // Increasing scroll_offset shifts content UP → reveals lower rows. ✓
                 self.scroll_offset =
                     (self.scroll_offset + delta_y * 40.0).clamp(0.0, self.max_scroll());
                 EventResult::Consumed

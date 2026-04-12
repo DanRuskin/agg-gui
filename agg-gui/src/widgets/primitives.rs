@@ -1,5 +1,6 @@
-//! Primitive layout widgets: Stack, Padding, SizedBox, Spacer.
+//! Primitive layout widgets: Stack, Padding, SizedBox, Spacer, Separator.
 
+use crate::color::Color;
 use crate::event::{Event, EventResult};
 use crate::geometry::{Rect, Size};
 use crate::gfx_ctx::GfxCtx;
@@ -179,6 +180,70 @@ impl Widget for Spacer {
     fn layout(&mut self, available: Size) -> Size { available }
 
     fn paint(&mut self, _ctx: &mut GfxCtx) {}
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
+// ---------------------------------------------------------------------------
+// Separator — a thin horizontal or vertical divider line
+// ---------------------------------------------------------------------------
+
+/// A thin horizontal or vertical divider line.
+pub struct Separator {
+    bounds: Rect,
+    children: Vec<Box<dyn Widget>>,
+    vertical: bool,
+    margin: f64,
+    color: Color,
+}
+
+impl Separator {
+    /// Create a horizontal separator (the common case).
+    pub fn horizontal() -> Self {
+        Self {
+            bounds: Rect::default(),
+            children: Vec::new(),
+            vertical: false,
+            margin: 4.0,
+            color: Color::rgba(0.0, 0.0, 0.0, 0.12),
+        }
+    }
+
+    /// Create a vertical separator.
+    pub fn vertical() -> Self {
+        Self { vertical: true, ..Self::horizontal() }
+    }
+
+    pub fn with_margin(mut self, m: f64) -> Self { self.margin = m; self }
+    pub fn with_color(mut self, c: Color) -> Self { self.color = c; self }
+}
+
+impl Widget for Separator {
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        if self.vertical {
+            Size::new(1.0 + self.margin * 2.0, available.height)
+        } else {
+            Size::new(available.width, 1.0 + self.margin * 2.0)
+        }
+    }
+
+    fn paint(&mut self, ctx: &mut GfxCtx) {
+        let w = self.bounds.width;
+        let h = self.bounds.height;
+        ctx.set_fill_color(self.color);
+        ctx.begin_path();
+        if self.vertical {
+            ctx.rect(self.margin, 0.0, 1.0, h);
+        } else {
+            ctx.rect(0.0, self.margin, w, 1.0);
+        }
+        ctx.fill();
+    }
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
