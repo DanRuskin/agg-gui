@@ -1,9 +1,10 @@
-// agg-gui demo — Phase 7 frontend
+// agg-gui demo — Phase 8 frontend (WebGL2)
 //
-// The full UI (tab bar + content) is rendered by agg-gui on the canvas.
-// This file loads the WASM module and forwards browser events to it.
+// The WASM module renders the full UI via WebGL2 directly to the canvas.
+// render() returns void — GL writes to the canvas; we no longer use 2D ctx.
+// A requestAnimationFrame loop drives the cube animation continuously.
 
-type RenderFn  = (width: number, height: number) => Uint8Array;
+type RenderFn  = (width: number, height: number) => void;
 type MouseXYFn = (x: number, y: number) => void;
 type MouseXYBFn = (x: number, y: number, button: number) => void;
 type WheelFn   = (x: number, y: number, delta_y: number) => void;
@@ -13,45 +14,52 @@ type VoidFn    = () => void;
 let wasmModule: Record<string, unknown> | null = null;
 
 // --- Canvas setup ---
+// The WASM module calls getContext("webgl2") on this element internally.
+// We must NOT call getContext("2d") here — a canvas can only have one context.
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
-const ctx2d = canvas.getContext("2d")!;
 const loadingEl = document.getElementById("loading")!;
-const statusEl = document.getElementById("status")!;
+const statusEl  = document.getElementById("status")!;
 
-// --- Render loop ---
+// --- Canvas size helper ---
+
+function updateCanvasSize(): boolean {
+  const wrap = canvas.parentElement!;
+  const dpr  = window.devicePixelRatio || 1;
+  const w    = Math.floor(wrap.clientWidth  * dpr);
+  const h    = Math.floor(wrap.clientHeight * dpr);
+
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width  = w;
+    canvas.height = h;
+  }
+  return w > 0 && h > 0;
+}
+
+// --- Render ---
 
 function render() {
   if (!wasmModule) return;
-
-  const wrap = canvas.parentElement!;
-  const dpr = window.devicePixelRatio || 1;
-  const w = Math.floor(wrap.clientWidth * dpr);
-  const h = Math.floor(wrap.clientHeight * dpr);
-
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w;
-    canvas.height = h;
-  }
-  if (w === 0 || h === 0) return;
+  if (!updateCanvasSize()) return;
 
   const t0 = performance.now();
-  const pixels = (wasmModule["render"] as RenderFn)(w, h);
-  const imageData = new ImageData(
-    new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength),
-    w, h,
-  );
-  ctx2d.putImageData(imageData, 0, 0);
-
+  (wasmModule["render"] as RenderFn)(canvas.width, canvas.height);
   const ms = (performance.now() - t0).toFixed(1);
-  statusEl.textContent = `${w}×${h}  ${ms}ms`;
+  statusEl.textContent = `${canvas.width}×${canvas.height}  ${ms}ms`;
+}
+
+// --- Animation loop (drives cube rotation) ---
+
+function animationLoop() {
+  render();
+  requestAnimationFrame(animationLoop);
 }
 
 // --- Canvas coordinate helper ---
 
 function canvasPos(e: MouseEvent): [number, number] {
   const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
+  const dpr  = window.devicePixelRatio || 1;
   return [(e.clientX - rect.left) * dpr, (e.clientY - rect.top) * dpr];
 }
 
@@ -61,7 +69,7 @@ canvas.addEventListener("mousemove", (e) => {
   if (!wasmModule) return;
   const [x, y] = canvasPos(e);
   (wasmModule["on_mouse_move"] as MouseXYFn)(x, y);
-  render();
+  // render() will fire on the next rAF tick; no extra call needed.
 });
 
 canvas.addEventListener("mousedown", (e) => {
@@ -70,20 +78,17 @@ canvas.addEventListener("mousedown", (e) => {
   canvas.focus();
   const [x, y] = canvasPos(e);
   (wasmModule["on_mouse_down"] as MouseXYBFn)(x, y, e.button);
-  render();
 });
 
 canvas.addEventListener("mouseup", (e) => {
   if (!wasmModule) return;
   const [x, y] = canvasPos(e);
   (wasmModule["on_mouse_up"] as MouseXYBFn)(x, y, e.button);
-  render();
 });
 
 canvas.addEventListener("mouseleave", () => {
   if (!wasmModule) return;
   (wasmModule["on_mouse_leave"] as VoidFn)();
-  render();
 });
 
 canvas.addEventListener("wheel", (e) => {
@@ -92,34 +97,34 @@ canvas.addEventListener("wheel", (e) => {
   const [x, y] = canvasPos(e);
   const delta_y = e.deltaY / (e.deltaMode === 0 ? 40.0 : 1.0);
   (wasmModule["on_mouse_wheel"] as WheelFn)(x, y, delta_y);
-  render();
 }, { passive: false });
 
 canvas.addEventListener("keydown", (e) => {
   if (!wasmModule) return;
   if (e.key !== "Tab") e.preventDefault();
   (wasmModule["on_key_down"] as KeyFn)(e.key, e.shiftKey, e.ctrlKey, e.altKey);
-  render();
 });
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // --- Resize observer ---
-
-const ro = new ResizeObserver(() => render());
+// Canvas size changes are picked up automatically by the animation loop.
+const ro = new ResizeObserver(() => updateCanvasSize());
 ro.observe(canvas.parentElement!);
 
 // --- Load WASM ---
 
 async function init() {
   try {
-    const wasm = await import("../public/pkg/demo_wasm.js");
+    const wasm    = await import("../public/pkg/demo_wasm.js");
     const wasmUrl = new URL("./public/pkg/demo_wasm_bg.wasm", location.href);
     await wasm.default({ module_or_path: wasmUrl });
 
     wasmModule = wasm as unknown as Record<string, unknown>;
     loadingEl.classList.add("hidden");
-    render();
+
+    // Start the continuous animation loop.
+    requestAnimationFrame(animationLoop);
   } catch (e) {
     loadingEl.textContent = `Error loading WASM: ${e}`;
     console.error(e);

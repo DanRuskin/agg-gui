@@ -1,25 +1,30 @@
-//! WASM demo crate for agg-gui — Phase 7.
+//! WASM demo crate for agg-gui — Phase 8 (WebGL2).
 //!
-//! The entire demo (tab bar + content) is rendered by agg-gui. The HTML page
-//! provides only a bare `<canvas>`. A single top-level `TabView` hosts all
-//! four tabs (Basics, Text, Layout, Tree).
+//! The entire demo (tab bar + content) is rendered by agg-gui into an AGG
+//! framebuffer, which is then uploaded as a WebGL2 texture and blitted to the
+//! canvas as a fullscreen quad.  A rotating 3D cube is rendered on top via a
+//! separate GL draw pass.
 //!
 //! WASM exports:
-//! - `render(width, height) -> Vec<u8>` — full-frame RGBA render
+//! - `render(width, height)` — full-frame render (void; GL writes to canvas)
 //! - `on_mouse_move/down/up/wheel/leave` — mouse events
 //! - `on_key_down` — keyboard events
+
+mod gl_resources;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use agg_gui::{
     App, Button, Checkbox, Color, CompOp, Container, Event, EventResult, FlexColumn, FlexRow,
     Font, Framebuffer, GfxCtx, Key, Label, Modifiers, MouseButton, NodeIcon, ProgressBar,
     RadioGroup, Rect, ScrollView, Separator, Size, SizedBox, Slider, Spacer, Splitter,
     Stack, TabView, TextField, TreeView, Widget, Window,
 };
+use gl_resources::{GlCubeWidget, GlState, CUBE_SCREEN_RECT};
 
 // Embed the font at compile time.
 const FONT_BYTES: &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
@@ -34,6 +39,7 @@ fn make_font() -> Arc<Font> {
 
 thread_local! {
     static DEMO_APP: RefCell<Option<App>> = RefCell::new(None);
+    static GL_STATE:  RefCell<Option<GlState>> = RefCell::new(None);
 }
 
 fn ensure_demo_app() {
@@ -42,6 +48,34 @@ fn ensure_demo_app() {
             *cell.borrow_mut() = Some(build_demo_ui(make_font()));
         }
     });
+}
+
+fn ensure_gl_state() {
+    GL_STATE.with(|cell| {
+        if cell.borrow().is_none() {
+            let gl = init_webgl2();
+            *cell.borrow_mut() = Some(unsafe { GlState::new(gl) });
+        }
+    });
+}
+
+fn init_webgl2() -> glow::Context {
+    let document = web_sys::window()
+        .expect("no global window")
+        .document()
+        .expect("no document");
+    let canvas = document
+        .get_element_by_id("canvas")
+        .expect("canvas element not found")
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .expect("element is not a canvas");
+    let webgl2 = canvas
+        .get_context("webgl2")
+        .expect("get_context failed")
+        .expect("webgl2 context unavailable")
+        .dyn_into::<web_sys::WebGl2RenderingContext>()
+        .expect("not a WebGl2RenderingContext");
+    glow::Context::from_webgl2_context(webgl2)
 }
 
 fn build_demo_ui(font: Arc<Font>) -> App {
@@ -65,38 +99,20 @@ fn build_demo_ui(font: Arc<Font>) -> App {
 
 fn build_demo_window(font: Arc<Font>) -> Window {
     let mut content = FlexColumn::new()
-        .with_gap(10.0)
-        .with_padding(14.0)
-        .with_background(Color::rgb(0.97, 0.97, 0.98));
+        .with_gap(8.0)
+        .with_padding(10.0)
+        .with_background(Color::rgb(0.08, 0.08, 0.12));
 
-    content.push(Box::new(Label::new("agg-gui — Phase 8", Arc::clone(&font))
-        .with_font_size(15.0)
-        .with_color(Color::rgb(0.1, 0.1, 0.12))), 0.0);
+    content.push(Box::new(Label::new("WebGL2 — rotating cube", Arc::clone(&font))
+        .with_font_size(11.0)
+        .with_color(Color::rgba(1.0, 1.0, 1.0, 0.55))), 0.0);
 
-    content.push(Box::new(Label::new("Floating Window widget", Arc::clone(&font))
-        .with_font_size(12.0)
-        .with_color(Color::rgb(0.4, 0.4, 0.45))), 0.0);
+    // The GlCubeWidget fills the remaining space; the GL renderer draws the
+    // actual cube on top of the AGG framebuffer blit each frame.
+    content.push(Box::new(GlCubeWidget::new()), 1.0);
 
-    content.push(Box::new(Separator::horizontal()), 0.0);
-
-    content.push(Box::new(Label::new("Drag the title bar to move.", Arc::clone(&font))
-        .with_font_size(12.0)
-        .with_color(Color::rgb(0.3, 0.3, 0.35))), 0.0);
-
-    content.push(Box::new(Label::new("Click × to close.", Arc::clone(&font))
-        .with_font_size(12.0)
-        .with_color(Color::rgb(0.3, 0.3, 0.35))), 0.0);
-
-    content.push(Box::new(Separator::horizontal()), 0.0);
-
-    content.push(Box::new(
-        Button::new("OK", Arc::clone(&font))
-            .with_font_size(13.0)
-            .on_click(|| {})
-    ), 0.0);
-
-    Window::new("About", font, Box::new(content))
-        .with_bounds(Rect::new(60.0, 200.0, 280.0, 220.0))
+    Window::new("3D Demo", font, Box::new(content))
+        .with_bounds(Rect::new(60.0, 160.0, 300.0, 260.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -663,11 +679,15 @@ fn parse_js_key(key: &str) -> Option<Key> {
 // WASM render export
 // ---------------------------------------------------------------------------
 
+/// Full-frame render.  Returns void: the AGG framebuffer is uploaded to a
+/// WebGL2 texture and blitted to the canvas; the 3D cube is rendered on top.
 #[wasm_bindgen]
-pub fn render(width: u32, height: u32) -> Vec<u8> {
+pub fn render(width: u32, height: u32) {
     ensure_demo_app();
+    ensure_gl_state();
 
-    DEMO_APP.with(|cell| {
+    // 1. AGG pass — layout + paint into software framebuffer.
+    let pixels = DEMO_APP.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let app = borrow.as_mut().unwrap();
         app.layout(Size::new(width as f64, height as f64));
@@ -677,8 +697,19 @@ pub fn render(width: u32, height: u32) -> Vec<u8> {
             let mut ctx = GfxCtx::new(&mut fb);
             app.paint(&mut ctx);
         }
+        // pixels_flipped() → rows in top-to-bottom order (matches ImageData /
+        // WebGL upload convention with UV flip in the blit quad).
         fb.pixels_flipped()
-    })
+    });
+
+    // 2. GL pass — blit AGG texture, then overlay the cube.
+    let cube_rect = CUBE_SCREEN_RECT.with(|r| r.get());
+    GL_STATE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        if let Some(state) = borrow.as_mut() {
+            unsafe { state.render(&pixels, width, height, cube_rect); }
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
