@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::color::Color;
 use crate::event::{Event, EventResult, Key, MouseButton};
 use crate::geometry::{Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::text::Font;
 use crate::widget::Widget;
 
@@ -97,7 +97,7 @@ impl Widget for RadioGroup {
         Size::new(available.width, h)
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let h = self.bounds.height;
 
         // Focus outline around whole widget

@@ -26,7 +26,7 @@ use std::cell::Cell;
 
 use agg_gui::{Color, Rect, Size};
 use agg_gui::event::{Event, EventResult};
-use agg_gui::gfx_ctx::GfxCtx;
+use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::widget::Widget;
 use glow::HasContext;
 
@@ -62,7 +62,7 @@ impl Widget for GlCubeWidget {
 
     fn layout(&mut self, available: Size) -> Size { available }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         // Capture screen rect from the accumulated transform.
         let t = ctx.transform();
         CUBE_SCREEN_RECT.with(|r| r.set(Rect::new(

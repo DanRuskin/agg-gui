@@ -438,6 +438,55 @@ pub(crate) fn rasterize_stroke(
     render_scanlines_aa_solid(&mut ras, &mut sl, &mut rb, color);
 }
 
+// ---------------------------------------------------------------------------
+// DrawCtx blanket impl for GfxCtx
+// ---------------------------------------------------------------------------
+
+impl crate::draw_ctx::DrawCtx for GfxCtx<'_> {
+    fn set_fill_color(&mut self, c: crate::color::Color)     { self.set_fill_color(c) }
+    fn set_stroke_color(&mut self, c: crate::color::Color)   { self.set_stroke_color(c) }
+    fn set_line_width(&mut self, w: f64)                      { self.set_line_width(w) }
+    fn set_line_join(&mut self, j: agg_rust::math_stroke::LineJoin) { self.set_line_join(j) }
+    fn set_line_cap(&mut self, c: agg_rust::math_stroke::LineCap)   { self.set_line_cap(c) }
+    fn set_blend_mode(&mut self, m: agg_rust::comp_op::CompOp)      { self.set_blend_mode(m) }
+    fn set_global_alpha(&mut self, a: f64)                   { self.set_global_alpha(a) }
+    fn set_font(&mut self, f: Arc<crate::text::Font>)        { self.set_font(f) }
+    fn set_font_size(&mut self, s: f64)                      { self.set_font_size(s) }
+    fn clip_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.clip_rect(x, y, w, h) }
+    fn reset_clip(&mut self)                                  { self.reset_clip() }
+    fn clear(&mut self, c: crate::color::Color)              { self.clear(c) }
+    fn begin_path(&mut self)                                  { self.begin_path() }
+    fn move_to(&mut self, x: f64, y: f64)                    { self.move_to(x, y) }
+    fn line_to(&mut self, x: f64, y: f64)                    { self.line_to(x, y) }
+    fn cubic_to(&mut self, cx1: f64, cy1: f64, cx2: f64, cy2: f64, x: f64, y: f64) {
+        self.cubic_to(cx1, cy1, cx2, cy2, x, y)
+    }
+    fn quad_to(&mut self, cx: f64, cy: f64, x: f64, y: f64) { self.quad_to(cx, cy, x, y) }
+    fn arc_to(&mut self, cx: f64, cy: f64, r: f64, a1: f64, a2: f64, ccw: bool) {
+        self.arc_to(cx, cy, r, a1, a2, ccw)
+    }
+    fn circle(&mut self, cx: f64, cy: f64, r: f64)          { self.circle(cx, cy, r) }
+    fn rect(&mut self, x: f64, y: f64, w: f64, h: f64)      { self.rect(x, y, w, h) }
+    fn rounded_rect(&mut self, x: f64, y: f64, w: f64, h: f64, r: f64) {
+        self.rounded_rect(x, y, w, h, r)
+    }
+    fn close_path(&mut self)                                  { self.close_path() }
+    fn fill(&mut self)                                        { self.fill() }
+    fn stroke(&mut self)                                      { self.stroke() }
+    fn fill_and_stroke(&mut self)                             { self.fill_and_stroke() }
+    fn fill_text(&mut self, t: &str, x: f64, y: f64)        { self.fill_text(t, x, y) }
+    fn fill_text_gsv(&mut self, t: &str, x: f64, y: f64, s: f64) { self.fill_text_gsv(t, x, y, s) }
+    fn measure_text(&self, t: &str) -> Option<crate::text::TextMetrics> { self.measure_text(t) }
+    fn transform(&self) -> agg_rust::trans_affine::TransAffine { self.transform() }
+    fn save(&mut self)                                        { self.save() }
+    fn restore(&mut self)                                     { self.restore() }
+    fn translate(&mut self, tx: f64, ty: f64)                { self.translate(tx, ty) }
+    fn rotate(&mut self, r: f64)                             { self.rotate(r) }
+    fn scale(&mut self, sx: f64, sy: f64)                    { self.scale(sx, sy) }
+    fn set_transform(&mut self, m: agg_rust::trans_affine::TransAffine) { self.set_transform(m) }
+    fn reset_transform(&mut self)                             { self.reset_transform() }
+}
+
 /// Apply a Y-up scissor clip to a `RendererBase` (pixel-inclusive coordinates).
 pub(crate) fn apply_clip<PF: agg_rust::pixfmt_rgba::PixelFormat>(
     rb: &mut RendererBase<PF>,

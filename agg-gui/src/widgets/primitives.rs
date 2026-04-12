@@ -3,7 +3,7 @@
 use crate::color::Color;
 use crate::event::{Event, EventResult};
 use crate::geometry::{Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::widget::Widget;
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ impl Widget for Stack {
         available
     }
 
-    fn paint(&mut self, _ctx: &mut GfxCtx) {}
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
@@ -87,7 +87,7 @@ impl Widget for Padding {
         )
     }
 
-    fn paint(&mut self, _ctx: &mut GfxCtx) {}
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
@@ -145,7 +145,7 @@ impl Widget for SizedBox {
         Size::new(w, h)
     }
 
-    fn paint(&mut self, _ctx: &mut GfxCtx) {}
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
@@ -179,7 +179,7 @@ impl Widget for Spacer {
 
     fn layout(&mut self, available: Size) -> Size { available }
 
-    fn paint(&mut self, _ctx: &mut GfxCtx) {}
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
@@ -232,7 +232,7 @@ impl Widget for Separator {
         }
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let w = self.bounds.width;
         let h = self.bounds.height;
         ctx.set_fill_color(self.color);

@@ -10,7 +10,10 @@
 //! - `on_mouse_move/down/up/wheel/leave` — mouse events
 //! - `on_key_down` — keyboard events
 
+mod gl_gfx_ctx;
 mod gl_resources;
+
+use gl_gfx_ctx::GlGfxCtx;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,7 +22,7 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use agg_gui::{
-    App, Button, Checkbox, Color, CompOp, Container, Event, EventResult, FlexColumn, FlexRow,
+    App, Button, Checkbox, Color, CompOp, Container, DrawCtx, Event, EventResult, FlexColumn, FlexRow,
     Font, Framebuffer, GfxCtx, Key, Label, Modifiers, MouseButton, NodeIcon, ProgressBar,
     RadioGroup, Rect, ScrollView, Separator, Size, SizedBox, Slider, Spacer, Splitter,
     Stack, TabView, TextField, TreeView, Widget, Window,
@@ -394,7 +397,7 @@ impl Widget for TextDemoWidget {
         available
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let w = self.bounds.width;
         let h = self.bounds.height;
         draw_text_tab(ctx, w, h, &Arc::clone(&self.font));
@@ -407,7 +410,7 @@ impl Widget for TextDemoWidget {
 // Text tab drawing helpers (Phase 3)
 // ---------------------------------------------------------------------------
 
-fn draw_text_tab(ctx: &mut GfxCtx, w: f64, h: f64, font: &Arc<Font>) {
+fn draw_text_tab(ctx: &mut dyn DrawCtx, w: f64, h: f64, font: &Arc<Font>) {
     ctx.set_font(Arc::clone(font));
     // Fill only the widget's local area, not the entire framebuffer.
     // ctx.clear() would erase the tab bar already painted by the parent TabView.
@@ -442,7 +445,7 @@ fn draw_text_tab(ctx: &mut GfxCtx, w: f64, h: f64, font: &Arc<Font>) {
     ctx.fill_text_gsv("agg-gui  Phase 3 — Text", pad, pad * 0.4, lsize);
 }
 
-fn draw_card(ctx: &mut GfxCtx, x: f64, y: f64, w: f64, h: f64) {
+fn draw_card(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.08));
     ctx.set_blend_mode(CompOp::Multiply);
     ctx.begin_path();
@@ -455,13 +458,13 @@ fn draw_card(ctx: &mut GfxCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.fill();
 }
 
-fn panel_title_gsv(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, title: &str) {
+fn panel_title_gsv(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64, title: &str) {
     let size = (pw * 0.055).clamp(10.0, 16.0);
     ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.55));
     ctx.fill_text_gsv(title, px + pw * 0.05, py + ph * 0.86, size);
 }
 
-fn draw_sizes_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
+fn draw_sizes_panel(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64) {
     panel_title_gsv(ctx, px, py, pw, ph, "Font Sizes");
     let margin = pw * 0.06;
     let sizes: &[(f64, &str)] = &[
@@ -481,7 +484,7 @@ fn draw_sizes_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
     }
 }
 
-fn draw_measure_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
+fn draw_measure_panel(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
     panel_title_gsv(ctx, px, py, pw, ph, "Measure Text");
     let margin = pw * 0.06;
     let font_size = (pw * 0.08).clamp(14.0, 26.0);
@@ -514,7 +517,7 @@ fn draw_measure_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font
     let _ = font;
 }
 
-fn draw_multiline_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
+fn draw_multiline_panel(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
     panel_title_gsv(ctx, px, py, pw, ph, "Multi-line");
     let margin = pw * 0.06;
     let font_size = (pw * 0.055).clamp(11.0, 16.0);
@@ -539,7 +542,7 @@ fn draw_multiline_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, fo
     }
 }
 
-fn draw_buttons_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
+fn draw_buttons_panel(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64) {
     panel_title_gsv(ctx, px, py, pw, ph, "Text + Graphics");
     let margin = pw * 0.07;
     let btn_h = ph * 0.16;
@@ -679,36 +682,49 @@ fn parse_js_key(key: &str) -> Option<Key> {
 // WASM render export
 // ---------------------------------------------------------------------------
 
-/// Full-frame render.  Returns void: the AGG framebuffer is uploaded to a
-/// WebGL2 texture and blitted to the canvas; the 3D cube is rendered on top.
+/// Full-frame render.  Direct GL path: the widget tree is painted via
+/// `GlGfxCtx` (tess2 tessellation → WebGL2 draw calls).  No off-screen
+/// framebuffer is used.  The rotating 3D cube is drawn last, on top of
+/// the 2D widget content.
 #[wasm_bindgen]
 pub fn render(width: u32, height: u32) {
     ensure_demo_app();
     ensure_gl_state();
 
-    // 1. AGG pass — layout + paint into software framebuffer.
-    let pixels = DEMO_APP.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let app = borrow.as_mut().unwrap();
-        app.layout(Size::new(width as f64, height as f64));
+    GL_STATE.with(|gl_cell| {
+        let mut gl_borrow = gl_cell.borrow_mut();
+        let state = match gl_borrow.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
 
-        let mut fb = Framebuffer::new(width, height);
-        {
-            let mut ctx = GfxCtx::new(&mut fb);
-            app.paint(&mut ctx);
+        // --- Setup GL state for 2D rendering ---
+        let gl_rc = state.gl_rc();
+        unsafe {
+            use glow::HasContext;
+            gl_rc.viewport(0, 0, width as i32, height as i32);
+            gl_rc.clear_color(0.1, 0.1, 0.1, 1.0);
+            gl_rc.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            gl_rc.enable(glow::BLEND);
+            gl_rc.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            gl_rc.disable(glow::DEPTH_TEST);
+            gl_rc.disable(glow::SCISSOR_TEST);
         }
-        // pixels_flipped() → rows in top-to-bottom order (matches ImageData /
-        // WebGL upload convention with UV flip in the blit quad).
-        fb.pixels_flipped()
-    });
 
-    // 2. GL pass — blit AGG texture, then overlay the cube.
-    let cube_rect = CUBE_SCREEN_RECT.with(|r| r.get());
-    GL_STATE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        if let Some(state) = borrow.as_mut() {
-            unsafe { state.render(&pixels, width, height, cube_rect); }
-        }
+        // --- 2D widget paint pass via GlGfxCtx ---
+        let mut gl_ctx = unsafe { GlGfxCtx::new(gl_rc, width as f32, height as f32) };
+
+        DEMO_APP.with(|app_cell| {
+            let mut app_borrow = app_cell.borrow_mut();
+            if let Some(app) = app_borrow.as_mut() {
+                app.layout(Size::new(width as f64, height as f64));
+                app.paint(&mut gl_ctx);
+            }
+        });
+
+        // --- 3D cube on top (rendered during widget draw pass sequence) ---
+        let cube_rect = CUBE_SCREEN_RECT.with(|r| r.get());
+        unsafe { state.draw_cube_only(cube_rect, height as f64, width as i32, height as i32); }
     });
 }
 

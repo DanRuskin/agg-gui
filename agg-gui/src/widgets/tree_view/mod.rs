@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::color::Color;
 use crate::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use crate::geometry::{Point, Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::text::Font;
 use crate::widget::Widget;
 
@@ -262,7 +262,7 @@ impl Widget for TreeView {
         available
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let h = self.bounds.height;
         let w = self.bounds.width;
         let content_w = w - SCROLLBAR_W;

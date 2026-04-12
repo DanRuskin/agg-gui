@@ -25,6 +25,7 @@
 //! the rationale.
 
 pub mod color;
+pub mod draw_ctx;
 pub mod event;
 pub mod framebuffer;
 pub mod geometry;
@@ -36,6 +37,7 @@ pub mod widgets;
 
 // Re-export the most commonly used types at the crate root.
 pub use color::Color;
+pub use draw_ctx::DrawCtx;
 pub use event::{Event, EventResult, Key, Modifiers, MouseButton};
 pub use framebuffer::Framebuffer;
 pub use geometry::{Point, Rect, Size};

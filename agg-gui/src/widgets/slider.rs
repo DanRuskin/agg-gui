@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::color::Color;
 use crate::event::{Event, EventResult, Key, MouseButton};
 use crate::geometry::{Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::text::Font;
 use crate::widget::Widget;
 
@@ -103,7 +103,7 @@ impl Widget for Slider {
         Size::new(available.width, WIDGET_H)
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let w = self.bounds.width;
         let h = self.bounds.height;
         let cy = h * 0.5;

@@ -21,7 +21,7 @@
 use crate::color::Color;
 use crate::event::{Event, EventResult};
 use crate::geometry::{Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::widget::Widget;
 
 // ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ impl Widget for FlexColumn {
         }
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         if self.background.a > 0.001 {
             let w = self.bounds.width;
             let h = self.bounds.height;
@@ -277,7 +277,7 @@ impl Widget for FlexRow {
         Size::new(available.width, natural_h)
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         if self.background.a > 0.001 {
             let w = self.bounds.width;
             let h = self.bounds.height;

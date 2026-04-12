@@ -14,7 +14,7 @@
 use crate::color::Color;
 use crate::event::{Event, EventResult, MouseButton};
 use crate::geometry::{Point, Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::widget::Widget;
 
 const SCROLLBAR_W: f64 = 10.0;
@@ -105,7 +105,7 @@ impl Widget for ScrollView {
         available
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let w = self.bounds.width;
         let h = self.bounds.height;
         let sb_x = self.scrollbar_x();

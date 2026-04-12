@@ -24,10 +24,11 @@
 //! (NDC `y = +1`) so that `t=0` (data row 0 = top of image) maps to the top.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use agg_gui::{Color, Rect, Size};
 use agg_gui::event::{Event, EventResult};
-use agg_gui::gfx_ctx::GfxCtx;
+use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::widget::Widget;
 use glow::HasContext;
 
@@ -62,7 +63,7 @@ impl Widget for GlCubeWidget {
     fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
     fn layout(&mut self, available: Size) -> Size { available }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         // Capture screen-space rect for the GL renderer.
         let t = ctx.transform();
         CUBE_SCREEN_RECT.with(|r| r.set(Rect::new(
@@ -387,20 +388,39 @@ impl CubeGlRenderer {
 // ---------------------------------------------------------------------------
 
 pub struct GlState {
-    gl:        glow::Context,
+    gl:        Rc<glow::Context>,
     presenter: GlPresenter,
     cube:      CubeGlRenderer,
 }
 
 impl GlState {
     pub unsafe fn new(gl: glow::Context) -> Self {
+        let gl = Rc::new(gl);
         let presenter = GlPresenter::new(&gl);
         let cube      = CubeGlRenderer::new(&gl);
         Self { gl, presenter, cube }
     }
 
-    /// Full render pass: blit AGG framebuffer then overlay the 3D cube.
-    pub unsafe fn render(
+    /// Reference-counted clone of the GL context (cheap Rc increment).
+    pub fn gl_rc(&self) -> Rc<glow::Context> {
+        Rc::clone(&self.gl)
+    }
+
+    /// Draw only the 3D cube into `cube_rect` (for use after GlGfxCtx has
+    /// already rendered the 2D widget tree to the same GL surface).
+    pub unsafe fn draw_cube_only(
+        &mut self,
+        cube_rect: Rect,
+        viewport_h: f64,
+        full_w: i32,
+        full_h: i32,
+    ) {
+        self.cube.draw_gl(&self.gl, cube_rect, viewport_h, full_w, full_h);
+    }
+
+    /// Legacy full render pass (AGG texture blit + cube).  Kept for reference.
+    #[allow(dead_code)]
+    pub unsafe fn render_legacy(
         &mut self,
         pixels:    &[u8],
         width:     u32,

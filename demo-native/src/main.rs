@@ -14,7 +14,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use agg_gui::{
-    App, Button, Checkbox, Color, CompOp, Container, FlexColumn, FlexRow,
+    App, Button, Checkbox, Color, CompOp, Container, DrawCtx, FlexColumn, FlexRow,
     Font, Framebuffer, GfxCtx, Key as AggKey, Label, Modifiers, MouseButton as AggMouseButton,
     NodeIcon, ProgressBar, RadioGroup, Rect, ScrollView, Separator, Size, SizedBox, Slider,
     Spacer, Splitter, Stack, TabView, TextField, TreeView, Widget, Window,
@@ -160,7 +160,7 @@ impl Widget for TextDemoWidget {
         available
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let w = self.bounds.width;
         let h = self.bounds.height;
         let font = Arc::clone(&self.font);
@@ -384,7 +384,7 @@ fn build_layout_content(font: Arc<Font>) -> TabView {
 // Text tab draw helpers (Phase 3)
 // ---------------------------------------------------------------------------
 
-fn draw_text_tab(ctx: &mut GfxCtx, w: f64, h: f64, font: &Arc<Font>) {
+fn draw_text_tab(ctx: &mut dyn DrawCtx, w: f64, h: f64, font: &Arc<Font>) {
     ctx.set_font(Arc::clone(font));
     // Fill only the widget's local area; ctx.clear() would erase the tab bar.
     ctx.set_fill_color(Color::rgb(0.94, 0.94, 0.96));
@@ -414,7 +414,7 @@ fn draw_text_tab(ctx: &mut GfxCtx, w: f64, h: f64, font: &Arc<Font>) {
     ctx.fill_text_gsv("agg-gui  Phase 3 — Text", pad, pad * 0.4, lsize);
 }
 
-fn draw_card(ctx: &mut GfxCtx, x: f64, y: f64, w: f64, h: f64) {
+fn draw_card(ctx: &mut dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.08));
     ctx.set_blend_mode(CompOp::Multiply);
     ctx.begin_path(); ctx.rounded_rect(x + 2.0, y - 2.0, w, h, 10.0); ctx.fill();
@@ -423,13 +423,13 @@ fn draw_card(ctx: &mut GfxCtx, x: f64, y: f64, w: f64, h: f64) {
     ctx.begin_path(); ctx.rounded_rect(x, y, w, h, 10.0); ctx.fill();
 }
 
-fn panel_title_gsv(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, title: &str) {
+fn panel_title_gsv(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64, title: &str) {
     let size = (pw * 0.055).clamp(10.0, 16.0);
     ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.55));
     ctx.fill_text_gsv(title, px + pw * 0.05, py + ph * 0.86, size);
 }
 
-fn draw_sizes_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
+fn draw_sizes_panel(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64) {
     panel_title_gsv(ctx, px, py, pw, ph, "Font Sizes");
     let margin = pw * 0.06;
     let sizes: &[(f64, &str)] = &[
@@ -449,7 +449,7 @@ fn draw_sizes_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
     }
 }
 
-fn draw_measure_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
+fn draw_measure_panel(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
     panel_title_gsv(ctx, px, py, pw, ph, "Measure Text");
     let margin = pw * 0.06;
     let font_size = (pw * 0.08).clamp(14.0, 26.0);
@@ -481,7 +481,7 @@ fn draw_measure_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font
     let _ = font;
 }
 
-fn draw_multiline_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
+fn draw_multiline_panel(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64, font: &Arc<Font>) {
     panel_title_gsv(ctx, px, py, pw, ph, "Multi-line");
     let margin = pw * 0.06;
     let font_size = (pw * 0.055).clamp(11.0, 16.0);
@@ -502,7 +502,7 @@ fn draw_multiline_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, fo
     }
 }
 
-fn draw_buttons_panel_text(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64) {
+fn draw_buttons_panel_text(ctx: &mut dyn DrawCtx, px: f64, py: f64, pw: f64, ph: f64) {
     panel_title_gsv(ctx, px, py, pw, ph, "Text + Graphics");
     let margin = pw * 0.07;
     let btn_h = ph * 0.16;

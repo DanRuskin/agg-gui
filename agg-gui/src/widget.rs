@@ -17,9 +17,9 @@
 //! Hit test: root → leaves (deepest child under cursor wins).
 //! Event dispatch: leaf → root (events bubble up; any widget can consume).
 
+use crate::draw_ctx::DrawCtx;
 use crate::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use crate::geometry::{Point, Rect, Size};
-use crate::gfx_ctx::GfxCtx;
 
 // ---------------------------------------------------------------------------
 // Widget trait
@@ -54,7 +54,10 @@ pub trait Widget {
     /// The framework has already translated `ctx` so that `(0, 0)` is this
     /// widget's bottom-left corner. **Do not paint children here** — the
     /// framework recurses into them automatically after `paint` returns.
-    fn paint(&mut self, ctx: &mut GfxCtx);
+    ///
+    /// `ctx` is a `&mut dyn DrawCtx`; the concrete type is either a software
+    /// `GfxCtx` (back-buffer path) or a `GlGfxCtx` (hardware GL path).
+    fn paint(&mut self, ctx: &mut dyn DrawCtx);
 
     /// Return `true` if `local_pos` (in this widget's local coordinates) falls
     /// inside this widget's interactive area. Default: axis-aligned rect test.
@@ -80,7 +83,7 @@ pub trait Widget {
 
 /// Paint `widget` and all its descendants. The caller must ensure `ctx` is
 /// already translated so that (0,0) maps to `widget`'s bottom-left corner.
-pub fn paint_subtree(widget: &mut dyn Widget, ctx: &mut GfxCtx) {
+pub fn paint_subtree(widget: &mut dyn Widget, ctx: &mut dyn DrawCtx) {
     widget.paint(ctx);
     // Iterate over indices to avoid holding a reference while recursing.
     let n = widget.children().len();
@@ -230,7 +233,7 @@ impl App {
     }
 
     /// Paint the entire widget tree into `ctx`. Call after [`layout`][Self::layout].
-    pub fn paint(&mut self, ctx: &mut GfxCtx) {
+    pub fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         paint_subtree(self.root.as_mut(), ctx);
     }
 

@@ -5,7 +5,7 @@
 use crate::color::Color;
 use crate::event::{Event, EventResult, MouseButton};
 use crate::geometry::{Point, Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::widget::Widget;
 
 /// A draggable divider that splits its two children horizontally.
@@ -82,7 +82,7 @@ impl Widget for Splitter {
         available
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let div_x = self.divider_x();
         let h = self.bounds.height;
 

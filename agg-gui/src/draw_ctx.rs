@@ -1,0 +1,104 @@
+//! `DrawCtx` — the unified drawing interface shared by the software (`GfxCtx`)
+//! and hardware (`GlGfxCtx`) rendering paths.
+//!
+//! Every `Widget::paint` implementation receives a `&mut dyn DrawCtx`.  The
+//! concrete type is either:
+//!
+//! - **`GfxCtx`** — software AGG rasteriser (used when a widget opts into a
+//!   back-buffer or when GL is unavailable).
+//! - **`GlGfxCtx`** — hardware GL path: shapes are tessellated via `tess2`
+//!   and submitted as GPU draw calls.
+//!
+//! The two implementations expose *identical* method signatures so that widget
+//! `paint` bodies are unchanged regardless of the render target.
+
+use std::sync::Arc;
+
+use crate::color::Color;
+use crate::text::{Font, TextMetrics};
+use agg_rust::comp_op::CompOp;
+use agg_rust::math_stroke::{LineCap, LineJoin};
+use agg_rust::trans_affine::TransAffine;
+
+/// Unified 2-D drawing context.
+///
+/// All coordinate parameters use the **Y-up, first-quadrant** convention:
+/// origin at the bottom-left, positive-Y upward.  This matches `GfxCtx` and
+/// the widget tree layout invariant.
+pub trait DrawCtx {
+    // ── State ─────────────────────────────────────────────────────────────────
+
+    fn set_fill_color(&mut self, color: Color);
+    fn set_stroke_color(&mut self, color: Color);
+    fn set_line_width(&mut self, w: f64);
+    fn set_line_join(&mut self, join: LineJoin);
+    fn set_line_cap(&mut self, cap: LineCap);
+    fn set_blend_mode(&mut self, mode: CompOp);
+    fn set_global_alpha(&mut self, alpha: f64);
+
+    // ── Font ──────────────────────────────────────────────────────────────────
+
+    fn set_font(&mut self, font: Arc<Font>);
+    fn set_font_size(&mut self, size: f64);
+
+    // ── Clipping ──────────────────────────────────────────────────────────────
+
+    fn clip_rect(&mut self, x: f64, y: f64, w: f64, h: f64);
+    fn reset_clip(&mut self);
+
+    // ── Clear ─────────────────────────────────────────────────────────────────
+
+    /// Fill the entire render target with `color`, ignoring the current clip.
+    fn clear(&mut self, color: Color);
+
+    // ── Path building ─────────────────────────────────────────────────────────
+
+    fn begin_path(&mut self);
+    fn move_to(&mut self, x: f64, y: f64);
+    fn line_to(&mut self, x: f64, y: f64);
+    fn cubic_to(&mut self, cx1: f64, cy1: f64, cx2: f64, cy2: f64, x: f64, y: f64);
+    fn quad_to(&mut self, cx: f64, cy: f64, x: f64, y: f64);
+    fn arc_to(&mut self, cx: f64, cy: f64, r: f64, start_angle: f64, end_angle: f64, ccw: bool);
+
+    /// Add a full circle contour to the current path.
+    fn circle(&mut self, cx: f64, cy: f64, r: f64);
+
+    /// Add an axis-aligned rectangle contour to the current path.
+    fn rect(&mut self, x: f64, y: f64, w: f64, h: f64);
+
+    /// Add a rounded-rectangle contour to the current path.
+    fn rounded_rect(&mut self, x: f64, y: f64, w: f64, h: f64, r: f64);
+
+    fn close_path(&mut self);
+
+    // ── Path drawing ──────────────────────────────────────────────────────────
+
+    fn fill(&mut self);
+    fn stroke(&mut self);
+    fn fill_and_stroke(&mut self);
+
+    // ── Text ──────────────────────────────────────────────────────────────────
+
+    /// Draw `text` with the bottom of the baseline at `(x, y)`.
+    fn fill_text(&mut self, text: &str, x: f64, y: f64);
+
+    /// Draw `text` using the built-in AGG Glyph-Stroke-Vector font at `size`
+    /// pixels.  Useful before a proper font is loaded.
+    fn fill_text_gsv(&mut self, text: &str, x: f64, y: f64, size: f64);
+
+    /// Measure `text` with the current font and font-size settings.
+    fn measure_text(&self, text: &str) -> Option<TextMetrics>;
+
+    // ── Transform ─────────────────────────────────────────────────────────────
+
+    /// Current accumulated transform (CTM).
+    fn transform(&self) -> TransAffine;
+
+    fn save(&mut self);
+    fn restore(&mut self);
+    fn translate(&mut self, tx: f64, ty: f64);
+    fn rotate(&mut self, radians: f64);
+    fn scale(&mut self, sx: f64, sy: f64);
+    fn set_transform(&mut self, m: TransAffine);
+    fn reset_transform(&mut self);
+}

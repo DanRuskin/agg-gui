@@ -8,7 +8,7 @@
 use crate::color::Color;
 use crate::event::{Event, EventResult};
 use crate::geometry::{Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::widget::Widget;
 
 /// A rectangular container widget.
@@ -104,7 +104,7 @@ impl Widget for Container {
         Size::new(available.width, available.height)
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let w = self.bounds.width;
         let h = self.bounds.height;
         let r = self.corner_radius;

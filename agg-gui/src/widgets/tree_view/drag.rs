@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::color::Color;
 use crate::geometry::Point;
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::text::Font;
 
 use super::node::{
@@ -132,7 +132,7 @@ pub fn apply_drop(nodes: &mut Vec<TreeNode>, drag_node_idx: usize, target: DropP
 // ---------------------------------------------------------------------------
 
 /// Paint a horizontal drop-before/after indicator line.
-pub fn paint_drop_line(ctx: &mut GfxCtx, x: f64, y: f64, width: f64) {
+pub fn paint_drop_line(ctx: &mut dyn DrawCtx, x: f64, y: f64, width: f64) {
     ctx.set_stroke_color(Color::rgb(0.22, 0.45, 0.88));
     ctx.set_line_width(2.0);
     ctx.begin_path();
@@ -146,7 +146,7 @@ pub fn paint_drop_line(ctx: &mut GfxCtx, x: f64, y: f64, width: f64) {
 }
 
 /// Paint a full-row "drop as child" highlight.
-pub fn paint_drop_child_highlight(ctx: &mut GfxCtx, y_bottom: f64, width: f64, height: f64) {
+pub fn paint_drop_child_highlight(ctx: &mut dyn DrawCtx, y_bottom: f64, width: f64, height: f64) {
     ctx.set_stroke_color(Color::rgba(0.22, 0.45, 0.88, 0.7));
     ctx.set_line_width(1.5);
     ctx.begin_path();
@@ -156,7 +156,7 @@ pub fn paint_drop_child_highlight(ctx: &mut GfxCtx, y_bottom: f64, width: f64, h
 
 /// Paint a semi-transparent ghost of the dragged row at the cursor position.
 pub fn paint_ghost(
-    ctx: &mut GfxCtx,
+    ctx: &mut dyn DrawCtx,
     label: &str,
     pos: Point,
     width: f64,

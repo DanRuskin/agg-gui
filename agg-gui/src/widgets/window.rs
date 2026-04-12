@@ -28,7 +28,7 @@ use std::sync::Arc;
 use crate::color::Color;
 use crate::event::{Event, EventResult, MouseButton};
 use crate::geometry::{Point, Rect, Size};
-use crate::gfx_ctx::GfxCtx;
+use crate::draw_ctx::DrawCtx;
 use crate::text::Font;
 use crate::widget::Widget;
 
@@ -148,7 +148,7 @@ impl Widget for Window {
         Size::new(self.bounds.width, self.bounds.height)
     }
 
-    fn paint(&mut self, ctx: &mut GfxCtx) {
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         if !self.visible { return; }
 
         let w = self.bounds.width;
