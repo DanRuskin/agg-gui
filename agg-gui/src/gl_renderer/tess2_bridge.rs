@@ -41,13 +41,27 @@ pub fn tessellate_fill(contours: &[Vec<[f32; 2]>]) -> Option<(Vec<f32>, Vec<u32>
     if contours.is_empty() { return None; }
 
     let mut tess = Tessellator::new();
+    let mut n_added = 0;
 
     for contour in contours {
         if contour.len() < 3 { continue; }
+
+        // Remove consecutive duplicate vertices (tess2 can panic on zero-length edges).
+        let cleaned = deduplicate_contour(contour);
+        if cleaned.len() < 3 { continue; }
+
+        // Skip near-zero-area contours — tess2 panics on degenerate (collinear)
+        // faces rather than returning an error.  Any polygon with area < 0.5 px²
+        // is invisible anyway.
+        if signed_area_2x(&cleaned).abs() < 1.0 { continue; }
+
         // Flatten to [x0, y0, x1, y1, …]
-        let flat: Vec<f32> = contour.iter().flat_map(|v| [v[0], v[1]]).collect();
+        let flat: Vec<f32> = cleaned.iter().flat_map(|v| [v[0], v[1]]).collect();
         tess.add_contour(2, &flat);
+        n_added += 1;
     }
+
+    if n_added == 0 { return None; }
 
     let ok = tess.tessellate(
         WindingRule::NonZero,
@@ -66,6 +80,39 @@ pub fn tessellate_fill(contours: &[Vec<[f32; 2]>]) -> Option<(Vec<f32>, Vec<u32>
     let indices: Vec<u32> = tess.elements().to_vec();
 
     Some((verts, indices))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// 2× the signed area of a polygon (positive = CCW in Y-up).
+/// If |result| < 1.0 the polygon covers less than 0.5 px² and is invisible.
+fn signed_area_2x(pts: &[[f32; 2]]) -> f32 {
+    let n = pts.len();
+    let mut a = 0.0f32;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+    }
+    a
+}
+
+/// Remove consecutive duplicate vertices and strip the closing duplicate if
+/// the contour ends with a copy of its first vertex.
+fn deduplicate_contour(pts: &[[f32; 2]]) -> Vec<[f32; 2]> {
+    let mut out: Vec<[f32; 2]> = Vec::with_capacity(pts.len());
+    for &pt in pts {
+        match out.last() {
+            Some(&prev) if prev == pt => {}   // skip duplicate
+            _ => out.push(pt),
+        }
+    }
+    // Strip closing vertex if it duplicates the first (open the contour for tess2).
+    if out.len() >= 2 && out.first() == out.last() {
+        out.pop();
+    }
+    out
 }
 
 /// Convert an axis-aligned rectangle into a single contour and tessellate it.
