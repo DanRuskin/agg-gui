@@ -3,7 +3,11 @@
 //! These tests guard the first-quadrant (Y-up) invariant at the framebuffer
 //! and GfxCtx layers. They run on every commit.
 
-use crate::{App, Button, Color, CompOp, Container, Framebuffer, GfxCtx, Key, MouseButton, Modifiers, Size, TextField, Widget};
+use crate::{
+    App, Button, Color, CompOp, Container, FlexColumn, FlexRow, Framebuffer, GfxCtx,
+    Key, MouseButton, Modifiers, ScrollView, Size, SizedBox, Spacer, Splitter,
+    TabView, TextField, Widget,
+};
 
 /// Sample RGBA at pixel (x, y) in a framebuffer.
 /// (x=0, y=0) is the bottom-left corner in Y-up space.
@@ -441,6 +445,131 @@ fn test_tab_focus_advance() {
 
     // We can't easily inspect focus from outside, but we can verify it
     // doesn't panic and the test passes if no assertion fires.
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — layout widgets
+// ---------------------------------------------------------------------------
+
+/// FlexColumn stacks children top-to-bottom in Y-up: first child has the
+/// highest Y coordinate (visually at the top of the screen).
+#[test]
+fn test_flex_column_first_child_highest_y() {
+    let mut col = FlexColumn::new()
+        .with_gap(0.0)
+        .with_padding(0.0)
+        .add(Box::new(SizedBox::new().with_height(40.0)))  // first = top
+        .add(Box::new(SizedBox::new().with_height(60.0))); // second = below
+
+    col.layout(Size::new(200.0, 200.0));
+
+    let y0 = col.children()[0].bounds().y;
+    let y1 = col.children()[1].bounds().y;
+    assert!(
+        y0 > y1,
+        "first child (top) should have higher Y in Y-up; got y0={y0}, y1={y1}",
+    );
+    assert_eq!(col.children()[0].bounds().height, 40.0);
+    assert_eq!(col.children()[1].bounds().height, 60.0);
+}
+
+/// FlexRow distributes flex space left-to-right, first child leftmost.
+#[test]
+fn test_flex_row_distributes_space() {
+    let mut row = FlexRow::new()
+        .with_gap(0.0)
+        .with_padding(0.0)
+        .add_flex(Box::new(SizedBox::new()), 1.0)  // left half
+        .add_flex(Box::new(SizedBox::new()), 1.0); // right half
+
+    row.layout(Size::new(200.0, 40.0));
+
+    let x0 = row.children()[0].bounds().x;
+    let x1 = row.children()[1].bounds().x;
+    assert_eq!(x0, 0.0, "first flex child should start at x=0");
+    assert!(x1 > x0, "second flex child should be to the right of first");
+    assert!((x1 - 100.0).abs() < 1.0, "second child should start at x≈100; got {x1}");
+}
+
+/// ScrollView returns the available size from layout and positions its child
+/// with a negative y when content is taller than the viewport.
+#[test]
+fn test_scroll_view_tall_content_child_y() {
+    let content = SizedBox::new().with_height(500.0);
+    let mut scroll = ScrollView::new(Box::new(content));
+
+    let result = scroll.layout(Size::new(200.0, 200.0));
+
+    assert_eq!(result.width, 200.0);
+    assert_eq!(result.height, 200.0);
+
+    // With scroll_offset=0 and content_height=500, viewport_height=200:
+    // child_y = 200 - 500 + 0 = -300  (content sticks up beyond viewport top)
+    let child_y = scroll.children()[0].bounds().y;
+    assert!(
+        child_y < 0.0,
+        "tall content with offset=0 should have negative child_y; got {child_y}",
+    );
+}
+
+/// Splitter updates its ratio when dragged across the divider.
+#[test]
+fn test_splitter_drag_updates_ratio() {
+    let mut splitter = Splitter::new(
+        Box::new(SizedBox::new()),
+        Box::new(SizedBox::new()),
+    );
+    splitter.layout(Size::new(400.0, 200.0));
+    splitter.set_bounds(crate::Rect::new(0.0, 0.0, 400.0, 200.0));
+
+    // Default ratio = 0.5; divider at x = (400 - 6) * 0.5 ≈ 197.
+    let div_x = (400.0_f64 - 6.0) * 0.5;
+
+    // Press on divider.
+    splitter.on_event(&crate::Event::MouseDown {
+        pos: crate::Point::new(div_x + 1.0, 100.0),
+        button: MouseButton::Left,
+        modifiers: Modifiers::default(),
+    });
+
+    // Drag to x=100 → ratio should become 100/400 = 0.25.
+    splitter.on_event(&crate::Event::MouseMove {
+        pos: crate::Point::new(100.0, 100.0),
+    });
+
+    assert!(
+        (splitter.ratio - 0.25).abs() < 0.01,
+        "ratio should be ≈0.25 after drag; got {}",
+        splitter.ratio,
+    );
+}
+
+/// TabView swaps its active child when the tab bar is clicked.
+#[test]
+fn test_tab_view_always_has_one_child() {
+    use std::sync::Arc;
+    use crate::text::Font;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+
+    let mut tv = TabView::new(Arc::clone(&font))
+        .add_tab("A", Box::new(SizedBox::new().with_height(100.0)))
+        .add_tab("B", Box::new(SizedBox::new().with_height(200.0)));
+
+    tv.layout(Size::new(400.0, 300.0));
+    tv.set_bounds(crate::Rect::new(0.0, 0.0, 400.0, 300.0));
+
+    assert_eq!(tv.children().len(), 1, "TabView should always have exactly 1 active child");
+
+    // Tab bar: content_height = 300 - 36 = 264; bar is y in [264, 300].
+    // Tab B is the second of two: x in [200, 400].
+    tv.on_event(&crate::Event::MouseDown {
+        pos: crate::Point::new(300.0, 270.0),
+        button: MouseButton::Left,
+        modifiers: Modifiers::default(),
+    });
+
+    assert_eq!(tv.children().len(), 1, "TabView should still have exactly 1 active child after switch");
 }
 
 /// Typing into a TextField inserts characters at the cursor.

@@ -1,4 +1,4 @@
-// agg-gui demo — Phase 4 frontend
+// agg-gui demo — Phase 5 frontend
 //
 // Loads the WASM module, renders the active tab's scene, and handles
 // tab switching + event forwarding to the widget tree.
@@ -74,34 +74,56 @@ function isBasicsTab(): boolean {
   return activeTab === "basics" && wasmModule !== null;
 }
 
+function isLayoutTab(): boolean {
+  return activeTab === "layout" && wasmModule !== null;
+}
+
+// Helper to call a WASM export by name.
+function wasm<T extends (...args: unknown[]) => unknown>(name: string): T {
+  return (wasmModule as Record<string, T>)[name];
+}
+
 canvas.addEventListener("mousemove", (e) => {
-  if (!isBasicsTab()) return;
+  if (wasmModule === null) return;
   const [x, y] = canvasPos(e);
-  (wasmModule as Record<string, (x: number, y: number) => void>).on_mouse_move(x, y);
-  render();
+  if (isBasicsTab()) { wasm<(x: number, y: number) => void>("on_mouse_move")(x, y); render(); }
+  else if (isLayoutTab()) { wasm<(x: number, y: number) => void>("on_layout_mouse_move")(x, y); render(); }
 });
 
 canvas.addEventListener("mousedown", (e) => {
-  if (!isBasicsTab()) return;
+  if (wasmModule === null) return;
   e.preventDefault();
   canvas.focus();
   const [x, y] = canvasPos(e);
-  (wasmModule as Record<string, (x: number, y: number, b: number) => void>).on_mouse_down(x, y, e.button);
-  render();
+  if (isBasicsTab()) { wasm<(x: number, y: number, b: number) => void>("on_mouse_down")(x, y, e.button); render(); }
+  else if (isLayoutTab()) { wasm<(x: number, y: number, b: number) => void>("on_layout_mouse_down")(x, y, e.button); render(); }
 });
 
 canvas.addEventListener("mouseup", (e) => {
-  if (!isBasicsTab()) return;
+  if (wasmModule === null) return;
   const [x, y] = canvasPos(e);
-  (wasmModule as Record<string, (x: number, y: number, b: number) => void>).on_mouse_up(x, y, e.button);
-  render();
+  if (isBasicsTab()) { wasm<(x: number, y: number, b: number) => void>("on_mouse_up")(x, y, e.button); render(); }
+  else if (isLayoutTab()) { wasm<(x: number, y: number, b: number) => void>("on_layout_mouse_up")(x, y, e.button); render(); }
 });
 
 canvas.addEventListener("mouseleave", () => {
-  if (!isBasicsTab()) return;
-  (wasmModule as Record<string, () => void>).on_mouse_leave();
-  render();
+  if (wasmModule === null) return;
+  if (isBasicsTab()) { wasm<() => void>("on_mouse_leave")(); render(); }
+  else if (isLayoutTab()) { wasm<() => void>("on_layout_mouse_leave")(); render(); }
 });
+
+// Mouse wheel — used by ScrollView in the Layout tab.
+canvas.addEventListener("wheel", (e) => {
+  if (!isLayoutTab()) return;
+  e.preventDefault();
+  const [x, y] = canvasPos(e);
+  const dpr = window.devicePixelRatio || 1;
+  // deltaY > 0 = scroll down = we want negative delta (scroll content down).
+  // The ScrollView expects positive delta_y = scroll up (higher offset).
+  const delta_y = -(e.deltaY / (e.deltaMode === 0 ? 40.0 : 1.0)) / dpr;
+  wasm<(x: number, y: number, d: number) => void>("on_layout_mouse_wheel")(x, y, delta_y);
+  render();
+}, { passive: false });
 
 // Keyboard — canvas must be focusable (tabindex="0" set on canvas in HTML)
 canvas.addEventListener("keydown", (e) => {
@@ -109,8 +131,9 @@ canvas.addEventListener("keydown", (e) => {
   // Let Tab propagate so focus cycles; prevent default for other keys that
   // would scroll the page (arrow keys, space, backspace).
   if (e.key !== "Tab") e.preventDefault();
-  (wasmModule as Record<string, (k: string, s: boolean, c: boolean, a: boolean) => void>)
-    .on_key_down(e.key, e.shiftKey, e.ctrlKey, e.altKey);
+  wasm<(k: string, s: boolean, c: boolean, a: boolean) => void>("on_key_down")(
+    e.key, e.shiftKey, e.ctrlKey, e.altKey,
+  );
   render();
 });
 
@@ -133,6 +156,7 @@ async function init() {
     wasmModule = wasm as unknown as Record<string, unknown>;
     renderers["basics"] = wasm.render_basics as RenderFn;
     renderers["text"]   = wasm.render_text   as RenderFn;
+    renderers["layout"] = wasm.render_layout  as RenderFn;
 
     loadingEl.classList.add("hidden");
     render();

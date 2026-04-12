@@ -41,7 +41,8 @@ pub use geometry::{Point, Rect, Size};
 pub use gfx_ctx::GfxCtx;
 pub use text::{Font, TextMetrics};
 pub use widget::{App, Widget};
-pub use widgets::{Button, Container, TextField};
+pub use widgets::{Button, Container, FlexColumn, FlexRow, Padding, ScrollView,
+                  SizedBox, Spacer, Splitter, Stack, TabView, TextField};
 
 // Re-export AGG types so callers don't need to import agg-rust directly.
 pub use agg_rust::trans_affine::TransAffine;

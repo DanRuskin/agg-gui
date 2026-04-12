@@ -1,15 +1,16 @@
-//! Native WGL demo for agg-gui — Phase 4.
+//! Native WGL demo for agg-gui — Phase 5.
 //!
-//! Renders the Phase 4 interactive widget tree (buttons + text fields) via
-//! AGG → Framebuffer → GL texture → full-screen quad. Winit mouse and
-//! keyboard events are forwarded to the [`App`] widget tree.
+//! Renders the Phase 5 interactive layout demo (TabView with Flex, Scroll,
+//! Split tabs) via AGG → Framebuffer → GL texture → full-screen quad.
+//! Winit mouse, wheel, and keyboard events are forwarded to the [`App`].
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use agg_gui::{
-    App, Button, Color, Container, Font, Framebuffer, GfxCtx, Key as AggKey,
-    Modifiers, MouseButton as AggMouseButton, Size, TextField, Widget,
+    App, Button, Color, FlexColumn, FlexRow, Font, Framebuffer, GfxCtx,
+    Modifiers, MouseButton as AggMouseButton, ScrollView, Size, SizedBox,
+    Spacer, Splitter, TabView, TextField,
 };
 
 use glutin::config::ConfigTemplateBuilder;
@@ -23,7 +24,6 @@ use raw_window_handle::HasWindowHandle;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::keyboard::{Key as WinitKey, NamedKey};
 use winit::window::WindowAttributes;
 
 const FONT_BYTES: &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
@@ -125,80 +125,98 @@ impl GlPresenter {
 }
 
 // ---------------------------------------------------------------------------
-// Widget tree construction (shared logic)
+// Widget tree — Phase 5 layout demo (mirrors the WASM Layout tab)
 // ---------------------------------------------------------------------------
 
-fn build_basics_ui(font: Arc<Font>) -> App {
-    let f = |n: u8| -> Arc<Font> { let _ = n; Arc::clone(&font) };
-
-    let mut root = Container::new()
-        .with_background(Color::rgb(0.94, 0.94, 0.96))
-        .with_padding(24.0);
-
-    root.children_mut().push(Box::new(
-        Button::new("Primary Action", f(0))
-            .with_font_size(14.0)
-            .on_click(|| println!("Primary clicked")),
-    ));
-    root.children_mut().push(Box::new(
-        Button::new("Secondary", f(1))
-            .with_font_size(14.0)
-            .with_theme(agg_gui::widgets::button::ButtonTheme {
-                background:         Color::rgba(0.22, 0.45, 0.88, 0.12),
-                background_hovered: Color::rgba(0.22, 0.45, 0.88, 0.22),
-                background_pressed: Color::rgba(0.22, 0.45, 0.88, 0.35),
-                label_color:        Color::rgb(0.22, 0.45, 0.88),
-                border_radius:      6.0,
-                focus_ring_color:   Color::rgba(0.22, 0.45, 0.88, 0.55),
-                focus_ring_width:   2.5,
-            }),
-    ));
-    root.children_mut().push(Box::new(
-        Button::new("Destructive", f(2))
-            .with_font_size(14.0)
-            .with_theme(agg_gui::widgets::button::ButtonTheme {
-                background:         Color::rgb(0.88, 0.25, 0.18),
-                background_hovered: Color::rgb(0.95, 0.32, 0.24),
-                background_pressed: Color::rgb(0.72, 0.18, 0.12),
-                label_color:        Color::white(),
-                border_radius:      6.0,
-                focus_ring_color:   Color::rgba(0.88, 0.25, 0.18, 0.55),
-                focus_ring_width:   2.5,
-            }),
-    ));
-    root.children_mut().push(Box::new(
-        TextField::new(f(3))
-            .with_font_size(14.0)
-            .with_placeholder("Type something…"),
-    ));
-    root.children_mut().push(Box::new(
-        TextField::new(f(4))
-            .with_font_size(14.0)
-            .with_text("editable text"),
-    ));
-
-    App::new(Box::new(root))
+fn build_layout_ui(font: Arc<Font>) -> App {
+    let tab_view = TabView::new(Arc::clone(&font))
+        .with_tab_bar_height(36.0)
+        .with_font_size(13.0)
+        .add_tab("Flex",   Box::new(build_flex_demo(Arc::clone(&font))))
+        .add_tab("Scroll", Box::new(build_scroll_demo(Arc::clone(&font))))
+        .add_tab("Split",  Box::new(build_split_demo(Arc::clone(&font))));
+    App::new(Box::new(tab_view))
 }
 
-// ---------------------------------------------------------------------------
-// Key mapping: winit → agg_gui
-// ---------------------------------------------------------------------------
+fn build_flex_demo(font: Arc<Font>) -> FlexColumn {
+    let fa = Arc::clone(&font);
+    let fb = Arc::clone(&font);
+    let fc = Arc::clone(&font);
+    let fd = Arc::clone(&font);
+    let fe = Arc::clone(&font);
 
-fn map_key(key: &WinitKey) -> Option<AggKey> {
-    Some(match key {
-        WinitKey::Named(NamedKey::Backspace)  => AggKey::Backspace,
-        WinitKey::Named(NamedKey::Delete)     => AggKey::Delete,
-        WinitKey::Named(NamedKey::ArrowLeft)  => AggKey::ArrowLeft,
-        WinitKey::Named(NamedKey::ArrowRight) => AggKey::ArrowRight,
-        WinitKey::Named(NamedKey::Home)       => AggKey::Home,
-        WinitKey::Named(NamedKey::End)        => AggKey::End,
-        WinitKey::Named(NamedKey::Tab)        => AggKey::Tab,
-        WinitKey::Named(NamedKey::Enter)      => AggKey::Enter,
-        WinitKey::Named(NamedKey::Escape)     => AggKey::Escape,
-        WinitKey::Named(NamedKey::Space)      => AggKey::Char(' '),
-        WinitKey::Character(s) => AggKey::Char(s.chars().next()?),
-        _ => return None,
-    })
+    let row = FlexRow::new()
+        .with_gap(8.0)
+        .add_flex(Box::new(Button::new("One",   fa).with_font_size(13.0).on_click(|| println!("One"))), 1.0)
+        .add_flex(Box::new(Button::new("Two",   fb).with_font_size(13.0).on_click(|| println!("Two"))), 1.0)
+        .add_flex(Box::new(Button::new("Three", fc).with_font_size(13.0).on_click(|| println!("Three"))), 1.0);
+
+    FlexColumn::new()
+        .with_gap(12.0)
+        .with_padding(20.0)
+        .with_background(Color::rgb(0.94, 0.94, 0.96))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(row))))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            TextField::new(fd).with_font_size(14.0).with_placeholder("Search…"),
+        ))))
+        .add_flex(Box::new(Spacer::new()), 1.0)
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Confirm", fe).with_font_size(14.0).on_click(|| println!("Confirm")),
+        ))))
+}
+
+fn build_scroll_demo(font: Arc<Font>) -> ScrollView {
+    let mut col = FlexColumn::new()
+        .with_gap(8.0)
+        .with_padding(16.0)
+        .with_background(Color::rgb(0.94, 0.94, 0.96));
+
+    for i in 0..24u32 {
+        let label = format!("Item {:02}", i + 1);
+        col.push(
+            Box::new(SizedBox::new().with_height(40.0).with_child(Box::new(
+                Button::new(label, Arc::clone(&font))
+                    .with_font_size(13.0)
+                    .on_click(|| {}),
+            ))),
+            0.0,
+        );
+    }
+
+    ScrollView::new(Box::new(col))
+}
+
+fn build_split_demo(font: Arc<Font>) -> Splitter {
+    let fa = Arc::clone(&font);
+    let fb = Arc::clone(&font);
+    let fc = Arc::clone(&font);
+    let fd = Arc::clone(&font);
+
+    let left = FlexColumn::new()
+        .with_gap(8.0)
+        .with_padding(16.0)
+        .with_background(Color::rgb(0.96, 0.96, 0.99))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Left A", fa).with_font_size(13.0).on_click(|| println!("Left A")),
+        ))))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Left B", fb).with_font_size(13.0).on_click(|| println!("Left B")),
+        ))))
+        .add_flex(Box::new(Spacer::new()), 1.0);
+
+    let right = FlexColumn::new()
+        .with_gap(8.0)
+        .with_padding(16.0)
+        .with_background(Color::rgb(0.99, 0.96, 0.96))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            TextField::new(fc).with_font_size(13.0).with_placeholder("Right field…"),
+        ))))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Action", fd).with_font_size(13.0).on_click(|| println!("Action")),
+        ))))
+        .add_flex(Box::new(Spacer::new()), 1.0);
+
+    Splitter::new(Box::new(left), Box::new(right)).with_ratio(0.4)
 }
 
 fn map_mouse_button(b: &winit::event::MouseButton) -> AggMouseButton {
@@ -219,7 +237,7 @@ fn main() {
     let event_loop = EventLoop::new().expect("EventLoop::new");
 
     let window_attributes = WindowAttributes::default()
-        .with_title("agg-gui — Phase 4 Demo")
+        .with_title("agg-gui — Phase 5 Demo")
         .with_inner_size(LogicalSize::new(1280u32, 720u32));
 
     let template = ConfigTemplateBuilder::new().with_alpha_size(0);
@@ -272,7 +290,7 @@ fn main() {
     let font = Arc::new(Font::from_slice(FONT_BYTES).expect("parse CascadiaCode.ttf"));
     let mut presenter = unsafe { GlPresenter::new(gl) };
     let mut fb = Framebuffer::new(size.width.max(1), size.height.max(1));
-    let mut app = build_basics_ui(Arc::clone(&font));
+    let mut app = build_layout_ui(Arc::clone(&font));
 
     // Last known cursor position (Y-down, physical pixels).
     let mut cursor_x = 0.0f64;
@@ -326,13 +344,14 @@ fn main() {
                     }
                 }
                 Event::WindowEvent {
-                    event: WindowEvent::KeyboardInput { event: key_event, .. }, ..
+                    event: WindowEvent::MouseWheel { delta, .. }, ..
                 } => {
-                    if key_event.state == ElementState::Pressed {
-                        if let Some(key) = map_key(&key_event.logical_key) {
-                            app.on_key_down(key, Modifiers::default());
-                        }
-                    }
+                    // Positive delta_y = scroll up = increase scroll_offset in ScrollView.
+                    let delta_y = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y as f64,
+                        winit::event::MouseScrollDelta::PixelDelta(d) => -d.y / 40.0,
+                    };
+                    app.on_mouse_wheel(cursor_x, cursor_y, delta_y);
                 }
                 Event::AboutToWait => {
                     render_frame(&mut app, &mut fb, &mut presenter);
@@ -353,10 +372,9 @@ fn render_frame(app: &mut App, fb: &mut Framebuffer, presenter: &mut GlPresenter
         let mut ctx = GfxCtx::new(fb);
         app.paint(&mut ctx);
 
-        // Status label
         let lsize = (w as f64 * 0.012).clamp(9.0, 13.0);
         ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.3));
-        ctx.fill_text_gsv("agg-gui  Phase 4 — Widgets", 12.0, 6.0, lsize);
+        ctx.fill_text_gsv("agg-gui  Phase 5 — Layout", 12.0, 6.0, lsize);
     }
     unsafe { presenter.update_texture(fb) };
 }

@@ -1,18 +1,22 @@
-//! WASM demo crate for agg-gui — Phase 4.
+//! WASM demo crate for agg-gui — Phase 5.
 //!
 //! Exports:
 //! - `render_basics(w, h)` — interactive widget demo (buttons + text fields)
 //! - `render_text(w, h)` — Phase 3 text showcase (stateless)
-//! - `on_mouse_move`, `on_mouse_down`, `on_mouse_up`, `on_key_down` —
-//!   event ingestion for the Basics tab widget tree
+//! - `render_layout(w, h)` — Phase 5 layout demo (FlexColumn, ScrollView, Splitter, TabView)
+//! - `on_mouse_move`, `on_mouse_down`, `on_mouse_up`, `on_key_down`,
+//!   `on_mouse_leave` — Basics tab events
+//! - `on_layout_mouse_move`, `on_layout_mouse_down`, `on_layout_mouse_up`,
+//!   `on_layout_mouse_wheel`, `on_layout_mouse_leave` — Layout tab events
 
 use std::cell::RefCell;
 use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 use agg_gui::{
-    App, Button, Color, CompOp, Container, Font, Framebuffer, GfxCtx, Modifiers,
-    MouseButton, Size, TextField, Widget,
+    App, Button, Color, CompOp, Container, FlexColumn, FlexRow, Font, Framebuffer,
+    GfxCtx, Modifiers, MouseButton, ScrollView, Size, SizedBox, Spacer,
+    Splitter, TabView, TextField, Widget,
 };
 
 // Embed the font at compile time.
@@ -389,4 +393,185 @@ fn draw_buttons_panel(ctx: &mut GfxCtx, px: f64, py: f64, pw: f64, ph: f64, font
         }
     }
     let _ = font;
+}
+
+// ---------------------------------------------------------------------------
+// Persistent widget tree for the interactive Layout tab
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static LAYOUT_APP: RefCell<Option<App>> = RefCell::new(None);
+}
+
+fn ensure_layout_app(width: u32, height: u32) {
+    let _ = (width, height);
+    LAYOUT_APP.with(|cell| {
+        if cell.borrow().is_none() {
+            *cell.borrow_mut() = Some(build_layout_ui(make_font()));
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn on_layout_mouse_move(x: f64, y: f64) {
+    LAYOUT_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() { app.on_mouse_move(x, y); }
+    });
+}
+
+#[wasm_bindgen]
+pub fn on_layout_mouse_down(x: f64, y: f64, button: u8) {
+    let btn = match button {
+        0 => MouseButton::Left, 1 => MouseButton::Middle, 2 => MouseButton::Right,
+        n => MouseButton::Other(n),
+    };
+    LAYOUT_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_down(x, y, btn, Modifiers::default());
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn on_layout_mouse_up(x: f64, y: f64, button: u8) {
+    let btn = match button {
+        0 => MouseButton::Left, 1 => MouseButton::Middle, 2 => MouseButton::Right,
+        n => MouseButton::Other(n),
+    };
+    LAYOUT_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_mouse_up(x, y, btn, Modifiers::default());
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn on_layout_mouse_wheel(x: f64, y: f64, delta_y: f64) {
+    LAYOUT_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() { app.on_mouse_wheel(x, y, delta_y); }
+    });
+}
+
+#[wasm_bindgen]
+pub fn on_layout_mouse_leave() {
+    LAYOUT_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() { app.on_mouse_leave(); }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Tab: Layout — Phase 5 interactive layout demo
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+pub fn render_layout(width: u32, height: u32) -> Vec<u8> {
+    ensure_layout_app(width, height);
+    LAYOUT_APP.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        let app = borrow.as_mut().unwrap();
+        app.layout(Size::new(width as f64, height as f64));
+
+        let mut fb = Framebuffer::new(width, height);
+        {
+            let mut ctx = GfxCtx::new(&mut fb);
+            app.paint(&mut ctx);
+            let lsize = (width as f64 * 0.012).clamp(9.0, 13.0);
+            ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.3));
+            ctx.fill_text_gsv("agg-gui  Phase 5 — Layout", 12.0, 6.0, lsize);
+        }
+        fb.pixels_flipped()
+    })
+}
+
+fn build_layout_ui(font: Arc<Font>) -> App {
+    let tab_view = TabView::new(Arc::clone(&font))
+        .with_tab_bar_height(36.0)
+        .with_font_size(13.0)
+        .add_tab("Flex",   Box::new(build_flex_demo(Arc::clone(&font))))
+        .add_tab("Scroll", Box::new(build_scroll_demo(Arc::clone(&font))))
+        .add_tab("Split",  Box::new(build_split_demo(Arc::clone(&font))));
+    App::new(Box::new(tab_view))
+}
+
+/// Flex tab: a FlexColumn with a button row, a text field, a flex spacer,
+/// and a confirm button pinned to the bottom.
+fn build_flex_demo(font: Arc<Font>) -> FlexColumn {
+    let fa = Arc::clone(&font);
+    let fb = Arc::clone(&font);
+    let fc = Arc::clone(&font);
+    let fd = Arc::clone(&font);
+    let fe = Arc::clone(&font);
+
+    let row = FlexRow::new()
+        .with_gap(8.0)
+        .add_flex(Box::new(Button::new("One",   fa).with_font_size(13.0).on_click(|| {})), 1.0)
+        .add_flex(Box::new(Button::new("Two",   fb).with_font_size(13.0).on_click(|| {})), 1.0)
+        .add_flex(Box::new(Button::new("Three", fc).with_font_size(13.0).on_click(|| {})), 1.0);
+
+    FlexColumn::new()
+        .with_gap(12.0)
+        .with_padding(20.0)
+        .with_background(Color::rgb(0.94, 0.94, 0.96))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(row))))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            TextField::new(fd).with_font_size(14.0).with_placeholder("Search…"),
+        ))))
+        .add_flex(Box::new(Spacer::new()), 1.0)
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Confirm", fe).with_font_size(14.0).on_click(|| {}),
+        ))))
+}
+
+/// Scroll tab: a ScrollView wrapping a tall FlexColumn of buttons.
+fn build_scroll_demo(font: Arc<Font>) -> ScrollView {
+    let mut col = FlexColumn::new()
+        .with_gap(8.0)
+        .with_padding(16.0)
+        .with_background(Color::rgb(0.94, 0.94, 0.96));
+
+    for i in 0..24u32 {
+        let label = format!("Item {:02}", i + 1);
+        col.push(
+            Box::new(SizedBox::new().with_height(40.0).with_child(Box::new(
+                Button::new(label, Arc::clone(&font)).with_font_size(13.0).on_click(|| {}),
+            ))),
+            0.0,
+        );
+    }
+
+    ScrollView::new(Box::new(col))
+}
+
+/// Split tab: a draggable splitter between two panels.
+fn build_split_demo(font: Arc<Font>) -> Splitter {
+    let fa = Arc::clone(&font);
+    let fb = Arc::clone(&font);
+    let fc = Arc::clone(&font);
+    let fd = Arc::clone(&font);
+
+    let left = FlexColumn::new()
+        .with_gap(8.0)
+        .with_padding(16.0)
+        .with_background(Color::rgb(0.96, 0.96, 0.99))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Left A", fa).with_font_size(13.0).on_click(|| {}),
+        ))))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Left B", fb).with_font_size(13.0).on_click(|| {}),
+        ))))
+        .add_flex(Box::new(Spacer::new()), 1.0);
+
+    let right = FlexColumn::new()
+        .with_gap(8.0)
+        .with_padding(16.0)
+        .with_background(Color::rgb(0.99, 0.96, 0.96))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            TextField::new(fc).with_font_size(13.0).with_placeholder("Right field…"),
+        ))))
+        .add(Box::new(SizedBox::new().with_height(36.0).with_child(Box::new(
+            Button::new("Action", fd).with_font_size(13.0).on_click(|| {}),
+        ))))
+        .add_flex(Box::new(Spacer::new()), 1.0);
+
+    Splitter::new(Box::new(left), Box::new(right)).with_ratio(0.4)
 }

@@ -164,6 +164,7 @@ fn translate_event(event: &Event, new_pos: Point) -> Event {
         Event::MouseUp { button, modifiers, .. } => Event::MouseUp {
             pos: new_pos, button: *button, modifiers: *modifiers,
         },
+        Event::MouseWheel { delta_y, .. } => Event::MouseWheel { pos: new_pos, delta_y: *delta_y },
         other => other.clone(),
     }
 }
@@ -291,6 +292,16 @@ impl App {
         let event = Event::KeyUp { key, modifiers: mods };
         if let Some(path) = self.focus.clone() {
             dispatch_event(&mut self.root, &path, &event, Point::ORIGIN);
+        }
+    }
+
+    /// Mouse wheel scrolled. `screen_y` is Y-down. `delta_y` positive = scroll up.
+    pub fn on_mouse_wheel(&mut self, screen_x: f64, screen_y: f64, delta_y: f64) {
+        let pos = self.flip_y(screen_x, screen_y);
+        let hit = self.compute_hit(pos);
+        let event = Event::MouseWheel { pos, delta_y };
+        if let Some(path) = hit {
+            dispatch_event(&mut self.root, &path, &event, pos);
         }
     }
 
