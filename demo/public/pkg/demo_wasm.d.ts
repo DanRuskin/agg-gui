@@ -21,6 +21,32 @@ export function on_mouse_wheel(x: number, y: number, delta_y: number): void;
 export function render(width: number, height: number): void;
 
 /**
+ * Render the same app via the AGG software path and return raw RGBA pixels.
+ *
+ * The framebuffer is Y-up (row 0 = bottom).  For HTML Canvas `putImageData`
+ * (which is Y-down), flip the rows in JS or use `pixels_flipped`.
+ * Returns a byte array of length `width * height * 4` (RGBA, 8-bit per channel).
+ */
+export function render_software_pixels(width: number, height: number): Uint8Array;
+
+/**
+ * Render "TESTING FONT RENDERING" via the GL/tess2 path and return raw RGBA
+ * pixels (Y-down, same format as `render_text_software`).
+ *
+ * Uses `gl.readPixels` to capture the result within the same task (before the
+ * browser compositor clears the framebuffer).  Does NOT resize the canvas, so
+ * the WebGL context remains valid across calls.  The render is always done into
+ * a `width × height` region anchored at the bottom-left of the canvas.
+ */
+export function render_text_gl_pixels(width: number, height: number): Uint8Array;
+
+/**
+ * Render "TESTING FONT RENDERING" via the AGG software path.
+ * Returns Y-down RGBA bytes (ready for `putImageData`).
+ */
+export function render_text_software(width: number, height: number): Uint8Array;
+
+/**
  * Initialise panic hook so Rust panics appear in the browser console.
  */
 export function wasm_start(): void;
@@ -30,6 +56,9 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly render: (a: number, b: number) => void;
+    readonly render_software_pixels: (a: number, b: number) => [number, number];
+    readonly render_text_software: (a: number, b: number) => [number, number];
+    readonly render_text_gl_pixels: (a: number, b: number) => [number, number];
     readonly on_mouse_down: (a: number, b: number, c: number) => void;
     readonly on_mouse_up: (a: number, b: number, c: number) => void;
     readonly on_key_down: (a: number, b: number, c: number, d: number, e: number) => void;

@@ -121,6 +121,8 @@ async function init() {
     await wasm.default({ module_or_path: wasmUrl });
 
     wasmModule = wasm as unknown as Record<string, unknown>;
+    // Expose on window so Playwright tests can access WASM functions directly.
+    (window as unknown as Record<string, unknown>).__wasm = wasmModule;
     loadingEl.classList.add("hidden");
 
     // Start the continuous animation loop.

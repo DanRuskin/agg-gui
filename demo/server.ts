@@ -90,7 +90,11 @@ async function buildWasm(): Promise<boolean> {
 }
 
 async function buildTs(): Promise<boolean> {
-  return runCommand(["bun", "run", "build.ts"], DEMO_DIR, "ts");
+  // Dev build: bundle directly into public/dist/ so the static server can find it.
+  return runCommand(
+    ["bun", "build", "src/app.ts", "--outfile", "public/dist/bundle.js", "--minify", "--target", "browser"],
+    DEMO_DIR, "ts"
+  );
 }
 
 async function rebuild() {

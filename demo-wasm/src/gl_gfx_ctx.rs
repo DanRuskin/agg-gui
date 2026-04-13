@@ -26,7 +26,7 @@ use std::sync::Arc;
 use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
 use agg_gui::gl_renderer::tessellate_fill;
-use agg_gui::text::{Font, TextMetrics, shape_and_flatten_text};
+use agg_gui::text::{Font, TextMetrics, shape_and_flatten_text_via_agg};
 use agg_gui::CompOp;
 use agg_gui::{LineCap, LineJoin};
 use agg_gui::TransAffine;
@@ -208,6 +208,15 @@ impl GlGfxCtx {
 
         self.gl.use_program(Some(self.prog));
         if let Some(ref loc) = self.res_loc {
+            // Diagnostic: log on first call only (when y-range looks like test coordinates)
+            if verts.iter().any(|v| v[1] > 30.0 && v[1] < 60.0) && verts.len() < 200 {
+                let y_min = verts.iter().map(|v| v[1]).fold(f32::MAX, f32::min);
+                let y_max = verts.iter().map(|v| v[1]).fold(f32::MIN, f32::max);
+                web_sys::console::log_1(&format!(
+                    "[draw_triangles] viewport=({},{}) vert_y=[{:.1},{:.1}] nverts={}",
+                    self.viewport.0, self.viewport.1, y_min, y_max, verts.len()
+                ).into());
+            }
             self.gl.uniform_2_f32(Some(loc), self.viewport.0, self.viewport.1);
         }
         if let Some(ref loc) = self.color_loc {
@@ -534,19 +543,54 @@ impl DrawCtx for GlGfxCtx {
             Some(f) => f,
             None => return,
         };
-        // shape_and_flatten_text returns points in local (x,y) coordinate space.
-        // We then apply CTM to each point to get screen-space coords.
-        let local_contours = shape_and_flatten_text(&font, text, self.font_size, x, y, 0.5);
-        let screen_contours: Vec<Vec<[f32; 2]>> = local_contours
-            .iter()
-            .map(|c| c.iter().map(|&p| self.transform_pt(p[0] as f64, p[1] as f64)).collect())
-            .collect();
-        if let Some((verts_flat, idx)) = tessellate_fill(&screen_contours) {
-            let verts: Vec<[f32; 2]> = verts_flat.chunks_exact(2)
-                .map(|c| [c[0], c[1]])
+        // shape_and_flatten_text_via_agg uses AGG's own ConvCurve (same Bézier
+        // flattener as the software rasterizer) and groups contours per glyph.
+        // We tessellate each glyph's contours together so the EvenOdd rule
+        // correctly punches holes in O, D, B, R, etc., while keeping strokes
+        // from different glyphs isolated so their winding counts never interact.
+        let glyphs = shape_and_flatten_text_via_agg(&font, text, self.font_size, x, y);
+
+        let mut all_verts: Vec<[f32; 2]> = Vec::new();
+        let mut all_idx:   Vec<u32>      = Vec::new();
+
+        for glyph_contours in &glyphs {
+            // Transform all contours of this glyph to screen-space Y-up pixels.
+            let screen: Vec<Vec<[f32; 2]>> = glyph_contours
+                .iter()
+                .map(|c| c.iter().map(|&p| self.transform_pt(p[0] as f64, p[1] as f64)).collect())
                 .collect();
+
+            // Check if this glyph has MIXED winding: e.g. 'O' has a CW outer
+            // contour (area < 0 in Y-up) and a CCW inner contour (area > 0).
+            // For mixed-winding glyphs, tessellate all contours together so
+            // EvenOdd punches the counter hole correctly.
+            // For all-CW glyphs (overlapping stroke shapes like T, E, N),
+            // tessellate each contour independently — EvenOdd would cut a hole
+            // wherever two CW strokes overlap at a joint.
+            let has_ccw = screen.iter().any(|c| glyph_contour_is_ccw(c));
+
+            if has_ccw {
+                // Mixed: outer CW + inner CCW — tessellate together for the hole.
+                if let Some((vf, idx)) = tessellate_fill(&screen) {
+                    let base = all_verts.len() as u32;
+                    all_verts.extend(vf.chunks_exact(2).map(|c| [c[0], c[1]]));
+                    all_idx.extend(idx.iter().map(|&i| i + base));
+                }
+            } else {
+                // All-CW strokes: tessellate per-contour to avoid spurious holes.
+                for contour in &screen {
+                    if let Some((vf, idx)) = tessellate_fill(&[contour.clone()]) {
+                        let base = all_verts.len() as u32;
+                        all_verts.extend(vf.chunks_exact(2).map(|c| [c[0], c[1]]));
+                        all_idx.extend(idx.iter().map(|&i| i + base));
+                    }
+                }
+            }
+        }
+
+        if !all_verts.is_empty() {
             let color = self.fill_color;
-            unsafe { self.draw_triangles(&verts, &idx, color); }
+            unsafe { self.draw_triangles(&all_verts, &all_idx, color); }
         }
     }
 
@@ -650,6 +694,25 @@ fn subdivide_cubic_screen<F: FnMut(f32, f32)>(
     subdivide_cubic_screen(p0, q0, r0, mid, flatness_sq, emit);
     emit(mid[0], mid[1]);
     subdivide_cubic_screen(mid, r1, q2, p3, flatness_sq, emit);
+}
+
+// ---------------------------------------------------------------------------
+// Glyph helper
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if the contour winds counter-clockwise in Y-up space
+/// (signed area > 0).  Used to detect inner counter contours of glyphs like
+/// O, D, R whose inner boundary winds opposite to the outer boundary.
+#[inline]
+fn glyph_contour_is_ccw(pts: &[[f32; 2]]) -> bool {
+    let n = pts.len();
+    if n < 3 { return false; }
+    let mut a = 0.0f32;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+    }
+    a > 0.0
 }
 
 // ---------------------------------------------------------------------------

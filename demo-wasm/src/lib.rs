@@ -757,6 +757,189 @@ pub fn render(width: u32, height: u32) {
 }
 
 // ---------------------------------------------------------------------------
+// Software render pixel readback — for visual testing
+// ---------------------------------------------------------------------------
+
+/// Render the same app via the AGG software path and return raw RGBA pixels.
+///
+/// The framebuffer is Y-up (row 0 = bottom).  For HTML Canvas `putImageData`
+/// (which is Y-down), flip the rows in JS or use `pixels_flipped`.
+/// Returns a byte array of length `width * height * 4` (RGBA, 8-bit per channel).
+#[wasm_bindgen]
+pub fn render_software_pixels(width: u32, height: u32) -> Vec<u8> {
+    use agg_gui::{Framebuffer, GfxCtx};
+    ensure_demo_app();
+
+    let mut fb = Framebuffer::new(width, height);
+    DEMO_APP.with(|app_cell| {
+        let mut app_borrow = app_cell.borrow_mut();
+        if let Some(app) = app_borrow.as_mut() {
+            let mut ctx = GfxCtx::new(&mut fb);
+            app.layout(Size::new(width as f64, height as f64));
+            app.paint(&mut ctx);
+        }
+    });
+
+    // Return Y-down (flipped) so JS putImageData works directly.
+    fb.pixels_flipped()
+}
+
+// ---------------------------------------------------------------------------
+// Focused text-rendering test exports
+// ---------------------------------------------------------------------------
+//
+// These render ONLY the text string "TESTING FONT RENDERING" on a white
+// background, using each render path independently.  The test calls all three
+// and compares the resulting pixel buffers to isolate failures:
+//
+//   render_text_software     — AGG rasterizer (ground truth)
+//   render_text_tess_agg     — tess2 triangles drawn with AGG (tests tess2 geometry)
+//   render_text_gl_pixels    — tess2 triangles submitted to WebGL (tests GL pipeline)
+//
+// If software ≈ tess_agg, tess2 geometry is correct.
+// If tess_agg ≈ gl, the GL pipeline is correct.
+
+/// Render "TESTING FONT RENDERING" via the AGG software path.
+/// Returns Y-down RGBA bytes (ready for `putImageData`).
+#[wasm_bindgen]
+pub fn render_text_software(width: u32, height: u32) -> Vec<u8> {
+    use agg_gui::{Color, Framebuffer, GfxCtx};
+
+    let mut fb = Framebuffer::new(width, height);
+    let font = make_font();
+    {
+        let mut ctx = GfxCtx::new(&mut fb);
+        ctx.clear(Color::rgba(1.0, 1.0, 1.0, 1.0));
+        ctx.set_font(Arc::clone(&font));
+        ctx.set_font_size(24.0);
+        ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 1.0));
+        ctx.fill_text("TESTING FONT RENDERING", 20.0, 40.0);
+    }
+    fb.pixels_flipped()
+}
+
+/// Render "TESTING FONT RENDERING" by tessellating glyph outlines with tess2
+/// and drawing the resulting triangles with the AGG software rasterizer.
+///
+/// This isolates tess2 geometry from the WebGL pipeline: if this output matches
+/// `render_text_software`, tess2 is producing correct triangles and any visual
+/// discrepancy in `render_text_gl_pixels` is a GL-side issue.
+///
+/// Returns Y-down RGBA bytes (ready for `putImageData`).
+#[wasm_bindgen]
+pub fn render_text_tess_agg_pixels(width: u32, height: u32) -> Vec<u8> {
+    use agg_gui::{Color, Framebuffer, GfxCtx};
+    use agg_gui::text::shape_and_flatten_text_via_agg;
+
+    let mut fb = Framebuffer::new(width, height);
+    let font = make_font();
+    {
+        let mut ctx = GfxCtx::new(&mut fb);
+        ctx.clear(Color::rgba(1.0, 1.0, 1.0, 1.0));
+        ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 1.0));
+
+        // Flatten glyphs using AGG's own ConvCurve — same algorithm as
+        // the software rasterizer.  Draw those contours DIRECTLY via AGG
+        // (no tess2) to prove the contour geometry is correct.
+        // Returns Vec<Vec<Vec<[f32;2]>>> — one entry per glyph, each glyph has
+        // one or more contours (outer + optional counter holes).
+        let glyphs = shape_and_flatten_text_via_agg(
+            &font, "TESTING FONT RENDERING", 24.0, 20.0, 40.0,
+        );
+
+        // Draw each glyph's contours as ONE path so AGG's non-zero fill rule
+        // handles counter holes (CW outer + CCW inner = hole) correctly —
+        // the same way rasterize_fill does for the software path.
+        for glyph_contours in &glyphs {
+            ctx.begin_path();
+            for contour in glyph_contours {
+                if contour.len() < 2 { continue; }
+                for (i, &[x, y]) in contour.iter().enumerate() {
+                    if i == 0 { ctx.move_to(x as f64, y as f64); }
+                    else { ctx.line_to(x as f64, y as f64); }
+                }
+            }
+            ctx.fill();
+        }
+    }
+    fb.pixels_flipped()
+}
+
+/// Render "TESTING FONT RENDERING" via the GL/tess2 path and return raw RGBA
+/// pixels (Y-down, same format as `render_text_software`).
+///
+/// Uses `gl.readPixels` to capture the result within the same task (before the
+/// browser compositor clears the framebuffer).  Does NOT resize the canvas, so
+/// the WebGL context remains valid across calls.  The render is always done into
+/// a `width × height` region anchored at the bottom-left of the canvas.
+#[wasm_bindgen]
+pub fn render_text_gl_pixels(width: u32, height: u32) -> Vec<u8> {
+    ensure_gl_state();
+    ensure_gl_ctx(width as f32, height as f32);
+
+    // ── 1. GL clear ──────────────────────────────────────────────────────────
+    GL_STATE.with(|gl_cell| {
+        if let Some(state) = gl_cell.borrow().as_ref() {
+            let gl = state.gl_rc();
+            unsafe {
+                use glow::HasContext;
+                gl.viewport(0, 0, width as i32, height as i32);
+                gl.clear_color(1.0, 1.0, 1.0, 1.0);
+                gl.clear(glow::COLOR_BUFFER_BIT);
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                gl.disable(glow::DEPTH_TEST);
+                gl.disable(glow::SCISSOR_TEST);
+            }
+        }
+    });
+
+    // ── 2. Draw text via GL / tess2 ──────────────────────────────────────────
+    // GlGfxCtx is Y-up (y=0 at bottom).  Baseline y=40 matches GfxCtx (also
+    // Y-up): both put the baseline 40 px above the bottom of the render target.
+    let font = make_font();
+    GL_CTX.with(|ctx_cell| {
+        let mut ctx_borrow = ctx_cell.borrow_mut();
+        if let Some(gl_ctx) = ctx_borrow.as_mut() {
+            gl_ctx.reset(width as f32, height as f32);
+            gl_ctx.set_font(Arc::clone(&font));
+            gl_ctx.set_font_size(24.0);
+            gl_ctx.set_fill_color(agg_gui::Color::rgba(0.0, 0.0, 0.0, 1.0));
+            gl_ctx.fill_text("TESTING FONT RENDERING", 20.0, 40.0);
+        }
+    });
+
+    // ── 3. Read pixels (Y-up, bottom-left origin) ────────────────────────────
+    let byte_count = (width * height * 4) as usize;
+    let mut raw = vec![0u8; byte_count];
+    GL_STATE.with(|gl_cell| {
+        if let Some(state) = gl_cell.borrow().as_ref() {
+            let gl = state.gl_rc();
+            unsafe {
+                use glow::HasContext;
+                gl.read_pixels(
+                    0, 0, width as i32, height as i32,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelPackData::Slice(&mut raw),
+                );
+            }
+        }
+    });
+
+    // ── 4. Flip Y so output is Y-down (matches render_text_software) ─────────
+    let stride = (width * 4) as usize;
+    let h = height as usize;
+    let mut flipped = vec![0u8; byte_count];
+    for row in 0..h {
+        let src = &raw[row * stride..(row + 1) * stride];
+        let dst_row = h - 1 - row;
+        flipped[dst_row * stride..(dst_row + 1) * stride].copy_from_slice(src);
+    }
+    flipped
+}
+
+// ---------------------------------------------------------------------------
 // WASM event exports — single unified set
 // ---------------------------------------------------------------------------
 

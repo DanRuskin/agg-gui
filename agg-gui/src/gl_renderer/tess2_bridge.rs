@@ -64,7 +64,7 @@ pub fn tessellate_fill(contours: &[Vec<[f32; 2]>]) -> Option<(Vec<f32>, Vec<u32>
     if n_added == 0 { return None; }
 
     let ok = tess.tessellate(
-        WindingRule::NonZero,
+        WindingRule::Odd,   // EvenOdd — NonZero panics in tess2-rust on some inputs
         ElementType::Polygons,
         3,   // triangles
         2,   // 2-D vertices

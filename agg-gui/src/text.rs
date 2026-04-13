@@ -24,7 +24,8 @@
 
 use std::sync::Arc;
 
-use agg_rust::basics::PATH_FLAGS_NONE;
+use agg_rust::basics::{is_end_poly, is_move_to, is_stop, PATH_CMD_LINE_TO, PATH_FLAGS_NONE, VertexSource};
+use agg_rust::conv_curve::ConvCurve;
 use agg_rust::path_storage::PathStorage;
 
 /// Metrics describing a single line of shaped text.
@@ -260,6 +261,93 @@ pub fn shape_and_flatten_text(
             pen_x += pos.x_advance as f64 * scale;
         }
         all_contours
+    })
+}
+
+/// Shape `text` and return glyph contours flattened by AGG's own `ConvCurve`,
+/// grouped **per glyph**.
+///
+/// Uses AGG's `ConvCurve` — the same Bézier flattener that `GfxCtx::fill` /
+/// `rasterize_fill_path` use internally — so tess2 sees identical geometry to
+/// the software rasterizer.
+///
+/// Returns `Vec<Vec<Vec<[f32; 2]>>>`:
+/// - outer `Vec`: one entry per shaped glyph
+/// - middle `Vec`: contours belonging to that glyph (e.g. 'O' has outer + inner)
+/// - inner `Vec`: flattened polyline points for one contour
+///
+/// Keeping contours grouped per glyph lets the caller tessellate each glyph
+/// with the EvenOdd rule so counters (holes in O, D, B, R …) are handled
+/// correctly, while strokes from different glyphs never interact.
+///
+/// `(x, y)` is the baseline-left origin in Y-up pixel space.
+pub fn shape_and_flatten_text_via_agg(
+    font: &Font,
+    text: &str,
+    size: f64,
+    x: f64,
+    y: f64,
+) -> Vec<Vec<Vec<[f32; 2]>>> {
+    let scale = size / font.units_per_em() as f64;
+    font.with_rb_face(|face| {
+        let mut buffer = rustybuzz::UnicodeBuffer::new();
+        buffer.push_str(text);
+        let output = rustybuzz::shape(face, &[], buffer);
+        let mut all_glyphs: Vec<Vec<Vec<[f32; 2]>>> = Vec::new();
+        let mut pen_x = x;
+
+        for (info, pos) in output
+            .glyph_infos()
+            .iter()
+            .zip(output.glyph_positions().iter())
+        {
+            let gid = ttf_parser::GlyphId(info.glyph_id as u16);
+            let gx = pen_x + pos.x_offset as f64 * scale;
+            let gy = y + pos.y_offset as f64 * scale;
+
+            let mut builder = GlyphPathBuilder::new(gx, gy, scale);
+            let has_outline = face.outline_glyph(gid, &mut builder).is_some();
+
+            if has_outline && builder.has_outline {
+                // Flatten via AGG's ConvCurve — same algorithm as the software path.
+                let mut curves = ConvCurve::new(builder.path);
+                curves.rewind(0);
+
+                let mut glyph_contours: Vec<Vec<[f32; 2]>> = Vec::new();
+                let mut current: Vec<[f32; 2]> = Vec::new();
+
+                loop {
+                    let (mut cx, mut cy) = (0.0_f64, 0.0_f64);
+                    let cmd = curves.vertex(&mut cx, &mut cy);
+                    if is_stop(cmd) { break; }
+                    if is_move_to(cmd) {
+                        if current.len() >= 3 {
+                            glyph_contours.push(std::mem::take(&mut current));
+                        } else {
+                            current.clear();
+                        }
+                        current.push([cx as f32, cy as f32]);
+                    } else if cmd == PATH_CMD_LINE_TO {
+                        current.push([cx as f32, cy as f32]);
+                    } else if is_end_poly(cmd) {
+                        if current.len() >= 3 {
+                            glyph_contours.push(std::mem::take(&mut current));
+                        } else {
+                            current.clear();
+                        }
+                    }
+                }
+                if current.len() >= 3 {
+                    glyph_contours.push(current);
+                }
+                if !glyph_contours.is_empty() {
+                    all_glyphs.push(glyph_contours);
+                }
+            }
+
+            pen_x += pos.x_advance as f64 * scale;
+        }
+        all_glyphs
     })
 }
 
