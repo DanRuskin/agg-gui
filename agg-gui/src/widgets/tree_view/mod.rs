@@ -180,8 +180,12 @@ impl TreeView {
     fn row_index_at(&self, pos: Point) -> Option<usize> {
         for (i, widget) in self.row_widgets.iter().enumerate() {
             let b = widget.bounds();
-            if pos.y >= b.y && pos.y < b.y + b.height
-                && pos.x >= 0.0 && pos.x < self.bounds.width - SCROLLBAR_W
+            // Clamp to visible content area — rows scrolled off-screen have b.y < 0
+            // or b.y + b.height > self.bounds.height; exclude those slivers.
+            if pos.y >= b.y.max(0.0)
+                && pos.y < (b.y + b.height).min(self.bounds.height)
+                && pos.x >= 0.0
+                && pos.x < self.bounds.width - SCROLLBAR_W
             {
                 return Some(i);
             }
@@ -234,11 +238,14 @@ impl TreeView {
 
     /// Returns the node index currently under the cursor, or `None`.
     pub fn hovered_node_idx(&self) -> Option<usize> {
-        let rows = flatten_visible(&self.nodes);
-        self.hovered_row.and_then(|ri| rows.get(ri).map(|r| r.node_idx))
+        self.hovered_row.and_then(|ri| self.row_metas.get(ri).map(|m| m.node_idx))
     }
 
     fn scroll_to_row(&mut self, flat_idx: usize) {
+        // `row_widgets` bounds reflect the `scroll_offset` from the last `layout()` call.
+        // The framework calls `layout()` every frame before rendering, so `scroll_offset`
+        // changes here will be reflected before the next mouse hit-test.
+        // Y-up coordinates: y_bottom is the lower edge (smaller Y) and y_top is the upper edge (larger Y).
         let y_bottom = self.bounds.height
             - (flat_idx as f64 + 1.0) * self.row_height
             + self.scroll_offset;
@@ -554,9 +561,8 @@ impl TreeView {
                         self.nodes[ni].is_expanded = true;
                     } else {
                         // Move to first child
-                        if let Some(flat_i) = rows.iter().position(|r| r.node_idx == ni) {
+                        if rows.iter().any(|r| r.node_idx == ni) {
                             self.move_cursor(1, &rows);
-                            let _ = flat_i;
                         }
                     }
                 }
