@@ -273,6 +273,10 @@ impl Widget for TreeView {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        // TODO(compositional-treeview): The selection/hover colours and triangle geometry
+        // below duplicate code in row.rs.  This duplication is intentional and temporary:
+        // once row_widgets replace the monolithic loop (Task 2), this block will be removed.
+
         let h = self.bounds.height;
         let w = self.bounds.width;
         let content_w = w - SCROLLBAR_W;
@@ -330,7 +334,6 @@ impl Widget for TreeView {
             let row = &rows[i];
             let node = &self.nodes[row.node_idx];
             let y_bot = h - (i as f64 + 1.0) * rh + scroll_off;
-            let y_top = y_bot + rh;
             let is_dragged = drag_node == Some(row.node_idx);
 
             if is_dragged { continue; } // draw ghost on top instead
@@ -398,8 +401,6 @@ impl Widget for TreeView {
                 ctx.set_fill_color(Color::rgba(0.05, 0.05, 0.1, 0.87));
                 ctx.fill_text(label, lx, ty);
             }
-
-            let _ = y_top;
         }
 
         // --- Drop indicator ---

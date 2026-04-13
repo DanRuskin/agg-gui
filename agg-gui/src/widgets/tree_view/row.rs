@@ -42,8 +42,11 @@ pub fn icon_color(icon: NodeIcon) -> Color {
 // ExpandToggle
 // ---------------------------------------------------------------------------
 
-/// A fixed-width cell that draws an expand/collapse triangle when the node
-/// `has_children`.  Width is always `EXPAND_W`; height fills the row.
+/// Draws the ▶/▼ expand arrow. **Display-only** — returns `Ignored` for all events.
+///
+/// Interaction is handled centrally by `TreeView::on_event()`, which uses the
+/// `RowMeta::toggle_rect` field (populated from `TreeRow::toggle_local_bounds` during
+/// layout) to detect clicks on the toggle area and toggle `TreeNode::is_expanded` directly.
 pub struct ExpandToggle {
     bounds: Rect,
     pub has_children: bool,
@@ -73,6 +76,8 @@ impl Widget for ExpandToggle {
         Size::new(EXPAND_W, available.height)
     }
 
+    // The framework has already translated `ctx` to this widget's bottom-left origin.
+    // All drawing coordinates are widget-local (0,0 = bottom-left of this widget).
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         if !self.has_children { return; }
 
@@ -135,6 +140,8 @@ impl Widget for NodeIconWidget {
         Size::new(ICON_W + ICON_GAP, available.height)
     }
 
+    // The framework has already translated `ctx` to this widget's bottom-left origin.
+    // All drawing coordinates are widget-local (0,0 = bottom-left of this widget).
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let h = self.bounds.height;
         let iy = (h - ICON_W) * 0.5;
@@ -159,11 +166,11 @@ impl Widget for NodeIconWidget {
 // TreeRow
 // ---------------------------------------------------------------------------
 
-/// A single visible row in the tree, composed of:
-///   [0] SizedBox      — indentation spacer
-///   [1] ExpandToggle  — expand/collapse arrow
-///   [2] NodeIconWidget — coloured icon
-///   [3] Label         — node label text
+/// Compositional row: `SizedBox` (indent) | `ExpandToggle` | `NodeIconWidget` | `Label`.
+///
+/// **Event-routing note:** `TreeRow` and its children all return `EventResult::Ignored`.
+/// The containing `TreeView` handles all events (selection, expand/collapse) using its
+/// `row_metas: Vec<RowMeta>` which records each row's node_idx and toggle bounds.
 pub struct TreeRow {
     bounds: Rect,
     pub node_idx: usize,
