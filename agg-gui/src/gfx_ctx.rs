@@ -175,16 +175,43 @@ impl<'a> GfxCtx<'a> {
     // Clipping
     // -------------------------------------------------------------------------
 
-    /// Intersect the current clip with a Y-up screen-space rectangle.
+    /// Intersect the current clip with a rectangle in the **current local
+    /// coordinate space** (i.e. after all accumulated `translate` / `scale`
+    /// calls).  The four corners are mapped through the current transform to
+    /// produce an axis-aligned screen-space bounding box, which is then
+    /// intersected with any existing clip.
+    ///
+    /// For the common case of pure translations this is equivalent to the old
+    /// "screen-space rectangle" API, but it now works correctly when called
+    /// from inside a `paint()` method that runs after the framework has already
+    /// translated the context to the widget's origin.
     pub fn clip_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        // Map all four corners through the CTM and take the AABB.
+        let t = &self.state.transform;
+        let corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)];
+        let mut sx_min = f64::INFINITY;
+        let mut sy_min = f64::INFINITY;
+        let mut sx_max = f64::NEG_INFINITY;
+        let mut sy_max = f64::NEG_INFINITY;
+        for (lx, ly) in corners {
+            let mut sx = lx;
+            let mut sy = ly;
+            t.transform(&mut sx, &mut sy);
+            if sx < sx_min { sx_min = sx; }
+            if sx > sx_max { sx_max = sx; }
+            if sy < sy_min { sy_min = sy; }
+            if sy > sy_max { sy_max = sy; }
+        }
+        let sw = (sx_max - sx_min).max(0.0);
+        let sh = (sy_max - sy_min).max(0.0);
         if let Some((cx, cy, cw, ch)) = self.state.clip {
-            let x1 = x.max(cx);
-            let y1 = y.max(cy);
-            let x2 = (x + w).min(cx + cw);
-            let y2 = (y + h).min(cy + ch);
+            let x1 = sx_min.max(cx);
+            let y1 = sy_min.max(cy);
+            let x2 = sx_max.min(cx + cw);
+            let y2 = sy_max.min(cy + ch);
             self.state.clip = Some((x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0)));
         } else {
-            self.state.clip = Some((x, y, w, h));
+            self.state.clip = Some((sx_min, sy_min, sw, sh));
         }
     }
 

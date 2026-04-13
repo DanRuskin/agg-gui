@@ -309,9 +309,13 @@ impl Widget for InspectorPanel {
         let tree_h   = (tree_top - tree_bot).max(0.0);
         if tree_h > 0.0 {
             ctx.save();
-            ctx.clip_rect(0.0, tree_bot, w, tree_h);
             ctx.translate(0.0, tree_bot);
-            self.tree_view.paint(ctx);
+            // clip_rect is called AFTER translate so coordinates are in
+            // tree-local space (0,0 = tree area bottom-left). The implementation
+            // maps these through the CTM to screen space before intersecting.
+            ctx.clip_rect(0.0, 0.0, w, tree_h);
+            // Use paint_subtree so the framework recurses into TreeRow children.
+            crate::widget::paint_subtree(&mut self.tree_view, ctx);
             ctx.restore();
         }
     }

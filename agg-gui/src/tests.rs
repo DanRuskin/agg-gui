@@ -843,3 +843,65 @@ fn test_treeview_row_node_idx() {
     assert_eq!(tv.children().len(), 1);
     assert_eq!(tv.children()[0].type_name(), "TreeRow");
 }
+
+/// The topmost tree row in InspectorPanel must appear just below the header,
+/// not in the middle of the tree area (verifies clip_rect + translate ordering).
+#[test]
+fn test_inspector_top_row_appears_at_top_of_tree_area() {
+    use std::sync::Arc;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use crate::text::Font;
+    use crate::widgets::inspector::InspectorPanel;
+    use crate::widget::{InspectorNode, Widget, paint_subtree};
+    use crate::geometry::{Rect, Size};
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+    let nodes: Rc<RefCell<Vec<InspectorNode>>> = Rc::new(RefCell::new(vec![
+        InspectorNode {
+            type_name: "Window",
+            screen_bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+            depth: 0,
+        },
+    ]));
+    let hovered = Rc::new(RefCell::new(None));
+    let mut panel = InspectorPanel::new(Arc::clone(&font), Rc::clone(&nodes), Rc::clone(&hovered));
+
+    let pw = 240u32;
+    let ph = 400u32;
+    let mut fb = Framebuffer::new(pw, ph);
+    {
+        let mut ctx = GfxCtx::new(&mut fb);
+        ctx.clear(Color::rgba(1.0, 1.0, 1.0, 1.0));
+        panel.layout(Size::new(pw as f64, ph as f64));
+        panel.set_bounds(Rect::new(0.0, 0.0, pw as f64, ph as f64));
+        paint_subtree(&mut panel, &mut ctx);
+    }
+
+    // The tree area starts just below the header (HEADER_H=30px from top).
+    // In Y-down rendering (row 0 = top), check that pixel row 35 (just below header)
+    // has non-white content — meaning a tree row rendered there.
+    let row_y_down: usize = 35;
+    // In the framebuffer (Y-up storage), convert to Y-up row index:
+    let row_y_up = (ph as usize).saturating_sub(1).saturating_sub(row_y_down);
+    let pixels = fb.pixels();
+    let mut found_non_white = false;
+    for px in 5..(pw as usize - 5) {
+        let idx = (row_y_up * pw as usize + px) * 4;
+        if idx + 3 < pixels.len() {
+            let r = pixels[idx] as u32;
+            let g = pixels[idx + 1] as u32;
+            let b = pixels[idx + 2] as u32;
+            // Check for non-background color (background is near-white #F7F7F9 = 247,247,249)
+            if r < 240 || g < 240 || b < 240 {
+                found_non_white = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        found_non_white,
+        "expected non-white content just below the header at row_y_down={}, but got all-white — check clip_rect+translate ordering in InspectorPanel::paint()",
+        row_y_down
+    );
+}
