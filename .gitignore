@@ -7,3 +7,4 @@ demo/node_modules/
 demo/tests/snapshots/
 demo-wasm/test-results/
 demo/test-results/
+.worktrees/
