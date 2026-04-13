@@ -35,7 +35,14 @@ A Rust GUI framework built on [Anti-Grain Geometry (AGG)](https://crates.io/crat
 ### Native demo
 
 ```sh
+# Run once to install the watch subcommand used by `cargo dev`
+cargo install cargo-watch
+
+# Run the native demo once
 cargo run -p demo-native
+
+# Run the native demo in watch mode with auto-restart on Rust changes
+cargo dev
 ```
 
 ### WASM dev server
