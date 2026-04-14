@@ -15,7 +15,9 @@
 //! and rendered with a simple colour-fill shader.  Anti-aliased edge expansion
 //! (one-pixel outward quad + coverage ramp) follows `AARenderTesselator.cs`.
 
+pub mod glyph_cache;
 pub mod tess2_bridge;
 
+pub use glyph_cache::GlyphCache;
 pub use tess2_bridge::{tessellate_circle, tessellate_fill, tessellate_rect,
                        tessellate_rounded_rect};

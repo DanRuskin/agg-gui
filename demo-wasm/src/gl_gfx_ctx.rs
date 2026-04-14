@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use agg_gui::color::Color;
 use agg_gui::draw_ctx::DrawCtx;
-use agg_gui::gl_renderer::tessellate_fill;
-use agg_gui::text::{Font, TextMetrics, shape_and_flatten_text_via_agg};
+use agg_gui::gl_renderer::{GlyphCache, tessellate_fill};
+use agg_gui::text::{Font, TextMetrics, shape_glyphs};
 use agg_gui::CompOp;
 use agg_gui::{LineCap, LineJoin};
 use agg_gui::TransAffine;
@@ -97,6 +97,9 @@ pub struct GlGfxCtx {
     // Font
     font:      Option<Arc<Font>>,
     font_size: f64,
+
+    // Glyph vertex cache — survives frame resets, populated on first use.
+    glyph_cache: GlyphCache,
 }
 
 impl GlGfxCtx {
@@ -145,6 +148,7 @@ impl GlGfxCtx {
             pen:          [0.0; 2],
             font:         None,
             font_size:    16.0,
+            glyph_cache:  GlyphCache::new(),
         }
     }
 
@@ -546,49 +550,32 @@ impl DrawCtx for GlGfxCtx {
             Some(f) => f,
             None => return,
         };
-        // shape_and_flatten_text_via_agg uses AGG's own ConvCurve (same Bézier
-        // flattener as the software rasterizer) and groups contours per glyph.
-        // We tessellate each glyph's contours together so the EvenOdd rule
-        // correctly punches holes in O, D, B, R, etc., while keeping strokes
-        // from different glyphs isolated so their winding counts never interact.
-        let glyphs = shape_and_flatten_text_via_agg(&font, text, self.font_size, x, y);
+
+        // Shape the text string to get per-glyph IDs and advances.
+        let shaped    = shape_glyphs(&font, text, self.font_size);
+        let font_size = self.font_size;
+        // Snapshot CTM to avoid borrow conflict with glyph_cache borrow.
+        let ctm = *self.ctm();
 
         let mut all_verts: Vec<[f32; 2]> = Vec::new();
         let mut all_idx:   Vec<u32>      = Vec::new();
+        let mut pen_x = x;
 
-        for glyph_contours in &glyphs {
-            // Transform all contours of this glyph to screen-space Y-up pixels.
-            let screen: Vec<Vec<[f32; 2]>> = glyph_contours
-                .iter()
-                .map(|c| c.iter().map(|&p| self.transform_pt(p[0] as f64, p[1] as f64)).collect())
-                .collect();
+        for glyph in &shaped {
+            let gx = pen_x + glyph.x_offset;
+            let gy = y     + glyph.y_offset;
 
-            // Check if this glyph has MIXED winding: e.g. 'O' has a CW outer
-            // contour (area < 0 in Y-up) and a CCW inner contour (area > 0).
-            // For mixed-winding glyphs, tessellate all contours together so
-            // EvenOdd punches the counter hole correctly.
-            // For all-CW glyphs (overlapping stroke shapes like T, E, N),
-            // tessellate each contour independently — EvenOdd would cut a hole
-            // wherever two CW strokes overlap at a joint.
-            let has_ccw = screen.iter().any(|c| glyph_contour_is_ccw(c));
-
-            if has_ccw {
-                // Mixed: outer CW + inner CCW — tessellate together for the hole.
-                if let Some((vf, idx)) = tessellate_fill(&screen) {
-                    let base = all_verts.len() as u32;
-                    all_verts.extend(vf.chunks_exact(2).map(|c| [c[0], c[1]]));
-                    all_idx.extend(idx.iter().map(|&i| i + base));
+            if let Some(cached) = self.glyph_cache.get_or_insert(&font, glyph.glyph_id, font_size) {
+                let base = all_verts.len() as u32;
+                for &[vx, vy] in &cached.verts {
+                    let (mut px, mut py) = (gx + vx as f64, gy + vy as f64);
+                    ctm.transform(&mut px, &mut py);
+                    all_verts.push([px as f32, py as f32]);
                 }
-            } else {
-                // All-CW strokes: tessellate per-contour to avoid spurious holes.
-                for contour in &screen {
-                    if let Some((vf, idx)) = tessellate_fill(&[contour.clone()]) {
-                        let base = all_verts.len() as u32;
-                        all_verts.extend(vf.chunks_exact(2).map(|c| [c[0], c[1]]));
-                        all_idx.extend(idx.iter().map(|&i| i + base));
-                    }
-                }
+                all_idx.extend(cached.indices.iter().map(|&i| i + base));
             }
+
+            pen_x += glyph.x_advance;
         }
 
         if !all_verts.is_empty() {
@@ -697,25 +684,6 @@ fn subdivide_cubic_screen<F: FnMut(f32, f32)>(
     subdivide_cubic_screen(p0, q0, r0, mid, flatness_sq, emit);
     emit(mid[0], mid[1]);
     subdivide_cubic_screen(mid, r1, q2, p3, flatness_sq, emit);
-}
-
-// ---------------------------------------------------------------------------
-// Glyph helper
-// ---------------------------------------------------------------------------
-
-/// Returns `true` if the contour winds counter-clockwise in Y-up space
-/// (signed area > 0).  Used to detect inner counter contours of glyphs like
-/// O, D, R whose inner boundary winds opposite to the outer boundary.
-#[inline]
-fn glyph_contour_is_ccw(pts: &[[f32; 2]]) -> bool {
-    let n = pts.len();
-    if n < 3 { return false; }
-    let mut a = 0.0f32;
-    for i in 0..n {
-        let j = (i + 1) % n;
-        a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
-    }
-    a > 0.0
 }
 
 // ---------------------------------------------------------------------------
