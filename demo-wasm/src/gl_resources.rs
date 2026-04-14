@@ -23,7 +23,7 @@
 //! correctly, the fullscreen quad uses `UV.y = 0` at the top of the screen
 //! (NDC `y = +1`) so that `t=0` (data row 0 = top of image) maps to the top.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use agg_gui::{Color, Rect, Size};
@@ -39,6 +39,24 @@ use glow::HasContext;
 thread_local! {
     /// Written each frame by `GlCubeWidget::paint`, read by `GlState::render`.
     pub static CUBE_SCREEN_RECT: Cell<Rect> = Cell::new(Rect::default());
+
+    /// GL paint callback — invoked inline from `GlCubeWidget::paint()` so the
+    /// cube renders at its correct painter-order depth, not always on top.
+    static CUBE_PAINTER: RefCell<Option<Box<dyn FnMut(Rect)>>> = RefCell::new(None);
+}
+
+/// Register a per-frame cube paint callback.
+///
+/// # Safety
+/// The closure must remain valid for the synchronous duration of
+/// `render_app_frame`.  Call [`clear_cube_painter`] immediately after.
+pub fn set_cube_painter(f: impl FnMut(Rect) + 'static) {
+    CUBE_PAINTER.with(|p| *p.borrow_mut() = Some(Box::new(f)));
+}
+
+/// Remove the cube painter after the frame, releasing any captured raw pointers.
+pub fn clear_cube_painter() {
+    CUBE_PAINTER.with(|p| *p.borrow_mut() = None);
 }
 
 // ---------------------------------------------------------------------------
@@ -66,21 +84,33 @@ impl Widget for GlCubeWidget {
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         // Capture screen-space rect for the GL renderer.
         let t = ctx.transform();
-        CUBE_SCREEN_RECT.with(|r| r.set(Rect::new(
-            t.tx, t.ty, self.bounds.width, self.bounds.height,
-        )));
+        let screen_rect = Rect::new(t.tx, t.ty, self.bounds.width, self.bounds.height);
+        CUBE_SCREEN_RECT.with(|r| r.set(screen_rect));
 
-        // Dark AGG placeholder (the GL cube is rendered on top after the blit).
-        ctx.set_fill_color(Color::rgb(0.08, 0.08, 0.12));
-        ctx.begin_path();
-        ctx.rect(0.0, 0.0, self.bounds.width, self.bounds.height);
-        ctx.fill();
+        // If a GL painter is registered, invoke it inline so the cube renders
+        // at the correct painter-order position (windows painted after will
+        // overdraw it via later GL calls).
+        let painted = CUBE_PAINTER.with(|p| {
+            if let Ok(mut borrow) = p.try_borrow_mut() {
+                if let Some(f) = borrow.as_mut() {
+                    f(screen_rect);
+                    return true;
+                }
+            }
+            false
+        });
 
-        // Subtle "3D" label so the placeholder area is identifiable.
-        ctx.set_fill_color(Color::rgba(1.0, 1.0, 1.0, 0.20));
-        let cx = self.bounds.width  * 0.5 - 8.0;
-        let cy = self.bounds.height * 0.5 - 5.0;
-        ctx.fill_text_gsv("3D", cx, cy, 10.0);
+        if !painted {
+            // Fallback dark placeholder when no GL painter is attached.
+            ctx.set_fill_color(Color::rgb(0.08, 0.08, 0.12));
+            ctx.begin_path();
+            ctx.rect(0.0, 0.0, self.bounds.width, self.bounds.height);
+            ctx.fill();
+            ctx.set_fill_color(Color::rgba(1.0, 1.0, 1.0, 0.20));
+            let cx = self.bounds.width  * 0.5 - 8.0;
+            let cy = self.bounds.height * 0.5 - 5.0;
+            ctx.fill_text_gsv("3D", cx, cy, 10.0);
+        }
     }
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
@@ -410,6 +440,16 @@ impl GlState {
     /// already rendered the 2D widget tree to the same GL surface).
     pub unsafe fn draw_cube_only(&mut self, cube_rect: Rect, full_w: i32, full_h: i32) {
         self.cube.draw_gl(&self.gl, cube_rect, full_w, full_h);
+    }
+
+    /// Raw pointers to the GL context and cube renderer.
+    ///
+    /// # Safety
+    /// Pointers are valid only while this `GlState` is alive (thread-local).
+    /// Must not be used after `GlState` is dropped or while it is mutably
+    /// borrowed through another path.
+    pub fn raw_gl_and_cube(&mut self) -> (*const glow::Context, *mut CubeGlRenderer) {
+        (self.gl.as_ref() as *const _, &mut self.cube as *mut _)
     }
 
     /// Legacy full render pass (AGG texture blit + cube).  Kept for reference.

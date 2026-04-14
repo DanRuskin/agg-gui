@@ -94,6 +94,9 @@ pub struct TextField {
     // Editing options
     pub read_only:           bool,
     pub select_all_on_focus: bool,
+    /// When `true`, every character is displayed as '•' (U+2022).
+    /// The actual text is stored and edited normally; only the render is masked.
+    pub password_mode:       bool,
 
     // Interaction state
     focused:    bool,
@@ -133,6 +136,7 @@ impl TextField {
             font_size:           14.0,
             read_only:           false,
             select_all_on_focus: false,
+            password_mode:       false,
             focused:    false,
             hovered:    false,
             mouse_down: false,
@@ -153,6 +157,7 @@ impl TextField {
     pub fn with_padding(mut self, p: f64)   -> Self { self.padding   = p; self }
     pub fn with_read_only(mut self, v: bool) -> Self { self.read_only = v; self }
     pub fn with_select_all_on_focus(mut self, v: bool) -> Self { self.select_all_on_focus = v; self }
+    pub fn with_password_mode(mut self, v: bool) -> Self { self.password_mode = v; self }
 
     pub fn with_placeholder(mut self, s: impl Into<String>) -> Self { self.placeholder = s.into(); self }
     pub fn with_text(mut self, s: impl Into<String>) -> Self {
@@ -221,13 +226,41 @@ impl TextField {
         }
     }
 
+    /// Convert a pixel x position (in text-local space) to a byte offset in
+    /// `real_text`.  In password mode, measures the masked string and maps back.
+    fn click_to_cursor(&self, real_text: &str, tx: f64) -> usize {
+        if self.password_mode {
+            const BULLET: char = '•';
+            const BULLET_LEN: usize = 3;
+            let n      = real_text.chars().count();
+            let masked = BULLET.to_string().repeat(n);
+            let disp   = byte_at_x(&self.font, &masked, self.font_size, tx);
+            // Map masked byte offset → char index → real byte offset.
+            let char_idx = disp / BULLET_LEN;
+            real_text.char_indices()
+                .nth(char_idx)
+                .map(|(i, _)| i)
+                .unwrap_or(real_text.len())
+        } else {
+            byte_at_x(&self.font, real_text, self.font_size, tx)
+        }
+    }
+
     /// Scroll `scroll_x` so that the cursor stays visible.
     fn ensure_cursor_visible(&mut self) {
         if self.bounds.width < 1.0 { return; }
         let inner_w = (self.bounds.width - self.padding * 2.0).max(0.0);
         let cx = {
             let st = self.edit.borrow();
-            measure_advance(&self.font, &st.text[..st.cursor], self.font_size)
+            if self.password_mode {
+                const BULLET: char = '•';
+                const BULLET_LEN: usize = 3;
+                let n      = st.text[..st.cursor].chars().count();
+                let masked = BULLET.to_string().repeat(n);
+                measure_advance(&self.font, &masked, self.font_size)
+            } else {
+                measure_advance(&self.font, &st.text[..st.cursor], self.font_size)
+            }
         };
         if cx < self.scroll_x { self.scroll_x = cx; }
         else if cx > self.scroll_x + inner_w { self.scroll_x = cx - inner_w; }
@@ -540,9 +573,22 @@ impl Widget for TextField {
         let h   = self.bounds.height;
         let r   = 6.0;
         let pad = self.padding;
-        let (text, cursor, anchor) = {
+        let (raw_text, raw_cursor, raw_anchor) = {
             let st = self.edit.borrow();
             (st.text.clone(), st.cursor, st.anchor)
+        };
+        // In password mode render '•' for every character, but keep byte positions
+        // consistent by recomputing them against the masked string.
+        let (text, cursor, anchor) = if self.password_mode {
+            const BULLET: char = '•';
+            const BULLET_LEN: usize = 3; // '•' is 3 bytes in UTF-8
+            let n     = raw_text.chars().count();
+            let masked = BULLET.to_string().repeat(n);
+            let cur   = raw_text[..raw_cursor].chars().count() * BULLET_LEN;
+            let anc   = raw_text[..raw_anchor].chars().count() * BULLET_LEN;
+            (masked, cur, anc)
+        } else {
+            (raw_text, raw_cursor, raw_anchor)
         };
 
         // ── Background ────────────────────────────────────────────────────
@@ -627,7 +673,7 @@ impl Widget for TextField {
                 if self.mouse_down && self.focused {
                     let tx = pos.x - self.padding + self.scroll_x;
                     let text = self.edit.borrow().text.clone();
-                    let new_cur = byte_at_x(&self.font, &text, self.font_size, tx);
+                    let new_cur = self.click_to_cursor(&text, tx);
                     self.edit.borrow_mut().cursor = new_cur;
                 }
                 EventResult::Ignored
@@ -637,7 +683,7 @@ impl Widget for TextField {
                 self.mouse_down = true;
                 let tx = pos.x - self.padding + self.scroll_x;
                 let text = self.edit.borrow().text.clone();
-                let new_cur = byte_at_x(&self.font, &text, self.font_size, tx);
+                let new_cur = self.click_to_cursor(&text, tx);
 
                 // Double-click: select word
                 let is_double = self.last_click_time

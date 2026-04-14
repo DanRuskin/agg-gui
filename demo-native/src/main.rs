@@ -5,7 +5,7 @@
 //! A rotating 3D cube widget is drawn on top each frame.
 
 mod cube_widget;
-use cube_widget::{CubeGlRenderer, GlCubeWidget, CUBE_SCREEN_RECT};
+use cube_widget::{CubeGlRenderer, GlCubeWidget, CUBE_SCREEN_RECT, set_cube_painter, clear_cube_painter};
 
 use std::cell::RefCell;
 use std::num::NonZeroU32;
@@ -239,16 +239,29 @@ fn render_frame(
 ) {
     begin_frame(gl, w, h);
 
-    // Reset cube rect so a hidden GlCubeWidget leaves it zeroed — draw_gl
-    // skips automatically when width < 1.
+    // Reset cube rect so a hidden GlCubeWidget leaves it zeroed.
     CUBE_SCREEN_RECT.with(|r| r.set(Rect::default()));
+
+    // Register the cube's GL draw as an inline painter.  The widget tree calls
+    // it during paint() at the correct painter-order depth, so windows that
+    // are in front of the cube overdraw it naturally via subsequent GL calls.
+    //
+    // Safety: `cube` and `gl` live for the entire synchronous duration of
+    // `render_app_frame`.  `clear_cube_painter()` drops the closure immediately
+    // after, so no dangling pointers escape.
+    let cube_ptr: *mut CubeGlRenderer = cube;
+    let gl_ptr:   *const glow::Context = gl;
+    let fw = w as i32;
+    let fh = h as i32;
+    set_cube_painter(move |rect: Rect| {
+        unsafe { (*cube_ptr).draw_gl(&*gl_ptr, rect, h as f64, fw, fh) };
+    });
 
     let hovered = *hovered_bounds.borrow();
     render_app_frame(gl_ctx, app, font, w, h, frame_ms, hovered);
 
-    // Draw the rotating cube on top, inside its widget rect.
-    let cube_rect = CUBE_SCREEN_RECT.with(|r| r.get());
-    unsafe { cube.draw_gl(gl, cube_rect, h as f64, w as i32, h as i32) };
+    // Drop the painter — the raw pointers inside are no longer valid after this.
+    clear_cube_painter();
 }
 
 // ---------------------------------------------------------------------------

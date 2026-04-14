@@ -9,9 +9,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    Button, Checkbox, Color, DrawCtx, Event, EventResult,
-    FlexColumn, FlexRow, Font, Label, ProgressBar, RadioGroup,
-    Rect, ScrollView, Separator, Size, SizedBox, Slider, TextField, Widget,
+    Button, Checkbox, Color, DragValue, DrawCtx, Event, EventResult,
+    FlexColumn, FlexRow, Font, Hyperlink, Label, ProgressBar, RadioGroup,
+    Rect, ScrollView, Separator, Size, SizedBox, Slider, TextField, ToggleSwitch, Widget,
 };
 use agg_gui::widgets::button::ButtonTheme;
 
@@ -129,6 +129,49 @@ pub fn widget_gallery(font: Arc<Font>) -> Box<dyn Widget> {
     col.push(Box::new(ProgressBar::new(slider_val.get(), Arc::clone(&font))), 0.0);
 
     col.push(Box::new(Separator::horizontal()), 0.0);
+    col.push(Box::new(Label::new("Toggle Switch", Arc::clone(&font))
+        .with_font_size(12.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.50))), 0.0);
+    {
+        let ts1 = Rc::new(Cell::new(true));
+        let ts2 = Rc::new(Cell::new(false));
+        let row = FlexRow::new().with_gap(16.0)
+            .add(Box::new(ToggleSwitch::new(ts1.get()).with_state_cell(Rc::clone(&ts1))))
+            .add(Box::new(Label::new("Enabled", Arc::clone(&font)).with_font_size(13.0)))
+            .add(Box::new(ToggleSwitch::new(ts2.get()).with_state_cell(Rc::clone(&ts2))))
+            .add(Box::new(Label::new("Disabled", Arc::clone(&font)).with_font_size(13.0)));
+        col.push(Box::new(row), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+    col.push(Box::new(Label::new("Drag Value", Arc::clone(&font))
+        .with_font_size(12.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.50))), 0.0);
+    {
+        let dv1 = Rc::new(Cell::new(42.0_f64));
+        let dv2 = Rc::new(Cell::new(3.14_f64));
+        let row = FlexRow::new().with_gap(8.0)
+            .add(Box::new(SizedBox::new().with_width(120.0).with_height(28.0).with_child({
+                let v = Rc::clone(&dv1);
+                Box::new(DragValue::new(dv1.get(), 0.0, 100.0, Arc::clone(&font))
+                    .with_decimals(0).on_change(move |x| v.set(x)))
+            })))
+            .add(Box::new(SizedBox::new().with_width(120.0).with_height(28.0).with_child({
+                let v = Rc::clone(&dv2);
+                Box::new(DragValue::new(dv2.get(), 0.0, 10.0, Arc::clone(&font))
+                    .with_decimals(2).on_change(move |x| v.set(x)))
+            })));
+        col.push(Box::new(row), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+    col.push(Box::new(Label::new("Hyperlink", Arc::clone(&font))
+        .with_font_size(12.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.50))), 0.0);
+    col.push(Box::new(
+        Hyperlink::new("Visit the agg-gui repository", Arc::clone(&font))
+            .with_font_size(13.0)
+            .on_click(|| {})
+    ), 0.0);
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
     col.push(Box::new(Label::new("Text Input", Arc::clone(&font))
         .with_font_size(12.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.50))), 0.0);
     col.push(Box::new(SizedBox::new().with_height(32.0).with_child(Box::new(
@@ -223,6 +266,42 @@ pub fn text_edit(font: Arc<Font>) -> Box<dyn Widget> {
 
     col.push(Box::new(Label::new(
         "Ctrl+A select all • Ctrl+C/X/V clipboard • Home/End • Shift+arrows",
+        Arc::clone(&font),
+    ).with_font_size(11.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.35))), 0.0);
+
+    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
+    Box::new(col)
+}
+
+// ---------------------------------------------------------------------------
+// Password demo
+// ---------------------------------------------------------------------------
+
+pub fn password(font: Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new()
+        .with_gap(14.0)
+        .with_padding(16.0)
+        .with_background(Color::rgb(0.97, 0.97, 0.98));
+
+    col.push(Box::new(Label::new("Password", Arc::clone(&font))
+        .with_font_size(12.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.50))), 0.0);
+    col.push(Box::new(SizedBox::new().with_height(32.0).with_child(Box::new(
+        TextField::new(Arc::clone(&font))
+            .with_font_size(13.0)
+            .with_placeholder("Enter password…")
+            .with_password_mode(true)
+    ))), 0.0);
+
+    col.push(Box::new(Label::new("Normal text field (for comparison)", Arc::clone(&font))
+        .with_font_size(12.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.50))), 0.0);
+    col.push(Box::new(SizedBox::new().with_height(32.0).with_child(Box::new(
+        TextField::new(Arc::clone(&font))
+            .with_font_size(13.0)
+            .with_placeholder("Visible text…")
+    ))), 0.0);
+
+    col.push(Box::new(Label::new(
+        "Password fields mask input with • (bullet) characters.",
         Arc::clone(&font),
     ).with_font_size(11.0).with_color(Color::rgba(0.0, 0.0, 0.0, 0.35))), 0.0);
 

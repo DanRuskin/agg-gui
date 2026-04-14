@@ -420,9 +420,10 @@ impl App {
         }
 
         let event = Event::MouseDown { pos, button, modifiers: mods };
-        if let Some(path) = hit {
+        if let Some(mut path) = hit {
             let result = dispatch_event(&mut self.root, &path, &event, pos);
             if result == EventResult::Consumed {
+                self.maybe_bring_to_front(&mut path);
                 self.captured = Some(path);
             }
         }
@@ -490,6 +491,63 @@ impl App {
     }
 
     // --- Private helpers ---
+
+    /// If the click path passes through a `Window` widget, move that window to
+    /// the end of its parent's children list so it paints on top of siblings.
+    /// All stored paths (focus, hovered, captured, plus the clicked path itself)
+    /// are updated to reflect the new index.
+    fn maybe_bring_to_front(&mut self, clicked_path: &mut Vec<usize>) {
+        // Walk the clicked path and record the deepest Window encountered.
+        // At each step we descend into children[idx]; after descending, if the
+        // new node is a Window we record (parent_path, win_idx).  We keep
+        // scanning so a nested Window (unlikely but possible) wins.
+        let mut node: &dyn Widget = self.root.as_ref();
+        let mut window_info: Option<(Vec<usize>, usize)> = None; // (parent_path, win_idx)
+        for (depth, &idx) in clicked_path.iter().enumerate() {
+            let children = node.children();
+            if idx >= children.len() { break; }
+            node = &*children[idx];
+            if node.type_name() == "Window" {
+                // parent_path = clicked_path[..depth], win_idx = idx
+                window_info = Some((clicked_path[..depth].to_vec(), idx));
+            }
+        }
+
+        let (parent_path, win_idx) = match window_info { Some(x) => x, None => return };
+
+        // Check there's actually a sibling to leapfrog.
+        let n = {
+            let parent = widget_at_path(&mut self.root, &parent_path);
+            parent.children().len()
+        };
+        if win_idx >= n - 1 { return; } // already at front
+
+        // Move the window to the end of its parent's children (mutable pass).
+        {
+            let parent = widget_at_path(&mut self.root, &parent_path);
+            let child = parent.children_mut().remove(win_idx);
+            parent.children_mut().push(child);
+        }
+        let new_idx = n - 1;
+        let depth = parent_path.len(); // depth at which the window index sits
+
+        // Update any stored path whose element at `depth` was affected by the move.
+        fn shift_path(p: &mut Vec<usize>, depth: usize, old: usize, new: usize) {
+            if p.len() > depth {
+                let i = p[depth];
+                if i == old {
+                    p[depth] = new;
+                } else if i > old && i <= new {
+                    // Siblings that were after the removed window shift left by 1.
+                    p[depth] -= 1;
+                }
+            }
+        }
+        shift_path(clicked_path, depth, win_idx, new_idx);
+        if let Some(ref mut p) = self.focus    { shift_path(p, depth, win_idx, new_idx); }
+        if let Some(ref mut p) = self.hovered  { shift_path(p, depth, win_idx, new_idx); }
+        if let Some(ref mut p) = self.captured { shift_path(p, depth, win_idx, new_idx); }
+    }
 
     #[inline]
     fn flip_y(&self, x: f64, y_down: f64) -> Point {

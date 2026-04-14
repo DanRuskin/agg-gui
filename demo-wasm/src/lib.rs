@@ -14,7 +14,8 @@
 mod gl_resources;
 
 use demo_gl::{GlGfxCtx, begin_frame, sync_inspector, render_app_frame};
-use gl_resources::{GlCubeWidget, GlState, CUBE_SCREEN_RECT};
+use gl_resources::{GlCubeWidget, GlState, CUBE_SCREEN_RECT,
+                   set_cube_painter, clear_cube_painter};
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,7 +23,7 @@ use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use agg_gui::{App, Font, InspectorNode, Key, Modifiers, MouseButton, Rect, Size, Widget};
+use agg_gui::{App, Font, InspectorNode, Key, Modifiers, MouseButton, Rect, Size};
 
 // Embed the font at compile time.
 const FONT_BYTES: &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
@@ -155,7 +156,30 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
         }
     });
 
-    // ── 3. Reset GL_CTX for this frame then paint ────────────────────────────
+    // ── 3. Register inline cube painter (painter-order correct) ─────────────
+    // Borrow GL_STATE briefly to extract raw pointers, then release the borrow
+    // before render_app_frame so GlCubeWidget::paint() can call the closure
+    // without re-entering GL_STATE.
+    //
+    // Safety: GL_STATE is a thread-local that lives for the thread's lifetime.
+    // The pointers are valid for the synchronous duration of render_app_frame.
+    // clear_cube_painter() drops the closure immediately after.
+    CUBE_SCREEN_RECT.with(|r| r.set(agg_gui::Rect::default()));
+    GL_STATE.with(|gl_cell| {
+        if let Some(state) = gl_cell.borrow_mut().as_mut() {
+            // Safety: GL_STATE is thread-local and lives for the thread's
+            // lifetime.  The pointers are valid for the synchronous duration
+            // of render_app_frame; clear_cube_painter() drops them after.
+            let (gl_ptr, cube_ptr) = unsafe { state.raw_gl_and_cube() };
+            let fw = width  as i32;
+            let fh = height as i32;
+            set_cube_painter(move |rect: agg_gui::Rect| {
+                unsafe { (*cube_ptr).draw_gl(&*gl_ptr, rect, fw, fh) };
+            });
+        }
+    });
+
+    // ── 4. Paint widget tree (cube draws inline at its painter-order depth) ──
     GL_CTX.with(|ctx_cell| {
         let mut ctx_borrow = ctx_cell.borrow_mut();
         if let Some(gl_ctx) = ctx_borrow.as_mut() {
@@ -175,13 +199,8 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
         }
     });
 
-    // ── 4. Draw rotating 3D cube on top ─────────────────────────────────────
-    let cube_rect = CUBE_SCREEN_RECT.with(|r| r.get());
-    GL_STATE.with(|gl_cell| {
-        if let Some(state) = gl_cell.borrow_mut().as_mut() {
-            unsafe { state.draw_cube_only(cube_rect, width as i32, height as i32); }
-        }
-    });
+    // Drop the painter — raw pointers inside are no longer valid.
+    clear_cube_painter();
 }
 
 // ---------------------------------------------------------------------------

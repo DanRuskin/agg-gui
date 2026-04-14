@@ -22,7 +22,7 @@
 //! used for the 2D GUI shapes (fills/strokes) — the cube's 8-vertex geometry
 //! does not need tessellation.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use agg_gui::{Color, Rect, Size};
 use agg_gui::event::{Event, EventResult};
@@ -31,12 +31,31 @@ use agg_gui::widget::Widget;
 use glow::HasContext;
 
 // ---------------------------------------------------------------------------
-// Shared screen-rect channel (widget → render loop)
+// Shared channels (widget ↔ render loop)
 // ---------------------------------------------------------------------------
 
 thread_local! {
     /// Set each frame by GlCubeWidget::paint(). Read by CubeGlRenderer::draw_gl().
     pub static CUBE_SCREEN_RECT: Cell<Rect> = Cell::new(Rect::default());
+
+    /// GL paint callback — called *inline* from GlCubeWidget::paint() so the
+    /// cube appears at the correct painter-order position rather than always on
+    /// top.  Set before render_app_frame, cleared immediately after.
+    static CUBE_PAINTER: RefCell<Option<Box<dyn FnMut(Rect)>>> = RefCell::new(None);
+}
+
+/// Register a per-frame GL paint callback for the cube widget.
+///
+/// # Safety
+/// The closure must be valid for the synchronous duration of `render_app_frame`.
+/// Call [`clear_cube_painter`] immediately after `render_app_frame` returns.
+pub fn set_cube_painter(f: impl FnMut(Rect) + 'static) {
+    CUBE_PAINTER.with(|p| *p.borrow_mut() = Some(Box::new(f)));
+}
+
+/// Remove the cube painter after the frame, so no dangling raw ptrs linger.
+pub fn clear_cube_painter() {
+    CUBE_PAINTER.with(|p| *p.borrow_mut() = None);
 }
 
 // ---------------------------------------------------------------------------
@@ -65,21 +84,34 @@ impl Widget for GlCubeWidget {
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         // Capture screen rect from the accumulated transform.
         let t = ctx.transform();
-        CUBE_SCREEN_RECT.with(|r| r.set(Rect::new(
-            t.tx, t.ty, self.bounds.width, self.bounds.height,
-        )));
+        let screen_rect = Rect::new(t.tx, t.ty, self.bounds.width, self.bounds.height);
+        CUBE_SCREEN_RECT.with(|r| r.set(screen_rect));
 
-        // Dark placeholder (the GL cube will be painted on top after AGG upload).
-        ctx.set_fill_color(Color::rgb(0.08, 0.08, 0.12));
-        ctx.begin_path();
-        ctx.rect(0.0, 0.0, self.bounds.width, self.bounds.height);
-        ctx.fill();
+        // If a GL painter is registered, invoke it inline — this places the
+        // cube at the correct depth in the painter order so later widgets
+        // (windows in front) will overdraw it via subsequent GL draw calls.
+        let painted = CUBE_PAINTER.with(|p| {
+            if let Ok(mut borrow) = p.try_borrow_mut() {
+                if let Some(f) = borrow.as_mut() {
+                    f(screen_rect);
+                    return true;
+                }
+            }
+            false
+        });
 
-        // Subtle label
-        ctx.set_fill_color(Color::rgba(1.0, 1.0, 1.0, 0.20));
-        let cx = self.bounds.width * 0.5 - 8.0;
-        let cy = self.bounds.height * 0.5 - 5.0;
-        ctx.fill_text_gsv("3D", cx, cy, 10.0);
+        if !painted {
+            // Fallback: dark placeholder used when no GL painter is attached
+            // (e.g., software render path or first frame before GL initialises).
+            ctx.set_fill_color(Color::rgb(0.08, 0.08, 0.12));
+            ctx.begin_path();
+            ctx.rect(0.0, 0.0, self.bounds.width, self.bounds.height);
+            ctx.fill();
+            ctx.set_fill_color(Color::rgba(1.0, 1.0, 1.0, 0.20));
+            let cx = self.bounds.width * 0.5 - 8.0;
+            let cy = self.bounds.height * 0.5 - 5.0;
+            ctx.fill_text_gsv("3D", cx, cy, 10.0);
+        }
     }
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
