@@ -27,6 +27,8 @@
 pub mod color;
 pub mod device_scale;
 pub mod undo;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_clipboard;
 pub mod draw_ctx;
 pub mod event;
 pub mod framebuffer;

@@ -4,12 +4,14 @@
 // render() returns void — GL writes to the canvas; we no longer use 2D ctx.
 // A requestAnimationFrame loop drives the cube animation continuously.
 
-type RenderFn  = (width: number, height: number, frame_ms: number) => void;
-type MouseXYFn = (x: number, y: number) => void;
-type MouseXYBFn = (x: number, y: number, button: number) => void;
-type WheelFn   = (x: number, y: number, delta_y: number) => void;
-type KeyFn     = (key: string, shift: boolean, ctrl: boolean, alt: boolean) => void;
-type VoidFn    = () => void;
+type RenderFn      = (width: number, height: number, frame_ms: number) => void;
+type MouseXYFn     = (x: number, y: number) => void;
+type MouseXYBFn    = (x: number, y: number, button: number) => void;
+type WheelFn       = (x: number, y: number, delta_y: number) => void;
+type KeyFn         = (key: string, shift: boolean, ctrl: boolean, alt: boolean) => void;
+type VoidFn        = () => void;
+type ClipGetFn     = () => string | null;
+type ClipSetFn     = (text: string) => void;
 
 let wasmModule: Record<string, unknown> | null = null;
 
@@ -104,8 +106,48 @@ canvas.addEventListener("wheel", (e) => {
 
 canvas.addEventListener("keydown", (e) => {
   if (!wasmModule) return;
+  // Ctrl+V / Meta+V: don't intercept here — we handle paste via the 'paste'
+  // DOM event so we get the system clipboard text synchronously.
+  if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) return;
   if (e.key !== "Tab") e.preventDefault();
   (wasmModule["on_key_down"] as KeyFn)(e.key, e.shiftKey, e.ctrlKey, e.altKey);
+});
+
+// --- Clipboard event bridge ---
+// copy: WASM already wrote selected text to the in-process buffer via Ctrl+C
+//       keydown; we forward it to the system clipboard here.
+canvas.addEventListener("copy", (e: Event) => {
+  if (!wasmModule) return;
+  const ce = e as ClipboardEvent;
+  const text = (wasmModule["wasm_clipboard_get"] as ClipGetFn)();
+  if (text !== null && text !== undefined && text.length > 0) {
+    ce.clipboardData?.setData("text/plain", text);
+    ce.preventDefault();
+  }
+});
+
+// cut: same as copy — WASM cut the text and stored it in the buffer.
+canvas.addEventListener("cut", (e: Event) => {
+  if (!wasmModule) return;
+  const ce = e as ClipboardEvent;
+  const text = (wasmModule["wasm_clipboard_get"] as ClipGetFn)();
+  if (text !== null && text !== undefined && text.length > 0) {
+    ce.clipboardData?.setData("text/plain", text);
+    ce.preventDefault();
+  }
+});
+
+// paste: get text from the system clipboard, store in the in-process buffer,
+//        then synthesise a Ctrl+V key event so Rust's paste handler fires.
+canvas.addEventListener("paste", (e: Event) => {
+  if (!wasmModule) return;
+  const ce = e as ClipboardEvent;
+  const text = ce.clipboardData?.getData("text/plain") ?? "";
+  if (text.length > 0) {
+    ce.preventDefault();
+    (wasmModule["wasm_clipboard_set"] as ClipSetFn)(text);
+    (wasmModule["on_key_down"] as KeyFn)("v", false, true, false);
+  }
 });
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());

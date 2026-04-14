@@ -320,6 +320,30 @@ pub fn render_text_gl_pixels(width: u32, height: u32) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// Clipboard bridge
+//
+// The JS harness reads/writes the in-process clipboard buffer to connect
+// Rust's copy/cut/paste logic to the browser's system clipboard.
+// See `agg_gui::wasm_clipboard` for the buffer implementation.
+// ---------------------------------------------------------------------------
+
+/// Read the in-process clipboard buffer.  Returns `None` when empty.
+/// Called by the JS `copy`/`cut` DOM event handler to populate
+/// `event.clipboardData` before the browser commits to the system clipboard.
+#[wasm_bindgen]
+pub fn wasm_clipboard_get() -> Option<String> {
+    agg_gui::wasm_clipboard::get()
+}
+
+/// Write `text` into the in-process clipboard buffer.
+/// Called by the JS `paste` DOM event handler with the text from
+/// `event.clipboardData` before synthesising a Ctrl+V key event.
+#[wasm_bindgen]
+pub fn wasm_clipboard_set(text: &str) {
+    agg_gui::wasm_clipboard::set(text);
+}
+
+// ---------------------------------------------------------------------------
 // WASM event exports
 // ---------------------------------------------------------------------------
 
