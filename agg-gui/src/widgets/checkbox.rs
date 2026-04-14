@@ -1,5 +1,7 @@
 //! `Checkbox` — a boolean toggle with a label.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::color::Color;
@@ -21,7 +23,12 @@ pub struct Checkbox {
     label: String,
     font: Arc<Font>,
     font_size: f64,
+    label_color: Color,
     checked: bool,
+    /// When set, this cell is the authoritative checked state.  `paint` reads
+    /// from it and `toggle` writes to it so the checkbox stays in sync with
+    /// external state changes (e.g. a window's close button setting it to false).
+    state_cell: Option<Rc<Cell<bool>>>,
     hovered: bool,
     focused: bool,
     on_change: Option<Box<dyn FnMut(bool)>>,
@@ -36,7 +43,9 @@ impl Checkbox {
             label: label.into(),
             font,
             font_size: 14.0,
+            label_color: Color::rgb(0.1, 0.1, 0.1),
             checked,
+            state_cell: None,
             hovered: false,
             focused: false,
             on_change: None,
@@ -44,6 +53,17 @@ impl Checkbox {
     }
 
     pub fn with_font_size(mut self, size: f64) -> Self { self.font_size = size; self }
+    pub fn with_label_color(mut self, c: Color) -> Self { self.label_color = c; self }
+
+    /// Bind checked state to a shared cell.
+    ///
+    /// When set, `paint` reads from the cell (so external changes — e.g. a
+    /// window's close button — are reflected immediately), and `toggle` writes
+    /// to it so both directions stay in sync.
+    pub fn with_state_cell(mut self, cell: Rc<Cell<bool>>) -> Self {
+        self.state_cell = Some(cell);
+        self
+    }
 
     pub fn with_margin(mut self, m: Insets)    -> Self { self.base.margin   = m; self }
     pub fn with_h_anchor(mut self, h: HAnchor) -> Self { self.base.h_anchor = h; self }
@@ -60,9 +80,17 @@ impl Checkbox {
     pub fn set_checked(&mut self, v: bool) { self.checked = v; }
 
     fn toggle(&mut self) {
-        self.checked = !self.checked;
-        let v = self.checked;
-        if let Some(cb) = self.on_change.as_mut() { cb(v); }
+        let new_val = !self.effective_checked();
+        self.checked = new_val;
+        if let Some(ref cell) = self.state_cell { cell.set(new_val); }
+        if let Some(cb) = self.on_change.as_mut() { cb(new_val); }
+    }
+
+    /// Returns the authoritative checked state: the cell value if bound, else
+    /// the internal `checked` field.
+    #[inline]
+    fn effective_checked(&self) -> bool {
+        if let Some(ref cell) = self.state_cell { cell.get() } else { self.checked }
     }
 }
 
@@ -99,8 +127,10 @@ impl Widget for Checkbox {
             ctx.stroke();
         }
 
+        let checked = self.effective_checked();
+
         // Box background
-        let bg = if self.checked {
+        let bg = if checked {
             Color::rgb(0.22, 0.45, 0.88)
         } else if self.hovered {
             Color::rgb(0.92, 0.93, 0.95)
@@ -113,7 +143,7 @@ impl Widget for Checkbox {
         ctx.fill();
 
         // Box border
-        let border = if self.checked {
+        let border = if checked {
             Color::rgb(0.16, 0.36, 0.72)
         } else {
             Color::rgb(0.75, 0.76, 0.78)
@@ -126,7 +156,7 @@ impl Widget for Checkbox {
 
         // Checkmark — coordinates in Y-up space (origin = box bottom-left).
         // Fractions are (1 - Y-down-fraction) so the tick reads correctly.
-        if self.checked {
+        if checked {
             ctx.set_stroke_color(Color::white());
             ctx.set_line_width(2.0);
             ctx.begin_path();
@@ -141,7 +171,7 @@ impl Widget for Checkbox {
         // Label text
         ctx.set_font(Arc::clone(&self.font));
         ctx.set_font_size(self.font_size);
-        ctx.set_fill_color(Color::rgb(0.1, 0.1, 0.1));
+        ctx.set_fill_color(self.label_color);
         let tx = BOX_SIZE + GAP;
         if let Some(m) = ctx.measure_text(&self.label) {
             let ty = h * 0.5 - (m.ascent - m.descent) * 0.5 + m.descent;

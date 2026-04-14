@@ -23,6 +23,8 @@
 //! re-derives world pos (`pos + current_bounds.xy`) and applies the offset, so
 //! the dragged point stays exactly under the cursor even as the window moves.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::color::Color;
@@ -50,6 +52,12 @@ pub struct Window {
     font_size: f64,
 
     visible: bool,
+    /// When set, `is_visible()` delegates to this cell; the close button also
+    /// writes `false` here so the sidebar checkbox stays in sync.
+    visible_cell: Option<Rc<Cell<bool>>>,
+    /// When the cell holds `Some(rect)`, the next `set_bounds` call moves the
+    /// window to that rect and clears the cell.  Used by "Organize windows".
+    reset_to: Option<Rc<Cell<Option<Rect>>>>,
 
     dragging: bool,
     /// Cursor world position when drag started.
@@ -76,6 +84,8 @@ impl Window {
             font,
             font_size: 13.0,
             visible: true,
+            visible_cell: None,
+            reset_to: None,
             dragging: false,
             drag_start_world: Point::ORIGIN,
             drag_start_bounds: Rect::default(),
@@ -86,6 +96,24 @@ impl Window {
 
     pub fn with_bounds(mut self, b: Rect) -> Self { self.bounds = b; self }
     pub fn with_font_size(mut self, size: f64) -> Self { self.font_size = size; self }
+
+    /// Bind window visibility to a shared cell.
+    ///
+    /// `is_visible()` reads from the cell; the close button writes `false` to it
+    /// so the sidebar checkbox stays in sync without an `on_close` callback.
+    pub fn with_visible_cell(mut self, cell: Rc<Cell<bool>>) -> Self {
+        self.visible_cell = Some(cell);
+        self
+    }
+
+    /// Provide a "reset position" cell for the "Organize windows" feature.
+    ///
+    /// When the cell holds `Some(rect)`, the next layout pass moves the window
+    /// to that rect and clears the cell to `None`.
+    pub fn with_reset_cell(mut self, cell: Rc<Cell<Option<Rect>>>) -> Self {
+        self.reset_to = Some(cell);
+        self
+    }
 
     pub fn with_margin(mut self, m: Insets)    -> Self { self.base.margin   = m; self }
     pub fn with_h_anchor(mut self, h: HAnchor) -> Self { self.base.h_anchor = h; self }
@@ -132,7 +160,9 @@ impl Window {
 
 impl Widget for Window {
     fn type_name(&self) -> &'static str { "Window" }
-    fn is_visible(&self) -> bool { self.visible }
+    fn is_visible(&self) -> bool {
+        if let Some(ref cell) = self.visible_cell { cell.get() } else { self.visible }
+    }
     fn bounds(&self) -> Rect { self.bounds }
 
     fn margin(&self)   -> Insets  { self.base.margin }
@@ -142,11 +172,19 @@ impl Widget for Window {
     fn max_size(&self) -> Size    { self.base.max_size }
 
     fn set_bounds(&mut self, b: Rect) {
-        // Preserve our position — only update size if zero (first call from Stack layout).
+        // "Organize windows" reset: if the reset cell holds a target rect, jump to it.
+        if let Some(ref cell) = self.reset_to {
+            if let Some(new_b) = cell.get() {
+                self.bounds = new_b;
+                cell.set(None);
+                return;
+            }
+        }
+        // Preserve our position — only initialise from parent when bounds are zero.
         if self.bounds.width == 0.0 || self.bounds.height == 0.0 {
             self.bounds = b;
         }
-        // Otherwise keep our self-managed position unchanged.
+        // Otherwise keep our self-managed floating position unchanged.
     }
 
     fn children(&self) -> &[Box<dyn Widget>] { &self.children }
@@ -266,7 +304,7 @@ impl Widget for Window {
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
-        if !self.visible { return EventResult::Ignored; }
+        if !self.is_visible() { return EventResult::Ignored; }
 
         match event {
             Event::MouseMove { pos } => {
@@ -286,8 +324,9 @@ impl Widget for Window {
 
             Event::MouseDown { button: MouseButton::Left, pos, .. } => {
                 if self.in_close_button(*pos) {
-                    // Close button: hide the window and fire the on_close callback.
+                    // Close button: hide the window, sync the shared cell, and fire callback.
                     self.visible = false;
+                    if let Some(ref cell) = self.visible_cell { cell.set(false); }
                     if let Some(cb) = self.on_close.as_mut() { cb(); }
                     return EventResult::Consumed;
                 }
