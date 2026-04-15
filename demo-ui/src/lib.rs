@@ -8,7 +8,9 @@
 //!
 //! The only platform-specific piece is the 3D cube widget, passed by the caller.
 
+mod backend_panel;
 mod sidebar;
+mod top_bar;
 mod windows;
 
 use std::cell::{Cell, RefCell};
@@ -19,10 +21,12 @@ use agg_gui::{
     App, DrawCtx, Event, EventResult,
     FlexColumn, FlexRow, Font, InspectorNode, InspectorPanel,
     Rect, Size, SizedBox, Stack, Widget, Window,
-    ThemePreference, Visuals, set_visuals,
+    ThemePreference,
 };
 
+use backend_panel::{FrameHistory, RunMode, build_backend_panel};
 use sidebar::{SidebarEntry, build_sidebar};
+use top_bar::{AppTab, build_top_bar_inner};
 
 // ── Canvas background ──────────────────────────────────────────────────────────
 
@@ -103,138 +107,78 @@ impl Widget for TopMenuBar {
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
 
-// ── Theme toggle widget ────────────────────────────────────────────────────────
+// ── Tab body switcher ─────────────────────────────────────────────────────────
 
-/// Three-button toggle row: ☀ (Light) / 🌙 (Dark) / System.
-/// Writes the chosen `Visuals` via `set_visuals()` when clicked.
-/// Reads current preference from a shared `Rc<Cell<ThemePreference>>`.
-struct ThemeToggle {
+/// Wraps three body views and shows only the active tab's content.
+struct TabBody {
     bounds:   Rect,
-    children: Vec<Box<dyn Widget>>,
-    font:     Arc<Font>,
-    pref:     std::rc::Rc<std::cell::Cell<ThemePreference>>,
-    hovered:  Option<usize>,  // 0=Light, 1=Dark, 2=System
+    children: Vec<Box<dyn Widget>>, // [demos_view, cube_view, rendering_view]
+    tab:      Rc<Cell<AppTab>>,
 }
 
-impl ThemeToggle {
-    fn new(font: Arc<Font>, pref: std::rc::Rc<std::cell::Cell<ThemePreference>>) -> Self {
-        Self {
-            bounds:   Rect::default(),
-            children: Vec::new(),
-            font,
-            pref,
-            hovered:  None,
-        }
-    }
-
-    /// Button width for each of the 3 toggle buttons.
-    const BTN_W: f64 = 52.0;
-    const BTN_H: f64 = 24.0;
-
-    /// X start of the button group (left-padded within the toggle widget).
-    fn group_x(&self) -> f64 { 8.0 }
-
-    fn btn_rect(&self, idx: usize) -> agg_gui::Rect {
-        let gx = self.group_x();
-        let gy = (self.bounds.height - Self::BTN_H) * 0.5;
-        agg_gui::Rect::new(gx + idx as f64 * Self::BTN_W, gy, Self::BTN_W, Self::BTN_H)
-    }
-
-    fn hit_idx(&self, pos: agg_gui::Point) -> Option<usize> {
-        for i in 0..3 {
-            let r = self.btn_rect(i);
-            if pos.x >= r.x && pos.x <= r.x + r.width
-                && pos.y >= r.y && pos.y <= r.y + r.height
-            {
-                return Some(i);
-            }
-        }
-        None
-    }
-}
-
-impl Widget for ThemeToggle {
-    fn type_name(&self) -> &'static str { "ThemeToggle" }
+impl Widget for TabBody {
+    fn type_name(&self) -> &'static str { "TabBody" }
     fn bounds(&self) -> Rect { self.bounds }
     fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
     fn children(&self) -> &[Box<dyn Widget>] { &self.children }
     fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
 
+    fn is_visible(&self) -> bool { true }
+
     fn layout(&mut self, available: Size) -> Size {
-        // Natural width: 3 buttons + padding on each side.
-        let natural_w = (3.0 * Self::BTN_W + 16.0).min(available.width);
-        self.bounds = Rect::new(0.0, 0.0, natural_w, available.height);
-        Size::new(natural_w, available.height)
-    }
-
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        ctx.set_font(Arc::clone(&self.font));
-        let v = ctx.visuals();
-        let current = self.pref.get();
-        let labels = ["☀", "🌙", "System"];
-        let prefs  = [ThemePreference::Light, ThemePreference::Dark, ThemePreference::System];
-
-        for (i, (label, pref)) in labels.iter().zip(prefs.iter()).enumerate() {
-            let r = self.btn_rect(i);
-            let active   = std::mem::discriminant(&current) == std::mem::discriminant(pref);
-            let hovered  = self.hovered == Some(i);
-
-            let bg = if active {
-                v.accent
-            } else if hovered {
-                v.widget_bg_hovered
-            } else {
-                v.widget_bg
-            };
-            ctx.set_fill_color(bg);
-            ctx.begin_path();
-            // Round the outer corners of the group.
-            let radius = if i == 0 { 4.0 } else if i == 2 { 4.0 } else { 0.0 };
-            ctx.rounded_rect(r.x, r.y, r.width, r.height, radius);
-            ctx.fill();
-
-            // Border between buttons.
-            if i < 2 {
-                ctx.set_fill_color(v.widget_stroke);
-                ctx.begin_path();
-                ctx.rect(r.x + r.width - 1.0, r.y, 1.0, r.height);
-                ctx.fill();
-            }
-
-            // Label text.
-            let text_color = if active { v.window_title_text } else { v.text_color };
-            ctx.set_fill_color(text_color);
-            ctx.set_font_size(11.0);
-            if let Some(m) = ctx.measure_text(label) {
-                let tx = r.x + (r.width - m.width) * 0.5;
-                let ty = r.y + r.height * 0.5 - (m.ascent - m.descent) * 0.5 + m.descent;
-                ctx.fill_text(label, tx, ty);
+        self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
+        let active = self.tab.get() as usize;
+        for (i, child) in self.children.iter_mut().enumerate() {
+            if i == active {
+                child.layout(available);
+                child.set_bounds(Rect::new(0.0, 0.0, available.width, available.height));
             }
         }
+        available
     }
 
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        match event {
-            Event::MouseMove { pos } => {
-                self.hovered = self.hit_idx(*pos);
-                EventResult::Ignored
-            }
-            Event::MouseDown { button: agg_gui::MouseButton::Left, pos, .. } => {
-                if let Some(idx) = self.hit_idx(*pos) {
-                    let pref = [ThemePreference::Light, ThemePreference::Dark, ThemePreference::System][idx];
-                    self.pref.set(pref);
-                    match pref {
-                        ThemePreference::Light  => set_visuals(Visuals::light()),
-                        ThemePreference::Dark   => set_visuals(Visuals::dark()),
-                        ThemePreference::System => set_visuals(Visuals::dark()), // fallback
-                    }
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+
+    fn hit_test(&self, local_pos: agg_gui::Point) -> bool {
+        let b = self.bounds;
+        local_pos.x >= 0.0 && local_pos.x <= b.width && local_pos.y >= 0.0 && local_pos.y <= b.height
     }
+}
+
+// Note: paint_subtree and event routing use children() — TabBody makes inactive
+// children invisible by not calling set_bounds on them; the widget tree system
+// routes events and painting only to children whose hit_test passes.
+// We override is_visible per-child via a wrapper.
+
+/// Wrapper that hides a widget when its tab is not active.
+struct TabPane {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+    tab:      Rc<Cell<AppTab>>,
+    my_tab:   AppTab,
+}
+
+impl Widget for TabPane {
+    fn type_name(&self) -> &'static str { "TabPane" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+    fn is_visible(&self) -> bool { self.tab.get() == self.my_tab }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
+        if let Some(child) = self.children.first_mut() {
+            child.layout(available);
+            child.set_bounds(Rect::new(0.0, 0.0, available.width, available.height));
+        }
+        available
+    }
+
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
 
 // ── Inspector overlay (right edge of canvas) ──────────────────────────────────
@@ -276,6 +220,44 @@ impl Widget for InspectorOverlay {
         local_pos.x >= panel_x && local_pos.x <= self.bounds.width
             && local_pos.y >= 0.0 && local_pos.y <= self.bounds.height
     }
+}
+
+// ── Backend panel pane ────────────────────────────────────────────────────────
+
+/// Wraps the backend panel; returns zero width when hidden so FlexRow collapses it.
+struct BackendPane {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+    show:     Rc<Cell<bool>>,
+}
+
+impl BackendPane {
+    const PANEL_W: f64 = 240.0;
+}
+
+impl Widget for BackendPane {
+    fn type_name(&self) -> &'static str { "BackendPane" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        if !self.show.get() {
+            self.bounds = Rect::new(0.0, 0.0, 0.0, available.height);
+            return Size::new(0.0, available.height);
+        }
+        let w = Self::PANEL_W.min(available.width);
+        self.bounds = Rect::new(0.0, 0.0, w, available.height);
+        if let Some(child) = self.children.first_mut() {
+            child.layout(Size::new(w, available.height));
+            child.set_bounds(Rect::new(0.0, 0.0, w, available.height));
+        }
+        Size::new(w, available.height)
+    }
+
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
 
 // ── Window tiling ──────────────────────────────────────────────────────────────
@@ -380,8 +362,21 @@ pub fn build_demo_ui(
     let inspector_nodes = Rc::new(RefCell::new(Vec::<InspectorNode>::new()));
     let hovered_bounds  = Rc::new(RefCell::new(None::<Rect>));
 
-    // Theme preference shared between the toggle widget and the build call.
-    let theme_pref = Rc::new(Cell::new(ThemePreference::Dark));
+    // Theme preference — detect OS color scheme so we start in the right mode.
+    let initial_theme = top_bar::detect_system_theme();
+    match initial_theme {
+        ThemePreference::Light => agg_gui::set_visuals(agg_gui::Visuals::light()),
+        _                      => agg_gui::set_visuals(agg_gui::Visuals::dark()),
+    }
+    let theme_pref = Rc::new(Cell::new(initial_theme));
+
+    // ── App tab + backend panel visibility ─────────────────────────────────────
+    let app_tab      = Rc::new(Cell::new(AppTab::Demos));
+    let show_backend = Rc::new(Cell::new(false));
+
+    // ── Backend panel state ────────────────────────────────────────────────────
+    let run_mode      = Rc::new(Cell::new(RunMode::Reactive));
+    let frame_history = Rc::new(RefCell::new(FrameHistory::new()));
 
     // ── About window open-state cell ──────────────────────────────────────────
     let about_open = Rc::new(Cell::new(false));
@@ -515,24 +510,68 @@ pub fn build_demo_ui(
         .add(Box::new(canvas))
         .add(Box::new(inspector_overlay));
 
-    // ── Body row: canvas area on the left, sidebar on the right ────────────────
-    // This matches egui's layout exactly: right panel + central canvas area.
-    let body_row = FlexRow::new()
+    // ── Backend panel (left side, visible only when show_backend is true) ────────
+    let backend_panel_widget = build_backend_panel(
+        Arc::clone(&font),
+        Rc::clone(&run_mode),
+        Rc::clone(&frame_history),
+        || {}, // reset callback placeholder
+    );
+    let backend_pane = BackendPane {
+        bounds:   Rect::default(),
+        children: vec![backend_panel_widget],
+        show:     Rc::clone(&show_backend),
+    };
+
+    // ── Demos tab body: [backend panel] canvas [sidebar] ──────────────────────
+    let demos_body = FlexRow::new()
         .with_gap(0.0)
+        .add(Box::new(backend_pane))
         .add_flex(Box::new(main_area), 1.0)
         .add(Box::new(sidebar_panel));
 
-    // ── Top bar inner row: spacer on the left, theme toggle on the right ─────────
-    let top_bar_inner = FlexRow::new()
-        .with_gap(0.0)
-        .add_flex(Box::new(SizedBox::new()), 1.0)  // spacer
-        .add(Box::new(ThemeToggle::new(Arc::clone(&font), Rc::clone(&theme_pref))));
+    let demos_pane = TabPane {
+        bounds:   Rect::default(),
+        children: vec![Box::new(demos_body)],
+        tab:      Rc::clone(&app_tab),
+        my_tab:   AppTab::Demos,
+    };
 
-    // ── Root: top menu bar above the body row ──────────────────────────────────
+    // ── 3D Cube tab body: fullscreen cube placeholder ──────────────────────────
+    let cube_pane = TabPane {
+        bounds:   Rect::default(),
+        children: vec![Box::new(CanvasBg::new())],
+        tab:      Rc::clone(&app_tab),
+        my_tab:   AppTab::Cube3D,
+    };
+
+    // ── Rendering test tab body: placeholder ──────────────────────────────────
+    let render_pane = TabPane {
+        bounds:   Rect::default(),
+        children: vec![Box::new(CanvasBg::new())],
+        tab:      Rc::clone(&app_tab),
+        my_tab:   AppTab::RenderingTest,
+    };
+
+    // ── Body: stack of tab panes (only the active one is visible + hittable) ──
+    let body = Stack::new()
+        .add(Box::new(demos_pane))
+        .add(Box::new(cube_pane))
+        .add(Box::new(render_pane));
+
+    // ── Top bar inner row ─────────────────────────────────────────────────────
+    let top_bar_inner = build_top_bar_inner(
+        Arc::clone(&font),
+        Rc::clone(&app_tab),
+        Rc::clone(&show_backend),
+        Rc::clone(&theme_pref),
+    );
+
+    // ── Root: top menu bar above the body ──────────────────────────────────────
     let root = FlexColumn::new()
         .with_gap(0.0)
-        .add(Box::new(TopMenuBar::new(Box::new(top_bar_inner))))
-        .add_flex(Box::new(body_row), 1.0);
+        .add(Box::new(TopMenuBar::new(top_bar_inner)))
+        .add_flex(Box::new(body), 1.0);
 
     (App::new(Box::new(root)), show_inspector, inspector_nodes, hovered_bounds, cube_visible)
 }
@@ -542,6 +581,7 @@ pub fn build_demo_ui(
 fn build_demo_content(title: &str, font: Arc<Font>) -> Box<dyn Widget> {
     match title {
         "Code Editor"    => windows::code_editor(font),
+        "Code Example"   => windows::code_example(font),
         "Sliders"        => windows::sliders(font),
         "TextEdit"       => windows::text_edit(font),
         "Tooltips"       => windows::tooltips(font),

@@ -51,7 +51,7 @@ pub use framebuffer::Framebuffer;
 pub use geometry::{Point, Rect, Size};
 pub use gfx_ctx::GfxCtx;
 pub use layout_props::{HAnchor, Insets, VAnchor, WidgetBase, resolve_fit_or_stretch};
-pub use text::{Font, TextMetrics};
+pub use text::{Font, TextMetrics, measure_text_metrics};
 pub use undo::{DoUndoActions, UndoBuffer, UndoRedoCommand};
 pub use widget::{App, InspectorNode, Widget, collect_inspector_nodes};
 pub use widgets::{Button, Checkbox, Container, DragValue, FlexColumn, FlexRow,
