@@ -260,7 +260,7 @@ const DEMOS: &[DemoSpec] = &[
 // All 11 egui test windows — matching egui's Tests section exactly.
 const TESTS: &[DemoSpec] = &[
     DemoSpec { title: "Clipboard Test",      label: "Clipboard Test",      open: false, win_w: WIN_W, win_h: WIN_H },
-    DemoSpec { title: "Cursor Test",         label: "Cursor Test",         open: false, win_w: WIN_W, win_h: WIN_H },
+    DemoSpec { title: "Cursor Test",         label: "Cursor Test",         open: false, win_w: 296.0, win_h: 560.0 },
     DemoSpec { title: "Grid Test",           label: "Grid Test",           open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Id Test",             label: "Id Test",             open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Input Event History", label: "Input Event History", open: false, win_w: WIN_W, win_h: WIN_H },
@@ -269,7 +269,7 @@ const TESTS: &[DemoSpec] = &[
     DemoSpec { title: "Manual Layout Test",  label: "Manual Layout Test",  open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "SVG Test",            label: "SVG Test",            open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Tessellation Test",   label: "Tessellation Test",   open: false, win_w: WIN_W, win_h: WIN_H },
-    DemoSpec { title: "Window Resize Test",  label: "Window Resize Test",  open: false, win_w: WIN_W, win_h: WIN_H },
+    DemoSpec { title: "↔ auto-sized",        label: "Window Resize Test",  open: false, win_w: WIN_W, win_h: WIN_H },
 ];
 
 // ── Index of the 3D Cube in DEMOS (computed once) ─────────────────────────────
@@ -470,7 +470,7 @@ pub fn build_demo_ui(
             "Manual Layout Test"  => windows::manual_layout_test(Arc::clone(&font)),
             "SVG Test"            => windows::svg_test(Arc::clone(&font)),
             "Tessellation Test"   => windows::tessellation_test(Arc::clone(&font)),
-            "Window Resize Test"  => windows::window_resize_test(Arc::clone(&font)),
+            "↔ auto-sized"        => windows::window_resize_test(Arc::clone(&font)),
             _                     => windows::coming_soon(),
         };
         let win = Window::new(spec.title, Arc::clone(&font), content)
@@ -479,6 +479,21 @@ pub fn build_demo_ui(
             .with_reset_cell(reset_cell)
             .with_position_cell(Rc::clone(&test_pos_cells[i]));
         canvas = canvas.add(Box::new(win));
+    }
+
+    // ── Window Resize Test — 5 additional sub-windows (all share test_entries[10].open) ──
+    // The sidebar checkbox "Window Resize Test" shows/hides all 6 windows together,
+    // matching the egui reference where a single `open: &mut bool` controls all.
+    {
+        let wrt_open = Rc::clone(&test_entries[10].open);
+        for (title, content, initial_rect) in
+            windows::window_resize_sub_windows(Arc::clone(&font))
+        {
+            let win = Window::new(&title, Arc::clone(&font), content)
+                .with_bounds(initial_rect)
+                .with_visible_cell(Rc::clone(&wrt_open));
+            canvas = canvas.add(Box::new(win));
+        }
     }
 
     // ── About window ──────────────────────────────────────────────────────────

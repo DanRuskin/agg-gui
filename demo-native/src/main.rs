@@ -12,8 +12,9 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::{App, Font, Key as AggKey, Modifiers,
+use agg_gui::{App, CursorIcon, Font, Key as AggKey, Modifiers,
               MouseButton as AggMouseButton, Rect};
+use winit::window::CursorIcon as WinitCursor;
 
 use demo_gl::{GlGfxCtx, begin_frame, sync_inspector, render_app_frame};
 
@@ -183,6 +184,7 @@ fn main() {
                     cursor_x = position.x;
                     cursor_y = position.y;
                     app.on_mouse_move(cursor_x, cursor_y);
+                    apply_cursor(&window, agg_gui::current_cursor_icon());
                 }
                 Event::WindowEvent {
                     event: WindowEvent::CursorLeft { .. }, ..
@@ -283,6 +285,59 @@ fn render_frame(
 // ---------------------------------------------------------------------------
 // Input mapping helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Cursor helpers
+// ---------------------------------------------------------------------------
+
+fn apply_cursor(window: &winit::window::Window, icon: CursorIcon) {
+    if icon == CursorIcon::None {
+        window.set_cursor_visible(false);
+    } else {
+        window.set_cursor_visible(true);
+        window.set_cursor(agg_cursor_to_winit(icon));
+    }
+}
+
+fn agg_cursor_to_winit(icon: CursorIcon) -> WinitCursor {
+    match icon {
+        CursorIcon::Default          => WinitCursor::Default,
+        CursorIcon::None             => WinitCursor::Default, // handled above
+        CursorIcon::ContextMenu      => WinitCursor::ContextMenu,
+        CursorIcon::Help             => WinitCursor::Help,
+        CursorIcon::PointingHand     => WinitCursor::Pointer,
+        CursorIcon::Progress         => WinitCursor::Progress,
+        CursorIcon::Wait             => WinitCursor::Wait,
+        CursorIcon::Cell             => WinitCursor::Cell,
+        CursorIcon::Crosshair        => WinitCursor::Crosshair,
+        CursorIcon::Text             => WinitCursor::Text,
+        CursorIcon::VerticalText     => WinitCursor::VerticalText,
+        CursorIcon::Alias            => WinitCursor::Alias,
+        CursorIcon::Copy             => WinitCursor::Copy,
+        CursorIcon::Move             => WinitCursor::Move,
+        CursorIcon::NoDrop           => WinitCursor::NoDrop,
+        CursorIcon::NotAllowed       => WinitCursor::NotAllowed,
+        CursorIcon::Grab             => WinitCursor::Grab,
+        CursorIcon::Grabbing         => WinitCursor::Grabbing,
+        CursorIcon::AllScroll        => WinitCursor::AllScroll,
+        CursorIcon::ResizeHorizontal => WinitCursor::EwResize,
+        CursorIcon::ResizeNeSw       => WinitCursor::NeswResize,
+        CursorIcon::ResizeNwSe       => WinitCursor::NwseResize,
+        CursorIcon::ResizeVertical   => WinitCursor::NsResize,
+        CursorIcon::ResizeEast       => WinitCursor::EResize,
+        CursorIcon::ResizeSouthEast  => WinitCursor::SeResize,
+        CursorIcon::ResizeSouth      => WinitCursor::SResize,
+        CursorIcon::ResizeSouthWest  => WinitCursor::SwResize,
+        CursorIcon::ResizeWest       => WinitCursor::WResize,
+        CursorIcon::ResizeNorthWest  => WinitCursor::NwResize,
+        CursorIcon::ResizeNorth      => WinitCursor::NResize,
+        CursorIcon::ResizeNorthEast  => WinitCursor::NeResize,
+        CursorIcon::ResizeColumn     => WinitCursor::ColResize,
+        CursorIcon::ResizeRow        => WinitCursor::RowResize,
+        CursorIcon::ZoomIn           => WinitCursor::ZoomIn,
+        CursorIcon::ZoomOut          => WinitCursor::ZoomOut,
+    }
+}
 
 fn map_key(key: &WinitKey) -> Option<AggKey> {
     Some(match key {

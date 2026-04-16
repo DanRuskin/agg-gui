@@ -32,7 +32,8 @@ pub use text_demos::{strip_demo, table_demo, text_layout, undo_redo,
                      window_options, modals_demo, multi_touch};
 pub use tests::{clipboard_test, cursor_test, grid_test, id_test,
                 input_event_history, input_test, layout_test, manual_layout_test,
-                svg_test, tessellation_test, window_resize_test};
+                svg_test, tessellation_test, window_resize_test,
+                window_resize_sub_windows};
 
 use std::sync::Arc;
 

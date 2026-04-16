@@ -430,6 +430,8 @@ impl App {
 
     /// Mouse cursor moved. `screen_y` is Y-down (OS / browser convention).
     pub fn on_mouse_move(&mut self, screen_x: f64, screen_y: f64) {
+        // Reset cursor so the hovered widget can set it; Default if nothing sets it.
+        crate::cursor::reset_cursor_icon();
         let pos = self.flip_y(screen_x, screen_y);
         self.dispatch_mouse_move(pos);
     }
@@ -529,6 +531,7 @@ impl App {
 
     /// Call when the cursor leaves the window to clear hover state.
     pub fn on_mouse_leave(&mut self) {
+        crate::cursor::reset_cursor_icon();
         self.dispatch_mouse_move(Point::new(-1.0, -1.0));
     }
 

@@ -98,6 +98,11 @@ pub struct Window {
 
     /// Backbuffered title label.  Positioned and painted manually in `paint()`.
     title_label: Label,
+
+    /// Canvas size supplied by the last `layout()` call; used for clamping.
+    canvas_size: Size,
+    /// When true, the window is kept fully inside the canvas bounds during drag/resize.
+    constrain: bool,
 }
 
 impl Window {
@@ -128,6 +133,8 @@ impl Window {
             on_close: None,
             last_title_click: None,
             title_label,
+            canvas_size: Size::new(1280.0, 720.0),
+            constrain: true,
         }
     }
 
@@ -159,9 +166,22 @@ impl Window {
     pub fn with_min_size(mut self, s: Size)    -> Self { self.base.min_size = s; self }
     pub fn with_max_size(mut self, s: Size)    -> Self { self.base.max_size = s; self }
 
+    pub fn with_constrain(mut self, constrain: bool) -> Self { self.constrain = constrain; self }
+
     pub fn on_close(mut self, cb: impl FnMut() + 'static) -> Self {
         self.on_close = Some(Box::new(cb));
         self
+    }
+
+    fn clamp_to_canvas(&mut self) {
+        if !self.constrain { return; }
+        let cw = self.canvas_size.width;
+        let ch = self.canvas_size.height;
+        let visible_h = if self.collapsed { TITLE_H } else { self.bounds.height };
+        // Keep window fully inside the canvas area.
+        // If window is larger than the canvas, pin at origin.
+        self.bounds.x = self.bounds.x.clamp(0.0, (cw - self.bounds.width).max(0.0));
+        self.bounds.y = self.bounds.y.clamp(0.0, (ch - visible_h).max(0.0));
     }
 
     pub fn show(&mut self) { self.visible = true; }
@@ -244,6 +264,7 @@ impl Window {
         }
 
         self.bounds = Rect::new(x, y, w, h);
+        self.clamp_to_canvas();
     }
 }
 
@@ -289,7 +310,7 @@ impl Widget for Window {
             && local_pos.y >= 0.0 && local_pos.y <= b.height
     }
 
-    fn layout(&mut self, _available: Size) -> Size {
+    fn layout(&mut self, available: Size) -> Size {
         if !self.is_visible() {
             return Size::new(self.bounds.width, self.bounds.height);
         }
@@ -309,7 +330,10 @@ impl Widget for Window {
         let s = self.title_label.layout(Size::new(self.bounds.width - 48.0, TITLE_H));
         self.title_label.set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
 
-        // Publish current position so external code can read it for persistence.
+        // Store canvas size for drag clamping, apply passive constraint first,
+        // then publish the clamped position so persistence gets the real location.
+        self.canvas_size = available;
+        self.clamp_to_canvas();
         if let Some(ref cell) = self.position_cell {
             cell.set(self.bounds);
         }
@@ -461,6 +485,7 @@ impl Widget for Window {
                         let dy = world.y - self.drag_start_world.y;
                         self.bounds.x = self.drag_start_bounds.x + dx;
                         self.bounds.y = self.drag_start_bounds.y + dy;
+                        self.clamp_to_canvas();
                         return EventResult::Consumed;
                     }
                     DragMode::Resize(_) => {

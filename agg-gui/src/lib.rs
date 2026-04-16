@@ -25,6 +25,7 @@
 //! the rationale.
 
 pub mod color;
+pub mod cursor;
 pub mod device_scale;
 pub mod undo;
 #[cfg(target_arch = "wasm32")]
@@ -43,6 +44,7 @@ pub mod widgets;
 
 // Re-export the most commonly used types at the crate root.
 pub use color::Color;
+pub use cursor::{CursorIcon, current_cursor_icon, set_cursor_icon, reset_cursor_icon};
 pub use device_scale::{device_scale, set_device_scale};
 pub use draw_ctx::{DrawCtx, GlPaint};
 pub use theme::{ThemePreference, Visuals, current_visuals, set_visuals};

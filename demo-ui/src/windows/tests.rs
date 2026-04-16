@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use agg_gui::{
-    Color, Container, DrawCtx, Event, EventResult,
+    Color, Container, CursorIcon, DrawCtx, Event, EventResult,
     FlexColumn, FlexRow, Font, Label,
-    Point, Rect, Separator,
+    Point, Rect, ScrollView, Separator, set_cursor_icon,
     Size, SizedBox, TextField, Widget,
 };
 use agg_gui::widget::paint_subtree;
@@ -59,40 +59,80 @@ pub fn clipboard_test(font: Arc<Font>) -> Box<dyn Widget> {
 // Cursor Test
 // ---------------------------------------------------------------------------
 
-/// A labeled box showing a cursor-shape name.
-struct CursorBox {
-    bounds:   Rect,
+/// All cursor icons in display order — mirrors egui's `CursorIcon::ALL`.
+const ALL_CURSORS: &[(CursorIcon, &str)] = &[
+    (CursorIcon::Default,          "Default"),
+    (CursorIcon::None,             "None"),
+    (CursorIcon::ContextMenu,      "ContextMenu"),
+    (CursorIcon::Help,             "Help"),
+    (CursorIcon::PointingHand,     "PointingHand"),
+    (CursorIcon::Progress,         "Progress"),
+    (CursorIcon::Wait,             "Wait"),
+    (CursorIcon::Cell,             "Cell"),
+    (CursorIcon::Crosshair,        "Crosshair"),
+    (CursorIcon::Text,             "Text"),
+    (CursorIcon::VerticalText,     "VerticalText"),
+    (CursorIcon::Alias,            "Alias"),
+    (CursorIcon::Copy,             "Copy"),
+    (CursorIcon::Move,             "Move"),
+    (CursorIcon::NoDrop,           "NoDrop"),
+    (CursorIcon::NotAllowed,       "NotAllowed"),
+    (CursorIcon::Grab,             "Grab"),
+    (CursorIcon::Grabbing,         "Grabbing"),
+    (CursorIcon::AllScroll,        "AllScroll"),
+    (CursorIcon::ResizeHorizontal, "ResizeHorizontal"),
+    (CursorIcon::ResizeNeSw,       "ResizeNeSw"),
+    (CursorIcon::ResizeNwSe,       "ResizeNwSe"),
+    (CursorIcon::ResizeVertical,   "ResizeVertical"),
+    (CursorIcon::ResizeEast,       "ResizeEast"),
+    (CursorIcon::ResizeSouthEast,  "ResizeSouthEast"),
+    (CursorIcon::ResizeSouth,      "ResizeSouth"),
+    (CursorIcon::ResizeSouthWest,  "ResizeSouthWest"),
+    (CursorIcon::ResizeWest,       "ResizeWest"),
+    (CursorIcon::ResizeNorthWest,  "ResizeNorthWest"),
+    (CursorIcon::ResizeNorth,      "ResizeNorth"),
+    (CursorIcon::ResizeNorthEast,  "ResizeNorthEast"),
+    (CursorIcon::ResizeColumn,     "ResizeColumn"),
+    (CursorIcon::ResizeRow,        "ResizeRow"),
+    (CursorIcon::ZoomIn,           "ZoomIn"),
+    (CursorIcon::ZoomOut,          "ZoomOut"),
+];
+
+/// Full-width row button that sets the OS cursor to `icon` on hover.
+struct CursorRow {
+    bounds:  Rect,
     children: Vec<Box<dyn Widget>>,
-    label_widget: Label,
-    hovered:  bool,
+    icon:    CursorIcon,
+    hovered: bool,
+    label:   Label,
 }
 
-impl CursorBox {
-    fn new(name: &'static str, font: Arc<Font>) -> Self {
+impl CursorRow {
+    const H: f64 = 24.0;
+
+    fn new(icon: CursorIcon, name: &'static str, font: Arc<Font>) -> Self {
         Self {
             bounds: Rect::default(),
             children: Vec::new(),
-            label_widget: Label::new(name, font).with_font_size(11.0),
+            icon,
             hovered: false,
+            label: Label::new(name, font).with_font_size(12.0),
         }
     }
 }
 
-impl Widget for CursorBox {
-    fn type_name(&self) -> &'static str { "CursorBox" }
+impl Widget for CursorRow {
+    fn type_name(&self) -> &'static str { "CursorRow" }
     fn bounds(&self) -> Rect { self.bounds }
     fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
     fn children(&self) -> &[Box<dyn Widget>] { &self.children }
     fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
 
-    fn layout(&mut self, _available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, 90.0, 50.0);
-        let ls = self.label_widget.layout(Size::new(90.0, 50.0));
-        // Center label within the 90×50 box.
-        let lx = (90.0 - ls.width) * 0.5;
-        let ly = (50.0 - ls.height) * 0.5;
-        self.label_widget.set_bounds(Rect::new(lx, ly, ls.width, ls.height));
-        Size::new(90.0, 50.0)
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, Self::H);
+        let ls = self.label.layout(Size::new(available.width, Self::H));
+        self.label.set_bounds(Rect::new(0.0, 0.0, ls.width, ls.height));
+        Size::new(available.width, Self::H)
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
@@ -100,29 +140,32 @@ impl Widget for CursorBox {
         let bg = if self.hovered { v.widget_bg_hovered } else { v.widget_bg };
         ctx.set_fill_color(bg);
         ctx.begin_path();
-        ctx.rounded_rect(0.0, 0.0, 90.0, 50.0, 5.0);
+        ctx.rounded_rect(0.0, 0.0, self.bounds.width, Self::H, 3.0);
         ctx.fill();
-        ctx.set_stroke_color(v.widget_stroke);
-        ctx.set_line_width(1.0);
-        ctx.begin_path();
-        ctx.rounded_rect(0.0, 0.0, 90.0, 50.0, 5.0);
-        ctx.stroke();
 
-        // Paint label via backbuffered Label child.
-        self.label_widget.set_color(v.text_color);
-        let lb = self.label_widget.bounds();
+        // Center label.
+        self.label.set_color(v.text_color);
+        let lw = self.label.bounds().width;
+        let lh = self.label.bounds().height;
+        let lx = (self.bounds.width - lw) * 0.5;
+        let ly = (Self::H - lh) * 0.5;
+        self.label.set_bounds(Rect::new(lx, ly, lw, lh));
         ctx.save();
-        ctx.translate(lb.x, lb.y);
-        paint_subtree(&mut self.label_widget, ctx);
+        ctx.translate(lx, ly);
+        paint_subtree(&mut self.label, ctx);
         ctx.restore();
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
         match event {
             Event::MouseMove { pos } => {
+                let in_bounds = pos.x >= 0.0 && pos.x <= self.bounds.width
+                    && pos.y >= 0.0 && pos.y <= Self::H;
+                if in_bounds {
+                    set_cursor_icon(self.icon);
+                }
                 let was = self.hovered;
-                self.hovered = pos.x >= 0.0 && pos.x <= 90.0
-                    && pos.y >= 0.0 && pos.y <= 50.0;
+                self.hovered = in_bounds;
                 if self.hovered != was { EventResult::Consumed } else { EventResult::Ignored }
             }
             _ => EventResult::Ignored,
@@ -130,44 +173,48 @@ impl Widget for CursorBox {
     }
 
     fn hit_test(&self, p: Point) -> bool {
-        p.x >= 0.0 && p.x <= 90.0 && p.y >= 0.0 && p.y <= 50.0
+        p.x >= 0.0 && p.x <= self.bounds.width && p.y >= 0.0 && p.y <= Self::H
     }
 }
 
-/// Build the Cursor Test — a grid of cursor-shape name boxes.
+/// Build the Cursor Test — 2-column layout showing all cursor icons.
+///
+/// Splits ALL_CURSORS into two halves side-by-side so the window stays compact.
+/// Hovering each row sets the OS cursor.
 pub fn cursor_test(font: Arc<Font>) -> Box<dyn Widget> {
-    let cursor_names = [
-        "Arrow", "Text", "Hand", "Crosshair",
-        "Move", "NResize", "EResize", "Wait",
-        "Progress", "NotAllowed", "ZoomIn", "ZoomOut",
-    ];
+    let half = ALL_CURSORS.len() / 2;
+    let left_cursors  = &ALL_CURSORS[..half];
+    let right_cursors = &ALL_CURSORS[half..];
 
-    let mut col = FlexColumn::new()
-        .with_gap(12.0)
-        .with_padding(14.0)
-        .with_panel_bg();
-
-    col.push(Box::new(Label::new(
-        "Cursor shapes (hover to see name)",
-        Arc::clone(&font),
-    ).with_font_size(12.0)), 0.0);
-
-    // 4-column grid.
-    for chunk in cursor_names.chunks(4) {
-        let mut row = FlexRow::new().with_gap(8.0);
-        for &name in chunk {
-            row.push(Box::new(CursorBox::new(name, Arc::clone(&font))), 0.0);
-        }
-        col.push(Box::new(row), 0.0);
+    let mut left_col = FlexColumn::new().with_gap(2.0).with_padding(0.0);
+    for &(icon, name) in left_cursors {
+        left_col.push(Box::new(CursorRow::new(icon, name, Arc::clone(&font))), 0.0);
     }
 
-    col.push(Box::new(Separator::horizontal()), 0.0);
-    col.push(Box::new(Label::new(
-        "Custom cursor shape API not yet wired to the OS layer.",
-        Arc::clone(&font),
-    ).with_font_size(11.0)), 0.0);
+    let mut right_col = FlexColumn::new().with_gap(2.0).with_padding(0.0);
+    for &(icon, name) in right_cursors {
+        right_col.push(Box::new(CursorRow::new(icon, name, Arc::clone(&font))), 0.0);
+    }
 
-    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
+    let cols_row = FlexRow::new()
+        .with_gap(4.0)
+        .add_flex(Box::new(left_col), 1.0)
+        .add_flex(Box::new(right_col), 1.0);
+
+    let mut col = FlexColumn::new()
+        .with_gap(4.0)
+        .with_padding(8.0)
+        .with_panel_bg();
+
+    col.push(Box::new(
+        Label::new("Hover to switch cursor icon:", Arc::clone(&font))
+            .with_font_size(13.0)
+    ), 0.0);
+    col.push(Box::new(cols_row), 0.0);
+    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
+    // Flex fill so panel_bg covers full window content area.
+    col.push(Box::new(SizedBox::new()), 1.0);
+
     Box::new(col)
 }
 
@@ -865,52 +912,165 @@ pub fn tessellation_test(font: Arc<Font>) -> Box<dyn Widget> {
 // Window Resize Test
 // ---------------------------------------------------------------------------
 
-/// Build the Window Resize Test — shows static size info and resize options.
+// Short and long Lorem Ipsum strings — mirrors the egui reference constants.
+const LOREM_IPSUM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing \
+elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim \
+ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea \
+commodo consequat.";
+
+const LOREM_IPSUM_LONG: &str = "Lorem ipsum dolor sit amet, consectetur \
+adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. \
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip \
+ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit \
+esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non \
+proident, sunt in culpa qui officia deserunt mollit anim id est laborum.\n\n\
+Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium \
+doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore \
+veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam \
+voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur \
+magni dolores eos qui ratione voluptatem sequi nesciunt.\n\n\
+At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis \
+praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias \
+excepturi sint occaecati cupiditate non provident, similique sunt in culpa qui \
+officia deserunt mollitia animi, id est laborum et dolorum fuga.";
+
+/// Build the "↔ auto-sized" Window Resize Test window content.
+///
+/// This is the first of six windows shown when the "Window Resize Test" sidebar
+/// entry is enabled.  The window auto-sizes to fit its content; the user can
+/// resize it via the edge/corner handles to see it snap back to content size.
 pub fn window_resize_test(font: Arc<Font>) -> Box<dyn Widget> {
-    use std::cell::Cell;
-    use std::rc::Rc;
-    use agg_gui::Checkbox;
-
-    let min_size = Rc::new(Cell::new(true));
-    let max_size = Rc::new(Cell::new(false));
-
     let mut col = FlexColumn::new()
-        .with_gap(14.0)
-        .with_padding(16.0)
+        .with_gap(8.0)
+        .with_padding(14.0)
         .with_panel_bg();
 
-    col.push(Box::new(Label::new("Window resize test", Arc::clone(&font))
-        .with_font_size(12.0)), 0.0);
+    col.push(Box::new(Label::new(
+        "This window will auto-size based on its contents.",
+        Arc::clone(&font),
+    ).with_font_size(12.0)), 0.0);
 
     col.push(Box::new(Label::new(
-        "Current size:  360 \u{00d7} 290\nMin size:      200 \u{00d7} 120\nMax size:      none",
+        "Resize this area:",
         Arc::clone(&font),
-    ).with_font_size(12.5)), 0.0);
+    ).with_font_size(13.0)), 0.0);
 
     col.push(Box::new(Separator::horizontal()), 0.0);
-    col.push(Box::new(Label::new("Constraints", Arc::clone(&font))
-        .with_font_size(12.0)), 0.0);
 
-    {
-        let v = Rc::clone(&min_size);
-        col.push(Box::new(Checkbox::new("Enforce minimum size (200 × 120)",
-            Arc::clone(&font), min_size.get())
-            .with_font_size(13.0).on_change(move |b| v.set(b))), 0.0);
-    }
-    {
-        let v = Rc::clone(&max_size);
-        col.push(Box::new(Checkbox::new("Enforce maximum size (720 × 540)",
-            Arc::clone(&font), max_size.get())
-            .with_font_size(13.0).on_change(move |b| v.set(b))), 0.0);
-    }
+    col.push(Box::new(Label::new(LOREM_IPSUM, Arc::clone(&font))
+        .with_font_size(11.5)), 0.0);
 
     col.push(Box::new(Separator::horizontal()), 0.0);
+
     col.push(Box::new(Label::new(
-        "Drag the window title bar edge to resize.\n\
-         Min/max enforcement is not yet wired to the Window widget.",
+        "Resize the above area!",
         Arc::clone(&font),
-    ).with_font_size(11.0)), 0.0);
+    ).with_font_size(12.0)), 0.0);
 
-    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
+    // Flex fill keeps panel_bg painted to the bottom of the content area.
+    col.push(Box::new(SizedBox::new()), 1.0);
     Box::new(col)
+}
+
+/// Build the five additional windows shown alongside "↔ auto-sized" when the
+/// "Window Resize Test" sidebar entry is enabled.
+///
+/// Returns `(title, content, initial_rect)` tuples; all windows share the same
+/// visible cell (Rc<Cell<bool>>) that the caller wires up.
+pub fn window_resize_sub_windows(font: Arc<Font>) -> Vec<(String, Box<dyn Widget>, Rect)> {
+    // Initial rects in Y-up canvas coordinates (default_canvas_h ≈ 720).
+    // Staggered 3 × 2 so the windows are visible on a 1280×720 screen.
+    let rects: &[Rect] = &[
+        Rect::new( 30.0, 410.0, 300.0, 290.0), // ↔ resizable + scroll
+        Rect::new(350.0, 410.0, 300.0, 290.0), // ↔ resizable + embedded scroll
+        Rect::new(670.0, 410.0, 300.0, 290.0), // ↔ resizable without scroll
+        Rect::new( 30.0, 100.0, 300.0, 290.0), // ↔ resizable with TextEdit
+        Rect::new(350.0, 550.0, 250.0, 150.0), // ↔ freely resized
+    ];
+
+    let mut out: Vec<(String, Box<dyn Widget>, Rect)> = Vec::new();
+
+    // ── 1. resizable + scroll ─────────────────────────────────────────────────
+    {
+        let mut root = FlexColumn::new().with_gap(8.0).with_padding(10.0).with_panel_bg();
+        root.push(Box::new(Label::new(
+            "This window is resizable and has a scroll area.\n\
+             You can shrink it to any size.",
+            Arc::clone(&font),
+        ).with_font_size(12.0)), 0.0);
+        root.push(Box::new(Separator::horizontal()), 0.0);
+        // Scrollable region fills remaining space.
+        let mut scroll_col = FlexColumn::new().with_gap(4.0).with_padding(4.0);
+        scroll_col.push(Box::new(Label::new(LOREM_IPSUM_LONG, Arc::clone(&font))
+            .with_font_size(11.5)), 0.0);
+        root.push(Box::new(ScrollView::new(Box::new(scroll_col))), 1.0);
+        out.push(("↔ resizable + scroll".into(), Box::new(root), rects[0]));
+    }
+
+    // ── 2. resizable + embedded scroll ───────────────────────────────────────
+    {
+        let mut root = FlexColumn::new().with_gap(8.0).with_padding(10.0).with_panel_bg();
+        root.push(Box::new(Label::new(
+            "This window is resizable but has no built-in scroll area.",
+            Arc::clone(&font),
+        ).with_font_size(12.0)), 0.0);
+        root.push(Box::new(Label::new(
+            "However, we have a sub-region with a scroll bar:",
+            Arc::clone(&font),
+        ).with_font_size(12.0)), 0.0);
+        root.push(Box::new(Separator::horizontal()), 0.0);
+        let long2 = format!("{}\n\n{}", LOREM_IPSUM_LONG, LOREM_IPSUM_LONG);
+        let mut inner = FlexColumn::new().with_gap(4.0).with_padding(4.0);
+        inner.push(Box::new(Label::new(&long2, Arc::clone(&font))
+            .with_font_size(11.5)), 0.0);
+        root.push(Box::new(ScrollView::new(Box::new(inner))), 1.0);
+        out.push(("↔ resizable + embedded scroll".into(), Box::new(root), rects[1]));
+    }
+
+    // ── 3. resizable without scroll ──────────────────────────────────────────
+    {
+        let mut root = FlexColumn::new().with_gap(8.0).with_padding(10.0).with_panel_bg();
+        root.push(Box::new(Label::new(
+            "This window is resizable but has no scroll area. It can only be \
+             resized to a size where all contents are visible.",
+            Arc::clone(&font),
+        ).with_font_size(12.0)), 0.0);
+        root.push(Box::new(Separator::horizontal()), 0.0);
+        root.push(Box::new(Label::new(LOREM_IPSUM, Arc::clone(&font))
+            .with_font_size(11.5)), 0.0);
+        root.push(Box::new(SizedBox::new()), 1.0);
+        out.push(("↔ resizable without scroll".into(), Box::new(root), rects[2]));
+    }
+
+    // ── 4. resizable with TextEdit ────────────────────────────────────────────
+    {
+        let mut root = FlexColumn::new().with_gap(8.0).with_padding(10.0).with_panel_bg();
+        root.push(Box::new(Label::new(
+            "Shows how a widget can fill the available area.",
+            Arc::clone(&font),
+        ).with_font_size(12.0)), 0.0);
+        // TextField fills the remainder of the window content area.
+        // Wrapped in a flex SizedBox so it stretches with the window.
+        root.push(Box::new(SizedBox::new().with_child(Box::new(
+            TextField::new(Arc::clone(&font))
+                .with_font_size(12.5)
+                .with_text("Edit me! Resize the window and this field follows.")
+        ))), 1.0);
+        out.push(("↔ resizable with TextEdit".into(), Box::new(root), rects[3]));
+    }
+
+    // ── 5. freely resized ────────────────────────────────────────────────────
+    {
+        let mut root = FlexColumn::new().with_gap(8.0).with_padding(10.0).with_panel_bg();
+        root.push(Box::new(Label::new(
+            "This window has empty space that fills up the available area,\n\
+             preventing auto-shrink.",
+            Arc::clone(&font),
+        ).with_font_size(12.0)), 0.0);
+        // Flex fill prevents the window from auto-shrinking to content.
+        root.push(Box::new(SizedBox::new()), 1.0);
+        out.push(("↔ freely resized".into(), Box::new(root), rects[4]));
+    }
+
+    out
 }

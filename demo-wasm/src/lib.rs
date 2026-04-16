@@ -403,6 +403,15 @@ pub fn on_mouse_move(x: f64, y: f64) {
             app.on_mouse_move(x, y);
         }
     });
+    // Apply CSS cursor to the canvas element.
+    if let Some(window) = web_sys::window() {
+        if let Some(doc) = window.document() {
+            if let Some(el) = doc.get_element_by_id("canvas") {
+                let css = agg_gui::current_cursor_icon().to_css();
+                let _ = el.set_attribute("style", &format!("cursor:{css}"));
+            }
+        }
+    }
 }
 
 #[wasm_bindgen]
