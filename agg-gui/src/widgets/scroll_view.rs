@@ -109,6 +109,68 @@ impl Default for ScrollBarStyle {
     }
 }
 
+impl ScrollBarStyle {
+    /// Preset matching egui's `ScrollStyle::solid` — always-visible bar, solid
+    /// layout, fills reserved space.
+    pub fn solid() -> Self {
+        Self {
+            bar_width:         8.0,
+            handle_min_length: 12.0,
+            outer_margin:      0.0,
+            inner_margin:      4.0,
+            content_margin:    0.0,
+            margin_same:       true,
+            kind:              ScrollBarKind::Solid,
+            color:             ScrollBarColor::Foreground,
+            fade_strength:     0.0,
+            fade_size:         0.0,
+        }
+    }
+    /// Preset matching egui's `ScrollStyle::thin` — ultra-thin always-visible
+    /// bar that doesn't steal much horizontal space from content.
+    pub fn thin() -> Self {
+        Self {
+            bar_width:         4.0,
+            handle_min_length: 12.0,
+            outer_margin:      2.0,
+            inner_margin:      2.0,
+            content_margin:    0.0,
+            margin_same:       true,
+            kind:              ScrollBarKind::Solid,
+            color:             ScrollBarColor::Background,
+            fade_strength:     0.0,
+            fade_size:         0.0,
+        }
+    }
+    /// Preset matching egui's `ScrollStyle::floating` — wide floating overlay
+    /// with fade gradient at the edges.
+    pub fn floating() -> Self {
+        Self::default()
+    }
+}
+
+// ── Global scroll style ─────────────────────────────────────────────────────
+//
+// Every `ScrollView` reads this value each layout unless the caller supplied
+// an explicit `with_style(...)` or `with_style_cell(...)`.  The Appearance
+// demo writes to this global so that "one slider affects every scroll bar in
+// the application" — matching egui's `all_styles_mut` behaviour.
+
+std::thread_local! {
+    static CURRENT_SCROLL_STYLE: Cell<ScrollBarStyle> = Cell::new(ScrollBarStyle::default());
+}
+
+/// Read the current global scroll-bar style.
+pub fn current_scroll_style() -> ScrollBarStyle {
+    CURRENT_SCROLL_STYLE.with(|c| c.get())
+}
+
+/// Replace the global scroll-bar style.  All subsequent `ScrollView` layouts
+/// that don't have an explicit override pick this up.
+pub fn set_scroll_style(s: ScrollBarStyle) {
+    CURRENT_SCROLL_STYLE.with(|c| c.set(s));
+}
+
 // ── Runtime constants ────────────────────────────────────────────────────────
 
 /// Pixels at the right edge reserved for the parent window's resize grip.
@@ -156,6 +218,10 @@ pub struct ScrollView {
     /// How to render the scrollbar.
     bar_visibility: ScrollBarVisibility,
     style:          ScrollBarStyle,
+    /// `true` when the caller supplied an explicit per-instance style via
+    /// [`ScrollView::with_style`].  When `false` and `style_cell` is unset,
+    /// the global style from [`current_scroll_style`] is re-read each layout.
+    style_explicit: bool,
 
     // ── External cell bindings ──
     offset_cell:      Option<Rc<Cell<f64>>>,
@@ -178,7 +244,8 @@ impl ScrollView {
             stick_to_bottom:   false,
             was_at_bottom:     false,
             bar_visibility:    ScrollBarVisibility::default(),
-            style:             ScrollBarStyle::default(),
+            style:             current_scroll_style(),
+            style_explicit:    false,
             offset_cell:       None,
             max_scroll_cell:   None,
             visibility_cell:   None,
@@ -232,7 +299,9 @@ impl ScrollView {
     }
 
     pub fn with_style(mut self, s: ScrollBarStyle) -> Self {
-        self.style = s; self
+        self.style = s;
+        self.style_explicit = true;
+        self
     }
 
     pub fn with_style_cell(mut self, cell: Rc<Cell<ScrollBarStyle>>) -> Self {
@@ -442,7 +511,13 @@ impl Widget for ScrollView {
         // Pull live state from external cells first.
         if let Some(c) = &self.offset_cell     { self.v.offset = c.get(); }
         if let Some(c) = &self.visibility_cell { self.bar_visibility = c.get(); }
-        if let Some(c) = &self.style_cell      { self.style = c.get(); }
+        if let Some(c) = &self.style_cell {
+            self.style = c.get();
+        } else if !self.style_explicit {
+            // No explicit override → follow the global scroll-bar style so
+            // the Appearance demo restyles every `ScrollView` in the app.
+            self.style = current_scroll_style();
+        }
 
         self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
 

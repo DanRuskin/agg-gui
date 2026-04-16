@@ -197,8 +197,12 @@ impl Widget for SizedBox {
     fn max_size(&self) -> Size    { self.base.max_size }
 
     fn layout(&mut self, available: Size) -> Size {
+        // Fall back to the available axis only for dimensions that haven't been
+        // explicitly set AND don't have a child to size to; otherwise use the
+        // child's natural size on that axis so the SizedBox reports a sensible
+        // height when only a width was supplied (e.g. narrow DragValue wrapper).
         let w = self.width .unwrap_or(available.width);
-        let h = self.height.unwrap_or(available.height);
+        let mut h = self.height.unwrap_or(available.height);
 
         if let Some(child) = self.children.first_mut() {
             let scale  = device_scale();
@@ -207,6 +211,13 @@ impl Widget for SizedBox {
             let slot_h = (h - m.top  - m.bottom).max(0.0);
 
             let desired = child.layout(Size::new(slot_w, slot_h));
+
+            // If the caller didn't pin the height, shrink to the child's
+            // natural height plus its vertical margin.
+            if self.height.is_none() {
+                h = (desired.height + m.vertical())
+                    .clamp(self.base.min_size.height, self.base.max_size.height);
+            }
 
             // Horizontal placement within the box (margin already limits slot).
             let h_anchor = child.h_anchor();

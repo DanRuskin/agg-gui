@@ -22,11 +22,21 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use agg_gui::{App, Font, InspectorNode, Key, Modifiers, MouseButton, Rect, Size};
 
-// Embed the font at compile time.
-const FONT_BYTES: &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
+// Embed the font family at compile time.  The primary font is CascadiaCode;
+// Font Awesome 4 supplies the sidebar/button icons (private-use codepoints);
+// NotoEmoji fills in true emoji.  Same fallback chain as the native harness.
+const FONT_BYTES:  &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
+const FA_BYTES:    &[u8] = include_bytes!("../../demo/assets/fa.ttf");
+const EMOJI_BYTES: &[u8] = include_bytes!("../../demo/assets/NotoEmoji-Regular.ttf");
 
 fn make_font() -> Arc<Font> {
-    Arc::new(Font::from_slice(FONT_BYTES).expect("embedded font is valid"))
+    let emoji = Font::from_slice(EMOJI_BYTES).expect("parse NotoEmoji-Regular.ttf");
+    let fa    = Font::from_slice(FA_BYTES).expect("parse fa.ttf")
+        .with_fallback(Arc::new(emoji));
+    Arc::new(
+        Font::from_slice(FONT_BYTES).expect("parse CascadiaCode.ttf")
+            .with_fallback(Arc::new(fa))
+    )
 }
 
 // ---------------------------------------------------------------------------

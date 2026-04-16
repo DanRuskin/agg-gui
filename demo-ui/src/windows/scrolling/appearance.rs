@@ -1,5 +1,15 @@
-//! Appearance tab: Details collapsible with the full egui `spacing.scroll`
-//! configuration, plus ScrollBarVisibility selector and Content length slider.
+//! Appearance tab.  Mirrors egui's `ScrollAppearance`:
+//!
+//! 1. **Presets** row (Solid / Thin / Floating) — each button replaces the
+//!    global scroll-bar style so every `ScrollView` in the app restyles.
+//! 2. **Details** collapsing header — a grid of compact controls (each ~60 px
+//!    wide) with a descriptive label to the right; dragging any control also
+//!    writes to the global style.
+//! 3. **ScrollBarVisibility** selector (AlwaysHidden / VisibleWhenNeeded /
+//!    VisibleOnHover / AlwaysVisible) — drives only the demo's ScrollView,
+//!    since visibility is per-area in egui.
+//! 4. **Content length** slider with the numeric value shown to its right.
+//! 5. The demo ScrollView with N lorem-ipsum paragraphs.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -9,13 +19,20 @@ use agg_gui::{
     Checkbox, CollapsingHeader, DragValue, FlexColumn, FlexRow, Font, Insets,
     Label, Rect, ScrollBarColor, ScrollBarKind, ScrollBarStyle,
     ScrollBarVisibility, ScrollView, Separator, Size, SizedBox, Slider, Widget,
+    current_scroll_style, set_scroll_style,
 };
 
 use super::helpers::{label, wrapped_label, LiveLabel, SegRow};
 
+const CTRL_W: f64 = 70.0;   // Width of each compact control.
+
+// ── Preset type (used only to pick one of three buttons) ─────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Preset { Solid, Thin, Floating }
+
 // ── LoremStack ──────────────────────────────────────────────────────────────
 
-/// Column that lazily rebuilds N lorem-ipsum labels when `count` changes.
 struct LoremStack {
     bounds:     Rect,
     children:   Vec<Box<dyn Widget>>,
@@ -27,11 +44,8 @@ struct LoremStack {
 impl LoremStack {
     fn new(font: Arc<Font>, count: Rc<Cell<usize>>) -> Self {
         Self {
-            bounds: Rect::default(),
-            children: Vec::new(),
-            font,
-            count,
-            last_count: Cell::new(usize::MAX),
+            bounds: Rect::default(), children: Vec::new(),
+            font, count, last_count: Cell::new(usize::MAX),
         }
     }
 
@@ -81,188 +95,14 @@ impl Widget for LoremStack {
     }
 }
 
-// ── Reusable row helper ──────────────────────────────────────────────────────
+// ── Shared refs used by Details controls ────────────────────────────────────
+//
+// Every control writes its new value into its own cell and then calls a shared
+// `apply()` closure which rebuilds a `ScrollBarStyle` from ALL cells and pushes
+// it to `set_scroll_style` — so adjusting any one knob updates every
+// `ScrollView` in the application at once.
 
-fn row_value_label(font: Arc<Font>, value_cell: Rc<Cell<f64>>, text: &str, decimals: usize) -> Box<dyn Widget> {
-    let cell = value_cell;
-    let t = text.to_owned();
-    Box::new(FlexRow::new()
-        .with_gap(8.0)
-        .add(Box::new(
-            DragValue::new(cell.get(), 0.0, 500.0, Arc::clone(&font))
-                .with_font_size(12.0)
-                .with_decimals(decimals)
-                .on_change(move |v| cell.set(v))
-        ))
-        .add_flex(label(Arc::clone(&font), t, 12.0), 1.0))
-}
-
-// ── Public builder ───────────────────────────────────────────────────────────
-
-pub fn build(font: Arc<Font>) -> Box<dyn Widget> {
-    // Every setting is backed by its own cell so the UI can drive the bar live
-    // through `ScrollBarStyle`.
-    let kind       = Rc::new(Cell::new(ScrollBarKind::Floating));
-    let color      = Rc::new(Cell::new(ScrollBarColor::Background));
-    let visibility = Rc::new(Cell::new(ScrollBarVisibility::VisibleOnHover));
-
-    let bar_width      = Rc::new(Cell::new(15.0_f64));
-    let handle_min     = Rc::new(Cell::new(10.0_f64));
-    let outer_margin   = Rc::new(Cell::new( 5.0_f64));
-    let inner_margin   = Rc::new(Cell::new( 7.0_f64));
-    let content_margin = Rc::new(Cell::new( 5.0_f64));
-    let margin_same    = Rc::new(Cell::new(true));
-    let fade_strength  = Rc::new(Cell::new(1.0_f64));
-    let fade_size      = Rc::new(Cell::new(45.0_f64));
-    let content_len    = Rc::new(Cell::new(2_usize));
-
-    // Shared style cell — built from the individual cells in a Watcher widget.
-    let style_cell: Rc<Cell<ScrollBarStyle>> =
-        Rc::new(Cell::new(ScrollBarStyle::default()));
-
-    let mut details = FlexColumn::new().with_gap(4.0).with_padding(6.0);
-
-    // Row 1: Type (Solid / Floating)
-    details.push(Box::new(FlexRow::new().with_gap(8.0)
-        .add(label(Arc::clone(&font), "Type", 12.0))
-        .add(Box::new(SegRow::new(
-            Arc::clone(&font),
-            vec![("Solid", ScrollBarKind::Solid), ("Floating", ScrollBarKind::Floating)],
-            Rc::clone(&kind),
-        )))), 0.0);
-
-    // Row 2: Content margin: [same checkbox] [value]
-    {
-        let ms = Rc::clone(&margin_same);
-        let same_cb = Checkbox::new("same", Arc::clone(&font), ms.get())
-            .with_font_size(12.0)
-            .with_state_cell(Rc::clone(&ms));
-        let cm = Rc::clone(&content_margin);
-        let dv = DragValue::new(cm.get(), 0.0, 50.0, Arc::clone(&font))
-            .with_font_size(12.0)
-            .with_decimals(0)
-            .on_change(move |v| cm.set(v));
-        details.push(Box::new(FlexRow::new().with_gap(8.0)
-            .add(label(Arc::clone(&font), "Content margin:", 12.0))
-            .add(Box::new(same_cb))
-            .add(Box::new(dv))), 0.0);
-    }
-
-    // Rows 3–5: Full bar width / Minimum handle length / Outer margin
-    details.push(row_value_label(Arc::clone(&font), Rc::clone(&bar_width),  "Full bar width",       0), 0.0);
-    details.push(row_value_label(Arc::clone(&font), Rc::clone(&handle_min), "Minimum handle length",0), 0.0);
-    details.push(row_value_label(Arc::clone(&font), Rc::clone(&outer_margin), "Outer margin",       0), 0.0);
-
-    // Row 6: Color (Background / Foreground)
-    details.push(Box::new(FlexRow::new().with_gap(8.0)
-        .add(label(Arc::clone(&font), "Color", 12.0))
-        .add(Box::new(SegRow::new(
-            Arc::clone(&font),
-            vec![
-                ("Background", ScrollBarColor::Background),
-                ("Foreground", ScrollBarColor::Foreground),
-            ],
-            Rc::clone(&color),
-        )))), 0.0);
-
-    // Row 7: Inner margin
-    details.push(row_value_label(Arc::clone(&font), Rc::clone(&inner_margin), "Inner margin", 0), 0.0);
-
-    details.push(Box::new(Separator::horizontal()), 0.0);
-
-    // Rows 8–9: Fade strength / Fade size
-    {
-        let fs = Rc::clone(&fade_strength);
-        let fade_dv = DragValue::new(fs.get(), 0.0, 1.0, Arc::clone(&font))
-            .with_font_size(12.0)
-            .with_decimals(2)
-            .with_step(0.05)
-            .on_change(move |v| fs.set(v));
-        details.push(Box::new(FlexRow::new().with_gap(8.0)
-            .add(Box::new(fade_dv))
-            .add_flex(label(Arc::clone(&font), "Fade strength", 12.0), 1.0)), 0.0);
-    }
-    details.push(row_value_label(Arc::clone(&font), Rc::clone(&fade_size), "Fade size", 0), 0.0);
-
-    // Apply-cells-to-style-cell watcher — runs every layout.
-    details.push(Box::new(StyleComposer {
-        bounds: Rect::default(), children: Vec::new(),
-        kind:            Rc::clone(&kind),
-        color:           Rc::clone(&color),
-        bar_width:       Rc::clone(&bar_width),
-        handle_min:      Rc::clone(&handle_min),
-        outer_margin:    Rc::clone(&outer_margin),
-        inner_margin:    Rc::clone(&inner_margin),
-        content_margin:  Rc::clone(&content_margin),
-        margin_same:     Rc::clone(&margin_same),
-        fade_strength:   Rc::clone(&fade_strength),
-        fade_size:       Rc::clone(&fade_size),
-        out:             Rc::clone(&style_cell),
-    }), 0.0);
-
-    // ── Outer tab layout ──
-    let mut col = FlexColumn::new().with_gap(6.0).with_padding(10.0);
-
-    col.push(Box::new(
-        CollapsingHeader::new("Details", Arc::clone(&font))
-            .default_open(true)
-            .with_content(Box::new(details))
-    ), 0.0);
-
-    // ScrollBarVisibility selector (includes VisibleWhenNeeded like egui).
-    col.push(Box::new(FlexRow::new().with_gap(8.0)
-        .add(label(Arc::clone(&font), "ScrollBarVisibility:", 12.0))
-        .add_flex(Box::new(SegRow::new(
-            Arc::clone(&font),
-            vec![
-                ("AlwaysHidden",       ScrollBarVisibility::AlwaysHidden),
-                ("VisibleWhenNeeded",  ScrollBarVisibility::VisibleWhenNeeded),
-                ("VisibleOnHover",     ScrollBarVisibility::VisibleOnHover),
-                ("AlwaysVisible",      ScrollBarVisibility::AlwaysVisible),
-            ],
-            Rc::clone(&visibility),
-        )), 1.0)), 0.0);
-
-    col.push(wrapped_label(Arc::clone(&font),
-        "When to show scroll bars; resize the window to see the effect.", 11.0), 0.0);
-
-    col.push(Box::new(Separator::horizontal()), 0.0);
-
-    // Content length slider with numeric readout AFTER the slider.
-    {
-        let cl_for_slider = Rc::clone(&content_len);
-        let cl_for_label  = Rc::clone(&content_len);
-        col.push(Box::new(FlexRow::new().with_gap(8.0)
-            .add(label(Arc::clone(&font), "Content length", 12.0))
-            .add_flex(Box::new(
-                Slider::new(2.0, 1.0, 100.0, Arc::clone(&font))
-                    .with_step(1.0)
-                    .on_change(move |v| cl_for_slider.set(v.round() as usize))
-            ), 1.0)
-            .add(Box::new(SizedBox::new().with_width(8.0)))
-            .add(Box::new(LiveLabel::new(
-                Arc::clone(&font),
-                Rc::new(move || format!("{}", cl_for_label.get())),
-            ).with_font_size(12.0)))), 0.0);
-    }
-
-    col.push(Box::new(Separator::horizontal()), 0.0);
-
-    // The demo ScrollView whose style is driven live by the cells above.
-    let scroll_content = LoremStack::new(Arc::clone(&font), Rc::clone(&content_len));
-    let scroll_area = ScrollView::new(Box::new(scroll_content))
-        .with_bar_visibility_cell(Rc::clone(&visibility))
-        .with_style_cell(Rc::clone(&style_cell));
-    col.push(Box::new(scroll_area), 1.0);
-
-    Box::new(col)
-}
-
-// ── StyleComposer: packs individual cells into the ScrollBarStyle cell ───────
-
-struct StyleComposer {
-    bounds:          Rect,
-    children:        Vec<Box<dyn Widget>>,
+struct StyleCells {
     kind:            Rc<Cell<ScrollBarKind>>,
     color:           Rc<Cell<ScrollBarColor>>,
     bar_width:       Rc<Cell<f64>>,
@@ -273,17 +113,26 @@ struct StyleComposer {
     margin_same:     Rc<Cell<bool>>,
     fade_strength:   Rc<Cell<f64>>,
     fade_size:       Rc<Cell<f64>>,
-    out:             Rc<Cell<ScrollBarStyle>>,
 }
 
-impl Widget for StyleComposer {
-    fn type_name(&self) -> &'static str { "StyleComposer" }
-    fn bounds(&self) -> Rect { self.bounds }
-    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
-    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
-    fn layout(&mut self, _: Size) -> Size {
-        let s = ScrollBarStyle {
+impl StyleCells {
+    fn build_from(s: ScrollBarStyle) -> Self {
+        Self {
+            kind:           Rc::new(Cell::new(s.kind)),
+            color:          Rc::new(Cell::new(s.color)),
+            bar_width:      Rc::new(Cell::new(s.bar_width)),
+            handle_min:     Rc::new(Cell::new(s.handle_min_length)),
+            outer_margin:   Rc::new(Cell::new(s.outer_margin)),
+            inner_margin:   Rc::new(Cell::new(s.inner_margin)),
+            content_margin: Rc::new(Cell::new(s.content_margin)),
+            margin_same:    Rc::new(Cell::new(s.margin_same)),
+            fade_strength:  Rc::new(Cell::new(s.fade_strength)),
+            fade_size:      Rc::new(Cell::new(s.fade_size)),
+        }
+    }
+
+    fn compose(&self) -> ScrollBarStyle {
+        ScrollBarStyle {
             bar_width:         self.bar_width.get(),
             handle_min_length: self.handle_min.get(),
             outer_margin:      self.outer_margin.get(),
@@ -294,8 +143,273 @@ impl Widget for StyleComposer {
             color:             self.color.get(),
             fade_strength:     self.fade_strength.get(),
             fade_size:         self.fade_size.get(),
-        };
-        self.out.set(s);
+        }
+    }
+
+    fn load(&self, s: ScrollBarStyle) {
+        self.kind.set(s.kind);
+        self.color.set(s.color);
+        self.bar_width.set(s.bar_width);
+        self.handle_min.set(s.handle_min_length);
+        self.outer_margin.set(s.outer_margin);
+        self.inner_margin.set(s.inner_margin);
+        self.content_margin.set(s.content_margin);
+        self.margin_same.set(s.margin_same);
+        self.fade_strength.set(s.fade_strength);
+        self.fade_size.set(s.fade_size);
+    }
+}
+
+// ── Compact row: a narrow drag-value + descriptive label ─────────────────────
+
+fn drag_row(
+    font:     Arc<Font>,
+    cell:     Rc<Cell<f64>>,
+    min:      f64,
+    max:      f64,
+    step:     f64,
+    decimals: usize,
+    description: &'static str,
+    apply:    Rc<dyn Fn()>,
+) -> Box<dyn Widget> {
+    let cb_cell = Rc::clone(&cell);
+    let dv = DragValue::new(cell.get(), min, max, Arc::clone(&font))
+        .with_font_size(12.0)
+        .with_decimals(decimals)
+        .with_step(step)
+        .on_change(move |v| { cb_cell.set(v); apply(); });
+
+    Box::new(FlexRow::new().with_gap(10.0)
+        .add(Box::new(SizedBox::new().with_width(CTRL_W).with_child(Box::new(dv))))
+        .add_flex(label(font, description, 12.0), 1.0))
+}
+
+fn apply_preset(cells: &StyleCells, preset: Preset, visibility: &Rc<Cell<ScrollBarVisibility>>) {
+    let s = match preset {
+        Preset::Solid    => ScrollBarStyle::solid(),
+        Preset::Thin     => ScrollBarStyle::thin(),
+        Preset::Floating => ScrollBarStyle::floating(),
+    };
+    cells.load(s);
+    set_scroll_style(s);
+    // Egui's presets also nudge visibility — Solid/Thin want always-visible,
+    // Floating prefers visible-on-hover.
+    visibility.set(match preset {
+        Preset::Solid | Preset::Thin => ScrollBarVisibility::AlwaysVisible,
+        Preset::Floating              => ScrollBarVisibility::VisibleOnHover,
+    });
+}
+
+// ── Public builder ───────────────────────────────────────────────────────────
+
+pub fn build(font: Arc<Font>) -> Box<dyn Widget> {
+    let cells      = StyleCells::build_from(current_scroll_style());
+    let visibility = Rc::new(Cell::new(ScrollBarVisibility::VisibleOnHover));
+    let content_len = Rc::new(Cell::new(2_usize));
+
+    // Closure used by every control to rebuild and publish the global style.
+    let cells_rc = Rc::new(cells);
+    let apply: Rc<dyn Fn()> = {
+        let cells = Rc::clone(&cells_rc);
+        Rc::new(move || set_scroll_style(cells.compose()))
+    };
+
+    // ── Presets row ─────────────────────────────────────────────────────────
+    // Three buttons acting as "momentary" — clicking replaces the global style.
+    // We use a SegRow bound to a cell, with an `on_change` hook that resets
+    // the cell so the highlight is purely visual for the last-clicked preset.
+    let preset_cell: Rc<Cell<Preset>> = Rc::new(Cell::new(Preset::Floating));
+    let preset_seg = {
+        let cells_for_cb = Rc::clone(&cells_rc);
+        let vis_for_cb   = Rc::clone(&visibility);
+        let cur = Rc::clone(&preset_cell);
+        SegRow::new(
+            Arc::clone(&font),
+            vec![
+                ("Solid",    Preset::Solid),
+                ("Thin",     Preset::Thin),
+                ("Floating", Preset::Floating),
+            ],
+            Rc::clone(&preset_cell),
+        ).on_change(move || apply_preset(&cells_for_cb, cur.get(), &vis_for_cb))
+    };
+    let presets_row: Box<dyn Widget> = Box::new(FlexRow::new().with_gap(10.0)
+        .add(label(Arc::clone(&font), "Presets:", 12.0))
+        .add(Box::new(preset_seg)));
+
+    // ── Details body ────────────────────────────────────────────────────────
+    let mut details = FlexColumn::new().with_gap(4.0).with_padding(4.0);
+
+    // Row 1: Type
+    {
+        let cells_cb = Rc::clone(&cells_rc);
+        let apply_cb = Rc::clone(&apply);
+        let kind_cell = Rc::clone(&cells_rc.kind);
+        let seg = SegRow::new(
+            Arc::clone(&font),
+            vec![("Solid", ScrollBarKind::Solid), ("Floating", ScrollBarKind::Floating)],
+            Rc::clone(&kind_cell),
+        ).on_change(move || {
+            cells_cb.kind.set(kind_cell.get());
+            apply_cb();
+        });
+        details.push(Box::new(FlexRow::new().with_gap(10.0)
+            .add(label(Arc::clone(&font), "Type:", 12.0))
+            .add(Box::new(seg))), 0.0);
+    }
+
+    // Row 2: Content margin: [ ] same  [N]
+    {
+        let ms = Rc::clone(&cells_rc.margin_same);
+        let apply_ms = Rc::clone(&apply);
+        // Wrap the checkbox in a zero-size watcher so a click re-applies.
+        // (Checkbox doesn't expose an on_change callback, so we layout-poll.)
+        let chk = Checkbox::new("same", Arc::clone(&font), ms.get())
+            .with_font_size(12.0)
+            .with_state_cell(Rc::clone(&ms));
+        let cm = Rc::clone(&cells_rc.content_margin);
+        let cm_apply = Rc::clone(&apply);
+        let dv = DragValue::new(cm.get(), 0.0, 50.0, Arc::clone(&font))
+            .with_font_size(12.0)
+            .with_decimals(0)
+            .on_change(move |v| { cm.set(v); cm_apply(); });
+        details.push(Box::new(FlexRow::new().with_gap(10.0)
+            .add(label(Arc::clone(&font), "Content margin:", 12.0))
+            .add(Box::new(chk))
+            .add(Box::new(SizedBox::new().with_width(CTRL_W).with_child(Box::new(dv))))
+            .add(Box::new(WatchCell::new(Rc::clone(&ms), Rc::clone(&apply_ms))))
+        ), 0.0);
+    }
+
+    // Rows 3..5: Full bar width / Min handle length / Outer margin
+    details.push(drag_row(Arc::clone(&font), Rc::clone(&cells_rc.bar_width),
+        0.0, 50.0, 1.0, 0, "Full bar width", Rc::clone(&apply)), 0.0);
+    details.push(drag_row(Arc::clone(&font), Rc::clone(&cells_rc.handle_min),
+        0.0, 80.0, 1.0, 0, "Minimum handle length", Rc::clone(&apply)), 0.0);
+    details.push(drag_row(Arc::clone(&font), Rc::clone(&cells_rc.outer_margin),
+        0.0, 40.0, 1.0, 0, "Outer margin", Rc::clone(&apply)), 0.0);
+
+    // Row 6: Color
+    {
+        let cells_cb = Rc::clone(&cells_rc);
+        let apply_cb = Rc::clone(&apply);
+        let color_cell = Rc::clone(&cells_rc.color);
+        let seg = SegRow::new(
+            Arc::clone(&font),
+            vec![
+                ("Background", ScrollBarColor::Background),
+                ("Foreground", ScrollBarColor::Foreground),
+            ],
+            Rc::clone(&color_cell),
+        ).on_change(move || {
+            cells_cb.color.set(color_cell.get());
+            apply_cb();
+        });
+        details.push(Box::new(FlexRow::new().with_gap(10.0)
+            .add(label(Arc::clone(&font), "Color:", 12.0))
+            .add(Box::new(seg))), 0.0);
+    }
+
+    // Row 7: Inner margin
+    details.push(drag_row(Arc::clone(&font), Rc::clone(&cells_rc.inner_margin),
+        0.0, 40.0, 1.0, 0, "Inner margin", Rc::clone(&apply)), 0.0);
+
+    details.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Rows 8–9: Fade strength / Fade size
+    details.push(drag_row(Arc::clone(&font), Rc::clone(&cells_rc.fade_strength),
+        0.0, 1.0, 0.05, 2, "Fade strength", Rc::clone(&apply)), 0.0);
+    details.push(drag_row(Arc::clone(&font), Rc::clone(&cells_rc.fade_size),
+        0.0, 200.0, 1.0, 0, "Fade size", Rc::clone(&apply)), 0.0);
+
+    // ── Outer tab layout ────────────────────────────────────────────────────
+    let mut col = FlexColumn::new().with_gap(6.0).with_padding(10.0);
+    col.push(presets_row, 0.0);
+    col.push(Box::new(
+        CollapsingHeader::new("Details", Arc::clone(&font))
+            .default_open(false)
+            .with_content(Box::new(details))
+    ), 0.0);
+
+    // ScrollBarVisibility — PER demo (not global).
+    col.push(Box::new(FlexRow::new().with_gap(10.0)
+        .add(label(Arc::clone(&font), "ScrollBarVisibility:", 12.0))
+        .add(Box::new(SegRow::new(
+            Arc::clone(&font),
+            vec![
+                ("AlwaysHidden",       ScrollBarVisibility::AlwaysHidden),
+                ("VisibleWhenNeeded",  ScrollBarVisibility::VisibleWhenNeeded),
+                ("VisibleOnHover",     ScrollBarVisibility::VisibleOnHover),
+                ("AlwaysVisible",      ScrollBarVisibility::AlwaysVisible),
+            ],
+            Rc::clone(&visibility),
+        )))), 0.0);
+
+    col.push(wrapped_label(Arc::clone(&font),
+        "When to show scroll bars; resize the window to see the effect.", 11.0), 0.0);
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Content length slider with numeric readout to its right.
+    {
+        let cl_slider = Rc::clone(&content_len);
+        let cl_label  = Rc::clone(&content_len);
+        col.push(Box::new(FlexRow::new().with_gap(10.0)
+            .add(label(Arc::clone(&font), "Content length", 12.0))
+            .add_flex(Box::new(
+                Slider::new(2.0, 1.0, 100.0, Arc::clone(&font))
+                    .with_step(1.0)
+                    .on_change(move |v| cl_slider.set(v.round() as usize))
+            ), 1.0)
+            .add(Box::new(SizedBox::new().with_width(8.0)))
+            .add(Box::new(LiveLabel::new(
+                Arc::clone(&font),
+                Rc::new(move || format!("{}", cl_label.get())),
+            ).with_font_size(12.0)))), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // Demo ScrollView — uses the global style + the visibility cell.
+    let content = LoremStack::new(Arc::clone(&font), Rc::clone(&content_len));
+    let scroll = ScrollView::new(Box::new(content))
+        .with_bar_visibility_cell(Rc::clone(&visibility));
+    col.push(Box::new(scroll), 1.0);
+
+    Box::new(col)
+}
+
+// ── WatchCell ─ a zero-size widget that fires a callback when an observed
+//                 `Rc<Cell<bool>>` changes value between layouts. ─────────────
+
+struct WatchCell {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+    obs:      Rc<Cell<bool>>,
+    last:     Cell<bool>,
+    cb:       Rc<dyn Fn()>,
+}
+impl WatchCell {
+    fn new(obs: Rc<Cell<bool>>, cb: Rc<dyn Fn()>) -> Self {
+        let v = obs.get();
+        Self {
+            bounds: Rect::default(), children: Vec::new(),
+            obs, last: Cell::new(v), cb,
+        }
+    }
+}
+impl Widget for WatchCell {
+    fn type_name(&self) -> &'static str { "WatchCell" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+    fn layout(&mut self, _: Size) -> Size {
+        let cur = self.obs.get();
+        if cur != self.last.get() {
+            self.last.set(cur);
+            (self.cb)();
+        }
         Size::ZERO
     }
     fn paint(&mut self, _: &mut dyn agg_gui::DrawCtx) {}

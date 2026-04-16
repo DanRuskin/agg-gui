@@ -282,6 +282,13 @@ pub fn dispatch_event(
         return root.on_event(event);
     }
     let idx = path[0];
+    // Path can become stale between when it was captured (hit-test or
+    // previous-frame hovered/focus) and when it is dispatched — e.g. a
+    // CollapsingHeader collapsed since then and dropped its child.  Rather
+    // than panic, just stop descending and deliver the event at this level.
+    if idx >= root.children().len() {
+        return root.on_event(event);
+    }
     let child_bounds = root.children()[idx].bounds();
     let child_pos = Point::new(pos_in_root.x - child_bounds.x, pos_in_root.y - child_bounds.y);
     let translated_event = translate_event(event, child_pos);
