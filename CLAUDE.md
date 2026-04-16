@@ -56,6 +56,13 @@ cargo test -- --nocapture
 - Use **Font Awesome** icons throughout the UI. Render icons via their Unicode
   code points in the appropriate Font Awesome font face, not as image assets.
 
+### Demos
+- Reproduce the egui demos as closely as possible — match layout, wording,
+  defaults, and interaction. Consult the egui source in `cpp-reference/`
+  (a sync of the egui repo) whenever you touch a demo that exists there.
+- Project conventions still win on conflict (Y-up, Font Awesome, 800-line limit).
+  Note any intentional deviation with a brief comment.
+
 ### General style
 - Prefer `Result`/`Option` over `unwrap` in library code; `expect` is acceptable in
   `main` for startup failures with a clear message.
