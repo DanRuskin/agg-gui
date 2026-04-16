@@ -25,7 +25,7 @@ Each demo window should link back to its corresponding source file in our repo, 
 
 **Markdown Widget**: A reusable, library-level widget (`widgets/markdown.rs`) that uses [pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark) to parse Markdown and render it into native agg-gui controls. This widget is part of the core `agg-gui` crate, usable anywhere a widget can be placed — windows, dialogs, panels, scroll views, etc. All text rendered through our buffered text widget. The `pulldown-cmark` dependency is added to `agg-gui/Cargo.toml`.
 
-**Icons**: All icons throughout the UI use [Google Material Icons](https://fonts.google.com/icons) and [Bootstrap Icons](https://icons.getbootstrap.com/) rendered as font glyphs. Where egui uses emoji characters for sidebar items, window titles, menu entries, buttons, and the theme switch, we substitute the appropriate Google Material or Bootstrap icon glyph. Both icon fonts are bundled with the application and loaded alongside Arial. Icon selection should prefer Google Material Icons for standard UI concepts (settings, close, menu, light/dark mode, zoom, etc.) and Bootstrap Icons where Material does not cover the need. Icons must respond to the active theme (dark/light) like all other text.
+**Icons**: All icons throughout the UI use [Font Awesome](https://fontawesome.com/) rendered as font glyphs via their Unicode code points. Where egui uses emoji characters for sidebar items, window titles, menu entries, buttons, and the theme switch, we substitute the appropriate Font Awesome icon glyph. The Font Awesome font is bundled with the application and loaded alongside Arial. Icons must respond to the active theme (dark/light) like all other text.
 
 ---
 
@@ -304,5 +304,5 @@ In egui registration order:
 - **Sidebar state** is a `BTreeSet<String>` of open window names, matching egui's pattern in `DemoWindows`.
 - **Window positions/sizes** are persisted in our existing state system so they survive across sessions.
 - **Complete parity.** Every demo and test present in egui's demo must have a corresponding implementation in our system. This is the full set (28 demos + 11 tests), plus our own additions (3D Cube as app tab).
-- **Icons** are Google Material Icons and Bootstrap Icons, rendered as font glyphs. Both icon fonts are bundled with the application. They replace egui's emoji-based icons for sidebar items, window titles, menu entries, buttons, and theme controls. Prefer Material Icons for standard UI concepts; use Bootstrap Icons where Material lacks coverage.
+- **Icons** are Font Awesome, rendered as font glyphs via their Unicode code points. The Font Awesome font is bundled with the application. It replaces egui's emoji-based icons for sidebar items, window titles, menu entries, buttons, and theme controls.
 - **Reference source**: `agg-gui/agg-gui/reference-egui-main`, specifically `crates/egui_demo_lib/src/demo/` for all demo implementations, `crates/egui_demo_lib/src/demo/demo_app_windows.rs` for sidebar/window registration, and `crates/egui_demo_app/src/wrap_app.rs` for the app shell. Study for behavior and exact layout, implement our own.

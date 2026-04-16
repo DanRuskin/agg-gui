@@ -24,7 +24,6 @@ use std::sync::Arc;
 // browser; falls back to Instant on native).
 use web_time::Instant;
 
-use crate::color::Color;
 use crate::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use crate::geometry::{Rect, Size};
 use crate::draw_ctx::DrawCtx;
@@ -595,8 +594,10 @@ impl Widget for TextField {
             (raw_text, raw_cursor, raw_anchor)
         };
 
+        let v = ctx.visuals();
+
         // ── Background ────────────────────────────────────────────────────
-        ctx.set_fill_color(Color::white());
+        ctx.set_fill_color(v.widget_bg);
         ctx.begin_path();
         ctx.rounded_rect(0.0, 0.0, w, h, r);
         ctx.fill();
@@ -622,7 +623,7 @@ impl Widget for TextField {
             if sw > 0.0 {
                 let hl_bot = baseline_y - m.descent;
                 let hl_h   = (m.ascent + m.descent) * 1.2;
-                ctx.set_fill_color(Color::rgba(0.22, 0.45, 0.88, 0.25));
+                ctx.set_fill_color(v.accent_focus);
                 ctx.begin_path();
                 ctx.rect(sx, hl_bot - hl_h * 0.1, sw, hl_h);
                 ctx.fill();
@@ -631,10 +632,10 @@ impl Widget for TextField {
 
         // ── Text or placeholder ───────────────────────────────────────────
         if text.is_empty() && !self.focused {
-            ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.35));
+            ctx.set_fill_color(v.text_dim);
             ctx.fill_text(&self.placeholder, text_x, baseline_y);
         } else {
-            ctx.set_fill_color(Color::rgba(0.05, 0.05, 0.1, 0.9));
+            ctx.set_fill_color(v.text_color);
             ctx.fill_text(&text, text_x, baseline_y);
         }
 
@@ -649,7 +650,7 @@ impl Widget for TextField {
             let cx  = text_x + measure_advance(&self.font, &text[..cursor], self.font_size);
             let top = baseline_y + m.ascent;
             let bot = baseline_y - m.descent;
-            ctx.set_stroke_color(Color::rgb(0.22, 0.45, 0.88));
+            ctx.set_stroke_color(v.accent);
             ctx.set_line_width(1.5);
             ctx.begin_path();
             ctx.move_to(cx, bot);
@@ -660,9 +661,9 @@ impl Widget for TextField {
         ctx.reset_clip();
 
         // ── Border ────────────────────────────────────────────────────────
-        let border_color = if self.focused { Color::rgb(0.22, 0.45, 0.88) }
-            else if self.hovered { Color::rgb(0.70, 0.70, 0.75) }
-            else { Color::rgb(0.82, 0.82, 0.86) };
+        let border_color = if self.focused { v.accent }
+            else if self.hovered { v.widget_stroke_active }
+            else { v.widget_stroke };
         ctx.set_stroke_color(border_color);
         ctx.set_line_width(if self.focused { 2.0 } else { 1.0 });
         ctx.begin_path();

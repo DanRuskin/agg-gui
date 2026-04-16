@@ -46,6 +46,16 @@ cargo test -- --nocapture
   signature already tell the full story.
 - Explain *why*, not *what*. A comment that restates the code is noise.
 
+### Coordinate system
+- **Y-axis is inverted (bottom-up).** Origin is at the bottom-left, so +Y points upward.
+  Code from external sources (web, AI tools, other libraries) almost always assumes
+  top-down Y. Watch for this in default positioning, collapse direction, SVG orientation,
+  scroll offsets, and hit-testing.
+
+### Icons
+- Use **Font Awesome** icons throughout the UI. Render icons via their Unicode
+  code points in the appropriate Font Awesome font face, not as image assets.
+
 ### General style
 - Prefer `Result`/`Option` over `unwrap` in library code; `expect` is acceptable in
   `main` for startup failures with a clear message.

@@ -9,9 +9,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    Checkbox, Color, Container, DragValue, DrawCtx, Event, EventResult, FlexColumn, FlexRow,
-    Font, Label, MouseButton, Point, RadioGroup, Rect, ScrollView, Separator,
-    Size, SizedBox, Slider, Widget,
+    Checkbox, CollapsingHeader, Color, Container, DragValue, DrawCtx, Event, EventResult,
+    FlexColumn, FlexRow, Font, Label, MouseButton, Point, RadioGroup, Rect, ScrollView,
+    Separator, Size, SizedBox, Slider, Widget,
 };
 use agg_gui::widget::paint_subtree;
 
@@ -493,61 +493,42 @@ impl Widget for ManyCirclesWidget {
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
 
-/// Build the Misc Demos window matching egui's ✨ Misc Demos content.
-///
-/// Sections (shown flat, matching egui CollapsingHeader content):
-/// - Label: colored text, font samples
-/// - Misc widgets: angle drag, password field
-/// - Checkboxes: checkbox grid, radio buttons
-/// - Colors: named color swatches
-/// - Box rendering: sliders + custom boxes
-/// - Many circles: stress-test rendering
-pub fn misc_demos(font: Arc<Font>) -> Box<dyn Widget> {
-    let mut col = FlexColumn::new()
-        .with_gap(6.0)
-        .with_padding(12.0)
-        .with_panel_bg();
+/// Build a FlexColumn section content for the Label section of Misc Demos.
+fn label_section(font: &Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new().with_gap(4.0);
 
-    let sec = |title: &str, f: &Arc<Font>| -> Box<dyn Widget> {
-        Box::new(Label::new(title, Arc::clone(f)).with_font_size(12.5))
-    };
-
-    // ── Label section ────────────────────────────────────────────────────────
-    col.push(sec("Label", &font), 0.0);
-    col.push(Box::new(Separator::horizontal()), 0.0);
-
-    // Colored text samples on one row.
     let color_row = FlexRow::new().with_gap(6.0)
-        .add(Box::new(Label::new("Text can have", Arc::clone(&font)).with_font_size(12.0)))
-        .add(Box::new(Label::new("color,", Arc::clone(&font))
+        .add(Box::new(Label::new("Text can have", Arc::clone(font)).with_font_size(12.0)))
+        .add(Box::new(Label::new("color,", Arc::clone(font))
             .with_font_size(12.0)
             .with_color(Color::rgb(0.43, 1.0, 0.43))))
-        .add(Box::new(Label::new("size,", Arc::clone(&font))
+        .add(Box::new(Label::new("size,", Arc::clone(font))
             .with_font_size(12.0)
             .with_color(Color::rgb(0.50, 0.55, 1.0))))
-        .add(Box::new(Label::new("and style.", Arc::clone(&font))
+        .add(Box::new(Label::new("and style.", Arc::clone(font))
             .with_font_size(12.0)
             .with_color(Color::rgb(1.0, 0.75, 0.40))));
     col.push(Box::new(color_row), 0.0);
 
     col.push(Box::new(Label::new(
         "The default font supports latin, cyrillic (ИÅđ…), math (∫√∞²⅓…), and emojis (💓🌟🖩…).",
-        Arc::clone(&font),
+        Arc::clone(font),
     ).with_font_size(12.0)), 0.0);
 
-    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
+    Box::new(col)
+}
 
-    // ── Misc widgets section ─────────────────────────────────────────────────
-    col.push(sec("Misc widgets", &font), 0.0);
-    col.push(Box::new(Separator::horizontal()), 0.0);
+/// Build the Misc widgets section content.
+fn misc_widgets_section(font: &Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new().with_gap(6.0);
 
-    let angle_cell = Rc::new(Cell::new(2.094_f64)); // τ/3 ≈ 120°
+    let angle_cell = Rc::new(Cell::new(2.094_f64));
     {
         let ac = Rc::clone(&angle_cell);
         let angle_row = FlexRow::new().with_gap(8.0)
-            .add(Box::new(Label::new("An angle:", Arc::clone(&font)).with_font_size(12.5)))
+            .add(Box::new(Label::new("An angle:", Arc::clone(font)).with_font_size(12.5)))
             .add(Box::new(SizedBox::new().with_height(28.0).with_width(80.0).with_child(
-                Box::new(DragValue::new(angle_cell.get(), -6.283, 6.283, Arc::clone(&font))
+                Box::new(DragValue::new(angle_cell.get(), -6.283, 6.283, Arc::clone(font))
                     .with_speed(0.02)
                     .with_decimals(2)
                     .on_change(move |v| ac.set(v)))
@@ -556,33 +537,34 @@ pub fn misc_demos(font: Arc<Font>) -> Box<dyn Widget> {
     }
 
     let pw_row = FlexRow::new().with_gap(8.0)
-        .add(Box::new(Label::new("Password:", Arc::clone(&font)).with_font_size(12.5)))
+        .add(Box::new(Label::new("Password:", Arc::clone(font)).with_font_size(12.5)))
         .add_flex(Box::new(SizedBox::new().with_height(28.0).with_child(
-            Box::new(agg_gui::TextField::new(Arc::clone(&font))
+            Box::new(agg_gui::TextField::new(Arc::clone(font))
                 .with_font_size(12.5)
                 .with_placeholder("hunter2")
                 .with_password_mode(true))
         )), 1.0);
     col.push(Box::new(pw_row), 0.0);
-    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
 
-    // ── Checkboxes section ───────────────────────────────────────────────────
-    col.push(sec("Checkboxes", &font), 0.0);
-    col.push(Box::new(Separator::horizontal()), 0.0);
+    Box::new(col)
+}
+
+/// Build the Checkboxes section content.
+fn checkboxes_section(font: &Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new().with_gap(4.0);
 
     col.push(Box::new(Label::new(
         "Checkboxes with empty labels take up very little space:",
-        Arc::clone(&font),
+        Arc::clone(font),
     ).with_font_size(11.5)), 0.0);
 
-    // Small checkbox grid (10 columns × 2 rows = 20 checkboxes).
     let shared_bool = Rc::new(Cell::new(false));
-    for _row in 0..2 {
+    for _row in 0..4 {
         let mut cb_row = FlexRow::new().with_gap(2.0);
-        for _col in 0..10 {
+        for _c in 0..16 {
             let cell = Rc::clone(&shared_bool);
             cb_row.push(Box::new(SizedBox::new().with_height(22.0).with_width(22.0).with_child(
-                Box::new(Checkbox::new("", Arc::clone(&font), cell.get())
+                Box::new(Checkbox::new("", Arc::clone(font), cell.get())
                     .with_font_size(11.0)
                     .with_state_cell(Rc::clone(&cell))
                     .on_change(move |v| cell.set(v)))
@@ -592,27 +574,30 @@ pub fn misc_demos(font: Arc<Font>) -> Box<dyn Widget> {
     }
 
     col.push(Box::new(SizedBox::new().with_height(28.0).with_child(
-        Box::new(Checkbox::new("checkbox", Arc::clone(&font), false)
+        Box::new(Checkbox::new("checkbox", Arc::clone(font), false)
             .with_font_size(12.5))
     )), 0.0);
 
-    col.push(Box::new(Label::new("Radio buttons:", Arc::clone(&font))
+    col.push(Box::new(Label::new("Radio buttons:", Arc::clone(font))
         .with_font_size(11.5)), 0.0);
+
     let radio_sel = Rc::new(Cell::new(0_usize));
     {
         let rs = Rc::clone(&radio_sel);
         col.push(Box::new(RadioGroup::new(
             vec!["Option A", "Option B", "Option C"],
             radio_sel.get(),
-            Arc::clone(&font),
+            Arc::clone(font),
         ).with_font_size(12.5)
          .on_change(move |i| rs.set(i))), 0.0);
     }
-    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
 
-    // ── Colors section ───────────────────────────────────────────────────────
-    col.push(sec("Colors", &font), 0.0);
-    col.push(Box::new(Separator::horizontal()), 0.0);
+    Box::new(col)
+}
+
+/// Build the Colors section content.
+fn colors_section(font: &Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new().with_gap(2.0);
 
     let named_colors: &[(&str, Color)] = &[
         ("Red",    Color::rgb(0.88, 0.25, 0.18)),
@@ -625,15 +610,18 @@ pub fn misc_demos(font: Arc<Font>) -> Box<dyn Widget> {
         ("Pink",   Color::rgb(0.88, 0.25, 0.65)),
     ];
     for &(name, color) in named_colors {
-        let swatch = SwatchRow { bounds: Rect::default(), children: Vec::new(), color,
-                                 label: Label::new(name, Arc::clone(&font)).with_font_size(11.5) };
-        col.push(Box::new(swatch), 0.0);
+        col.push(Box::new(SwatchRow {
+            bounds: Rect::default(), children: Vec::new(), color,
+            label: Label::new(name, Arc::clone(font)).with_font_size(11.5),
+        }), 0.0);
     }
-    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
 
-    // ── Box rendering section ────────────────────────────────────────────────
-    col.push(sec("Test box rendering", &font), 0.0);
-    col.push(Box::new(Separator::horizontal()), 0.0);
+    Box::new(col)
+}
+
+/// Build the Test box rendering section content.
+fn box_rendering_section(font: &Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new().with_gap(4.0);
 
     let corner_r = Rc::new(Cell::new(5.0_f64));
     let stroke_w = Rc::new(Cell::new(2.0_f64));
@@ -641,26 +629,27 @@ pub fn misc_demos(font: Arc<Font>) -> Box<dyn Widget> {
 
     {
         let cr = Rc::clone(&corner_r);
-        let sw = Rc::clone(&stroke_w);
-        let nb = Rc::clone(&num_boxes);
-
         col.push(Box::new(SizedBox::new().with_height(28.0).with_child(
-            Box::new(Slider::new(corner_r.get(), 0.0, 50.0, Arc::clone(&font))
+            Box::new(Slider::new(corner_r.get(), 0.0, 50.0, Arc::clone(font))
                 .with_step(0.5).on_change(move |v| cr.set(v)))
         )), 0.0);
-        col.push(Box::new(Label::new("corner radius", Arc::clone(&font)).with_font_size(10.5)), 0.0);
-
+        col.push(Box::new(Label::new("corner radius", Arc::clone(font)).with_font_size(10.5)), 0.0);
+    }
+    {
+        let sw = Rc::clone(&stroke_w);
         col.push(Box::new(SizedBox::new().with_height(28.0).with_child(
-            Box::new(Slider::new(stroke_w.get(), 0.0, 10.0, Arc::clone(&font))
+            Box::new(Slider::new(stroke_w.get(), 0.0, 10.0, Arc::clone(font))
                 .with_step(0.5).on_change(move |v| sw.set(v)))
         )), 0.0);
-        col.push(Box::new(Label::new("stroke width", Arc::clone(&font)).with_font_size(10.5)), 0.0);
-
+        col.push(Box::new(Label::new("stroke width", Arc::clone(font)).with_font_size(10.5)), 0.0);
+    }
+    {
+        let nb = Rc::clone(&num_boxes);
         col.push(Box::new(SizedBox::new().with_height(28.0).with_child(
-            Box::new(Slider::new(num_boxes.get(), 0.0, 8.0, Arc::clone(&font))
+            Box::new(Slider::new(num_boxes.get(), 0.0, 8.0, Arc::clone(font))
                 .with_step(1.0).on_change(move |v| nb.set(v)))
         )), 0.0);
-        col.push(Box::new(Label::new("number of boxes", Arc::clone(&font)).with_font_size(10.5)), 0.0);
+        col.push(Box::new(Label::new("number of boxes", Arc::clone(font)).with_font_size(10.5)), 0.0);
     }
 
     col.push(Box::new(BoxPainter {
@@ -669,12 +658,63 @@ pub fn misc_demos(font: Arc<Font>) -> Box<dyn Widget> {
         stroke_width:  Rc::clone(&stroke_w),
         num_boxes:     Rc::clone(&num_boxes),
     }), 0.0);
-    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
 
-    // ── Many circles section ─────────────────────────────────────────────────
-    col.push(sec("Many circles of different sizes", &font), 0.0);
-    col.push(Box::new(Separator::horizontal()), 0.0);
-    col.push(Box::new(ManyCirclesWidget { bounds: Rect::default(), children: Vec::new() }), 0.0);
+    Box::new(col)
+}
+
+/// Build the Misc Demos window — ✨ Misc Demos — matching egui's CollapsingHeader layout.
+///
+/// Each section is a `CollapsingHeader` (click to expand/collapse), matching
+/// egui's `MiscDemoWindow` exactly.  "Label" is open by default; all others start closed.
+pub fn misc_demos(font: Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new()
+        .with_gap(1.0)
+        .with_padding(6.0)
+        .with_panel_bg();
+
+    // ── Label (default open) ────────────────────────────────────────────────
+    col.push(Box::new(
+        CollapsingHeader::new("Label", Arc::clone(&font))
+            .default_open(true)
+            .with_content(label_section(&font))
+    ), 0.0);
+
+    // ── Misc widgets (default closed) ───────────────────────────────────────
+    col.push(Box::new(
+        CollapsingHeader::new("Misc widgets", Arc::clone(&font))
+            .default_open(false)
+            .with_content(misc_widgets_section(&font))
+    ), 0.0);
+
+    // ── Checkboxes (default closed) ─────────────────────────────────────────
+    col.push(Box::new(
+        CollapsingHeader::new("Checkboxes", Arc::clone(&font))
+            .default_open(false)
+            .with_content(checkboxes_section(&font))
+    ), 0.0);
+
+    // ── Colors (default closed) ──────────────────────────────────────────────
+    col.push(Box::new(
+        CollapsingHeader::new("Colors", Arc::clone(&font))
+            .default_open(false)
+            .with_content(colors_section(&font))
+    ), 0.0);
+
+    // ── Test box rendering (default closed) ─────────────────────────────────
+    col.push(Box::new(
+        CollapsingHeader::new("Test box rendering", Arc::clone(&font))
+            .default_open(false)
+            .with_content(box_rendering_section(&font))
+    ), 0.0);
+
+    // ── Many circles (default closed) ────────────────────────────────────────
+    col.push(Box::new(
+        CollapsingHeader::new("Many circles of different sizes", Arc::clone(&font))
+            .default_open(false)
+            .with_content(Box::new(ManyCirclesWidget {
+                bounds: Rect::default(), children: Vec::new(),
+            }))
+    ), 0.0);
 
     col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
 

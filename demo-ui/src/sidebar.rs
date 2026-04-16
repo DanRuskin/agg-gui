@@ -13,10 +13,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    Button, Checkbox, Color, FlexColumn, Font, Insets, Label, ScrollView,
+    Button, Checkbox, FlexColumn, Font, Insets, Label, ScrollView,
     Separator, SizedBox, Widget,
 };
-use agg_gui::widgets::button::ButtonTheme;
 
 /// One entry in the sidebar checklist.
 pub struct SidebarEntry {
@@ -92,15 +91,6 @@ pub fn build_sidebar(
             .with_child(Box::new(
                 Button::new("Organize windows", Arc::clone(&font))
                     .with_font_size(12.0)
-                    .with_theme(ButtonTheme {
-                        background:         Color::rgba(1.0, 1.0, 1.0, 0.08),
-                        background_hovered: Color::rgba(1.0, 1.0, 1.0, 0.14),
-                        background_pressed: Color::rgba(1.0, 1.0, 1.0, 0.20),
-                        label_color:        Color::rgba(1.0, 1.0, 1.0, 0.85),
-                        border_radius:      5.0,
-                        focus_ring_color:   Color::rgba(1.0, 1.0, 1.0, 0.30),
-                        focus_ring_width:   2.0,
-                    })
                     .on_click(on_organize)
             ))
     ), 0.0);

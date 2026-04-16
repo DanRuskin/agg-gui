@@ -1,362 +1,505 @@
-//! Rendering test tab — a full-canvas visual correctness test.
+//! Rendering test — exact port of egui's `ColorTest` / pixel alignment test.
 //!
-//! Shows color accuracy, alpha compositing, stroke quality, shape primitives,
-//! and text rasterization so that backend rendering can be compared side-by-side.
-//! This tab is selected via the "Rendering test" app tab in the top bar.
+//! Matches the layout and content of egui's rendering test tab so that agg-gui
+//! rendering quality can be compared side-by-side with the egui reference.
+//!
+//! Sections (top-to-bottom, matching egui):
+//! 1. Header text
+//! 2. Pixel alignment test (alternating 1-px stripes, squares, stroke grids)
+//! 3. Text rendering (4 text-on-bg rows)
+//! 4. Blending / feathering test (512×256 split canvas)
 
 use std::sync::Arc;
 
 use agg_gui::{
-    Color, DrawCtx, Event, EventResult,
-    Font, Rect, Size, Widget,
+    Color, DrawCtx, Event, EventResult, FlexColumn,
+    Font, Label, Rect, ScrollView, Separator, Size, Widget,
 };
 
-// ── RenderingTestView ─────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
 
-/// Full-canvas rendering correctness test.  Draws directly with `DrawCtx`
-/// primitives, partitioned into labeled sections.
-pub struct RenderingTestView {
+/// Build the Rendering Test view.  Returns a `ScrollView` wrapping all sections.
+pub fn rendering_test_view(font: Arc<Font>) -> Box<dyn Widget> {
+    let mut col = FlexColumn::new().with_gap(4.0).with_padding(10.0);
+
+    let lbl = |text: &str, sz: f64, f: &Arc<Font>| -> Box<dyn Widget> {
+        Box::new(Label::new(text, Arc::clone(f)).with_font_size(sz))
+    };
+    let heading = |text: &str, f: &Arc<Font>| -> Box<dyn Widget> {
+        Box::new(Label::new(text, Arc::clone(f)).with_font_size(16.0))
+    };
+
+    // ── Header ───────────────────────────────────────────────────────────────
+    col.push(lbl("This is made to test that the agg-gui rendering backend is set up correctly.", 13.0, &font), 0.0);
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // ── Pixel alignment test ─────────────────────────────────────────────────
+    col.push(heading("Pixel alignment test", &font), 0.0);
+    col.push(lbl("If anything is blurry, then everything will be blurry, including text.", 13.0, &font), 0.0);
+    col.push(lbl("You might need a magnifying glass to check this test.", 13.0, &font), 0.0);
+    col.push(lbl("The lines should be exactly one physical pixel wide, one physical pixel apart.", 13.0, &font), 0.0);
+    col.push(lbl("They should be perfectly white and black.", 13.0, &font), 0.0);
+
+    col.push(Box::new(PixelTestLines { bounds: Rect::default(), children: Vec::new() }), 0.0);
+
+    col.push(lbl("The first square should be exactly one physical pixel big.", 13.0, &font), 0.0);
+    col.push(lbl("They should be exactly one physical pixel apart.", 13.0, &font), 0.0);
+    col.push(lbl("Each subsequent square should be one physical pixel larger than the previous.", 13.0, &font), 0.0);
+    col.push(lbl("They should be perfectly aligned to the physical pixel grid.", 13.0, &font), 0.0);
+
+    col.push(Box::new(PixelTestSquares { bounds: Rect::default(), children: Vec::new() }), 0.0);
+
+    col.push(lbl("The strokes should align to the physical pixel grid.", 13.0, &font), 0.0);
+
+    col.push(Box::new(PixelTestStrokes { bounds: Rect::default(), children: Vec::new() }), 0.0);
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // ── Text rendering ───────────────────────────────────────────────────────
+    col.push(heading("Text rendering", &font), 0.0);
+
+    // Matches egui's text_on_bg() calls.
+    let text_rows: &[(f32, f32, f32, f32, f32, f32)] = &[
+        (200./255., 200./255., 200./255., 230./255., 230./255., 230./255.),
+        (140./255., 140./255., 140./255.,  28./255.,  28./255.,  28./255.),
+        ( 39./255.,  39./255.,  39./255., 255./255., 255./255., 255./255.),
+        (220./255., 220./255., 220./255.,  30./255.,  30./255.,  30./255.),
+    ];
+    for &(fr, fg, fb, br, bg_b, bb) in text_rows {
+        let fg_c = Color::rgb(fr, fg, fb);
+        let bg_c = Color::rgb(br, bg_b, bb);
+        let (fi, bi) = (
+            (fr * 255.0) as u32, (fr * 255.0) as u32,
+        );
+        let _ = fi; let _ = bi;
+        let fg_u = ((fr*255.0) as u32, (fg*255.0) as u32, (fb*255.0) as u32);
+        let bg_u = ((br*255.0) as u32, (bg_b*255.0) as u32, (bb*255.0) as u32);
+        col.push(Box::new(TextOnBg {
+            bounds: Rect::default(),
+            children: Vec::new(),
+            font: Arc::clone(&font),
+            fg: fg_c, bg: bg_c,
+            fg_u8: fg_u, bg_u8: bg_u,
+        }), 0.0);
+    }
+
+    col.push(Box::new(Separator::horizontal()), 0.0);
+    col.push(lbl("The left side shows how lines of different widths look.", 13.0, &font), 0.0);
+    col.push(lbl("The right side tests text rendering at different opacities and sizes.", 13.0, &font), 0.0);
+    col.push(lbl("The top and bottom images should look symmetrical in their intensities.", 13.0, &font), 0.0);
+
+    col.push(Box::new(BlendingTest {
+        bounds: Rect::default(), children: Vec::new(), font: Arc::clone(&font),
+    }), 0.0);
+
+    Box::new(ScrollView::new(Box::new(col)))
+}
+
+// ---------------------------------------------------------------------------
+// Pixel test: alternating 1-px stripes
+// ---------------------------------------------------------------------------
+
+/// Draws two blocks side by side:
+/// - Left: alternating 1-px white/black vertical columns (n/2 pairs)
+/// - Right: alternating 1-px white/black horizontal rows (n/2 pairs)
+struct PixelTestLines {
     bounds:   Rect,
     children: Vec<Box<dyn Widget>>,
-    font:     Arc<Font>,
 }
 
-impl RenderingTestView {
-    pub fn new(font: Arc<Font>) -> Self {
-        Self { bounds: Rect::default(), children: Vec::new(), font }
-    }
-}
+const PT_N: f64 = 96.0;  // number of columns / rows in each block
+const PT_GAP: f64 = 8.0; // gap between the two blocks
 
-// ── Section helpers ────────────────────────────────────────────────────────────
-
-/// Draw a small section heading at `(x, y)` (Y-up baseline).
-fn draw_heading(ctx: &mut dyn DrawCtx, font: &Arc<Font>, x: f64, y: f64, text: &str) {
-    ctx.set_font(Arc::clone(font));
-    ctx.set_font_size(11.0);
-    ctx.set_fill_color(ctx.visuals().text_dim);
-    ctx.fill_text(text, x, y);
-}
-
-impl Widget for RenderingTestView {
-    fn type_name(&self) -> &'static str { "RenderingTestView" }
+impl Widget for PixelTestLines {
+    fn type_name(&self) -> &'static str { "PixelTestLines" }
     fn bounds(&self) -> Rect { self.bounds }
     fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
     fn children(&self) -> &[Box<dyn Widget>] { &self.children }
     fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
 
     fn layout(&mut self, available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
-        available
+        // vertical block: PT_N px wide (n/2 pairs of 2px each = n)
+        // horizontal block: PT_N px wide
+        let w = PT_N + PT_GAP + PT_N;
+        let h = PT_N;
+        self.bounds = Rect::new(0.0, 0.0, w.min(available.width), h);
+        Size::new(w.min(available.width), h)
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v  = ctx.visuals();
-        let w  = self.bounds.width;
-        let h  = self.bounds.height;
+        let h = self.bounds.height;
+        let n = PT_N as usize;
 
-        // Canvas background.
-        ctx.set_fill_color(v.bg_color);
-        ctx.begin_path();
-        ctx.rect(0.0, 0.0, w, h);
-        ctx.fill();
-
-        // Layout constants.
-        let pad   = 20.0_f64;
-        let col_w = (w - pad * 2.0) / 3.0;
-
-        // ── Column 1 — Color & Alpha ──────────────────────────────────────────
-        {
-            let col_x = pad;
-            let mut y  = h - pad - 14.0; // Y-up: start near top
-
-            draw_heading(ctx, &self.font, col_x, y, "Solid colors");
-            y -= 18.0;
-
-            let hues: &[(f32, f32, f32, &str)] = &[
-                (0.88, 0.22, 0.18, "Red"),
-                (0.96, 0.60, 0.08, "Orange"),
-                (0.88, 0.82, 0.12, "Yellow"),
-                (0.18, 0.72, 0.32, "Green"),
-                (0.10, 0.50, 0.90, "Blue"),
-                (0.60, 0.25, 0.88, "Violet"),
-            ];
-
-            let swatch_w = (col_w - 4.0) / hues.len() as f64;
-            let swatch_h = 22.0_f64;
-
-            for (i, &(r, g, b, _name)) in hues.iter().enumerate() {
-                let sx = col_x + i as f64 * swatch_w;
-                ctx.set_fill_color(Color::rgb(r, g, b));
-                ctx.begin_path();
-                ctx.rounded_rect(sx, y - swatch_h, swatch_w - 2.0, swatch_h, 3.0);
-                ctx.fill();
-            }
-            y -= swatch_h + 14.0;
-
-            // Alpha ramp for accent color.
-            draw_heading(ctx, &self.font, col_x, y, "Alpha ramp (accent)");
-            y -= 18.0;
-
-            let steps = 8_usize;
-            let step_w = (col_w - 4.0) / steps as f64;
-            for i in 0..steps {
-                let alpha = (i + 1) as f32 / steps as f32;
-                let a = v.accent;
-                ctx.set_fill_color(Color::rgba(a.r, a.g, a.b, alpha));
-                ctx.begin_path();
-                ctx.rounded_rect(
-                    col_x + i as f64 * step_w, y - swatch_h,
-                    step_w - 2.0, swatch_h, 3.0,
-                );
-                ctx.fill();
-            }
-            y -= swatch_h + 14.0;
-
-            // Grayscale ramp.
-            draw_heading(ctx, &self.font, col_x, y, "Grayscale ramp");
-            y -= 18.0;
-
-            for i in 0..steps {
-                let t = i as f32 / (steps - 1) as f32;
-                ctx.set_fill_color(Color::rgb(t, t, t));
-                ctx.begin_path();
-                ctx.rounded_rect(
-                    col_x + i as f64 * step_w, y - swatch_h,
-                    step_w - 2.0, swatch_h, 3.0,
-                );
-                ctx.fill();
-            }
-            y -= swatch_h + 14.0;
-
-            // Alpha compositing over bg.
-            draw_heading(ctx, &self.font, col_x, y, "Compositing (over bg)");
-            y -= 18.0;
-
-            let colors: &[(f32, f32, f32)] = &[
-                (0.88, 0.22, 0.18),
-                (0.18, 0.72, 0.32),
-                (0.10, 0.50, 0.90),
-            ];
-            let block_w = (col_w - 4.0) / colors.len() as f64;
-            for (i, &(r, g, b)) in colors.iter().enumerate() {
-                let bx = col_x + i as f64 * block_w;
-                // Checkerboard-like background: alternating bg.
-                ctx.set_fill_color(if i % 2 == 0 { v.widget_bg } else { v.panel_fill });
-                ctx.begin_path();
-                ctx.rect(bx, y - swatch_h * 1.5, block_w - 2.0, swatch_h * 1.5);
-                ctx.fill();
-                // Semi-transparent overlay.
-                ctx.set_fill_color(Color::rgba(r, g, b, 0.50));
-                ctx.begin_path();
-                ctx.rect(bx, y - swatch_h * 1.5, block_w - 2.0, swatch_h * 1.5);
-                ctx.fill();
-            }
+        // Vertical stripes — left block (Y-up: full height).
+        for i in 0..(n / 2) {
+            let x = (2 * i) as f64;
+            ctx.set_fill_color(Color::white());
+            ctx.begin_path();
+            ctx.rect(x, 0.0, 1.0, h);
+            ctx.fill();
+            ctx.set_fill_color(Color::black());
+            ctx.begin_path();
+            ctx.rect(x + 1.0, 0.0, 1.0, h);
+            ctx.fill();
         }
 
-        // ── Column 2 — Stroke & Shape tests ──────────────────────────────────
-        {
-            let col_x = pad + col_w;
-            let mut y  = h - pad - 14.0;
+        let off_x = PT_N + PT_GAP;
 
-            draw_heading(ctx, &self.font, col_x, y, "Stroke widths");
-            y -= 18.0;
-
-            let widths = [0.5_f64, 1.0, 1.5, 2.0, 3.0, 5.0];
-            let line_h = 14.0_f64;
-            for (i, &lw) in widths.iter().enumerate() {
-                let ly = y - i as f64 * line_h - line_h * 0.5;
-                ctx.set_stroke_color(v.text_color);
-                ctx.set_line_width(lw);
-                ctx.begin_path();
-                ctx.move_to(col_x, ly);
-                ctx.line_to(col_x + col_w - 4.0, ly);
-                ctx.stroke();
-
-                // Label on the right.
-                ctx.set_font(Arc::clone(&self.font));
-                ctx.set_font_size(9.5);
-                ctx.set_fill_color(v.text_dim);
-                ctx.fill_text(&format!("{lw}px"), col_x + col_w - 38.0, ly + 4.0);
-            }
-            y -= widths.len() as f64 * line_h + 14.0;
-
-            draw_heading(ctx, &self.font, col_x, y, "Shape primitives");
-            y -= 18.0;
-
-            let shape_h = 60.0_f64;
-            let shape_w = (col_w - 4.0) / 3.0;
-            let fill_c  = Color::rgba(v.accent.r, v.accent.g, v.accent.b, 0.35);
-            let stk_c   = v.accent;
-
-            // Rectangle.
-            ctx.set_fill_color(fill_c);
+        // Horizontal stripes — right block.
+        // In Y-up, row 0 is at the bottom. Match egui visual order: white at bottom.
+        for i in 0..(n / 2) {
+            let y = (2 * i) as f64;
+            ctx.set_fill_color(Color::white());
             ctx.begin_path();
-            ctx.rect(col_x + 2.0, y - shape_h + 4.0, shape_w - 8.0, shape_h - 8.0);
+            ctx.rect(off_x, y, PT_N, 1.0);
             ctx.fill();
-            ctx.set_stroke_color(stk_c);
-            ctx.set_line_width(1.5);
+            ctx.set_fill_color(Color::black());
             ctx.begin_path();
-            ctx.rect(col_x + 2.0, y - shape_h + 4.0, shape_w - 8.0, shape_h - 8.0);
-            ctx.stroke();
-
-            // Rounded rect.
-            ctx.set_fill_color(fill_c);
-            ctx.begin_path();
-            ctx.rounded_rect(col_x + shape_w + 2.0, y - shape_h + 4.0, shape_w - 8.0, shape_h - 8.0, 10.0);
+            ctx.rect(off_x, y + 1.0, PT_N, 1.0);
             ctx.fill();
-            ctx.set_stroke_color(stk_c);
-            ctx.begin_path();
-            ctx.rounded_rect(col_x + shape_w + 2.0, y - shape_h + 4.0, shape_w - 8.0, shape_h - 8.0, 10.0);
-            ctx.stroke();
-
-            // Circle.
-            let cr = (shape_h - 8.0) * 0.5;
-            let cx = col_x + shape_w * 2.0 + cr + 2.0;
-            let cy = y - cr - 4.0;
-            ctx.set_fill_color(fill_c);
-            ctx.begin_path();
-            ctx.circle(cx, cy, cr);
-            ctx.fill();
-            ctx.set_stroke_color(stk_c);
-            ctx.begin_path();
-            ctx.circle(cx, cy, cr);
-            ctx.stroke();
-
-            y -= shape_h + 14.0;
-
-            draw_heading(ctx, &self.font, col_x, y, "Bézier curves");
-            y -= 18.0;
-
-            let bez_h = 70.0_f64;
-            // Draw a cubic bezier.
-            ctx.set_stroke_color(Color::rgba(v.accent.r, v.accent.g, v.accent.b, 0.80));
-            ctx.set_line_width(2.0);
-            ctx.begin_path();
-            let bx = col_x + 4.0;
-            let bw = col_w - 8.0;
-            // Cubic: S-curve.
-            ctx.move_to(bx, y - bez_h * 0.10);
-            ctx.cubic_to(
-                bx + bw * 0.25, y - bez_h * 0.90,
-                bx + bw * 0.75, y - bez_h * 0.10,
-                bx + bw,        y - bez_h * 0.90,
-            );
-            ctx.stroke();
-
-            // Control point dots.
-            ctx.set_fill_color(Color::rgba(1.0, 0.5, 0.1, 0.80));
-            for &(px, py) in &[
-                (bx, y - bez_h * 0.10),
-                (bx + bw * 0.25, y - bez_h * 0.90),
-                (bx + bw * 0.75, y - bez_h * 0.10),
-                (bx + bw, y - bez_h * 0.90),
-            ] {
-                ctx.begin_path();
-                ctx.circle(px, py, 3.5);
-                ctx.fill();
-            }
-            // Control lines.
-            ctx.set_stroke_color(Color::rgba(1.0, 0.5, 0.1, 0.35));
-            ctx.set_line_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(bx, y - bez_h * 0.10);
-            ctx.line_to(bx + bw * 0.25, y - bez_h * 0.90);
-            ctx.move_to(bx + bw, y - bez_h * 0.90);
-            ctx.line_to(bx + bw * 0.75, y - bez_h * 0.10);
-            ctx.stroke();
-        }
-
-        // ── Column 3 — Text rendering quality ────────────────────────────────
-        {
-            let col_x = pad + col_w * 2.0;
-            let mut y  = h - pad - 14.0;
-
-            draw_heading(ctx, &self.font, col_x, y, "Text sizes");
-            y -= 18.0;
-
-            let sizes: &[(f64, &str)] = &[
-                (8.0,  "8px — tiny text"),
-                (10.0, "10px — small"),
-                (12.0, "12px — body"),
-                (14.0, "14px — large body"),
-                (18.0, "18px — heading"),
-                (24.0, "24px — display"),
-            ];
-
-            ctx.set_font(Arc::clone(&self.font));
-            for &(sz, text) in sizes {
-                ctx.set_font_size(sz);
-                ctx.set_fill_color(v.text_color);
-                ctx.fill_text(text, col_x, y);
-                y -= sz * 1.6;
-            }
-
-            y -= 8.0;
-            draw_heading(ctx, &self.font, col_x, y, "Sub-pixel samples");
-            y -= 18.0;
-
-            // Repeated short words to stress sub-pixel hinting.
-            ctx.set_font_size(12.0);
-            ctx.set_fill_color(v.text_color);
-            let sample = "Hello World  |  Lorem ipsum";
-            for i in 0..4 {
-                ctx.fill_text(sample, col_x + i as f64 * 0.25, y - i as f64 * 16.0);
-            }
-            y -= 4.0 * 16.0 + 16.0;
-
-            draw_heading(ctx, &self.font, col_x, y, "Line rendering");
-            y -= 18.0;
-
-            // Horizontal, vertical, diagonal lines at 1px.
-            ctx.set_stroke_color(v.text_color);
-            ctx.set_line_width(1.0);
-
-            let lx = col_x;
-            let lw = col_w - 8.0;
-
-            // Horizontal.
-            ctx.begin_path();
-            ctx.move_to(lx, y - 10.0);
-            ctx.line_to(lx + lw, y - 10.0);
-            ctx.stroke();
-
-            // Vertical.
-            ctx.begin_path();
-            ctx.move_to(lx + lw * 0.25, y - 25.0);
-            ctx.line_to(lx + lw * 0.25, y);
-            ctx.stroke();
-
-            // 45° diagonal.
-            ctx.begin_path();
-            ctx.move_to(lx + lw * 0.4, y);
-            ctx.line_to(lx + lw * 0.4 + 30.0, y - 30.0);
-            ctx.stroke();
-
-            // Dashed line (manual dashes).
-            ctx.set_stroke_color(Color::rgba(v.accent.r, v.accent.g, v.accent.b, 0.80));
-            ctx.set_line_width(1.5);
-            let dash_y = y - 40.0;
-            let mut dx = lx;
-            while dx < lx + lw {
-                ctx.begin_path();
-                ctx.move_to(dx, dash_y);
-                ctx.line_to((dx + 6.0).min(lx + lw), dash_y);
-                ctx.stroke();
-                dx += 10.0;
-            }
-        }
-
-        // ── Centered title ────────────────────────────────────────────────────
-        {
-            ctx.set_font(Arc::clone(&self.font));
-            ctx.set_font_size(10.5);
-            ctx.set_fill_color(v.text_dim);
-            let title = "Rendering Test — agg-gui visual correctness";
-            if let Some(m) = ctx.measure_text(title) {
-                ctx.fill_text(title, (w - m.width) * 0.5, 16.0);
-            }
         }
     }
 
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
+// ---------------------------------------------------------------------------
+// Pixel test: increasing-size squares
+// ---------------------------------------------------------------------------
+
+/// Draws squares of size 1px, 2px, … num px with 1-px gaps between them.
+struct PixelTestSquares {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+}
+
+const PT_SQ_N: usize = 10;
+
+impl Widget for PixelTestSquares {
+    fn type_name(&self) -> &'static str { "PixelTestSquares" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        let w: f64 = (1..=PT_SQ_N).map(|s| s as f64 + 1.0).sum::<f64>();
+        let h = PT_SQ_N as f64 + 4.0;
+        self.bounds = Rect::new(0.0, 0.0, w.min(available.width), h);
+        Size::new(w.min(available.width), h)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let v = ctx.visuals();
+        let color = v.text_color;
+        let mut x = 0.0_f64;
+        let y = 2.0; // small bottom margin
+        for size in 1..=PT_SQ_N {
+            let s = size as f64;
+            ctx.set_fill_color(color);
+            ctx.begin_path();
+            ctx.rect(x, y, s, s);
+            ctx.fill();
+            x += s + 1.0;
+        }
+    }
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
+// ---------------------------------------------------------------------------
+// Pixel test: stroke grids (outlined squares at 1px, 2px, 3px border)
+// ---------------------------------------------------------------------------
+
+/// Three rows of outlined squares, one row per stroke thickness (1px, 2px, 3px).
+struct PixelTestStrokes {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+}
+
+impl Widget for PixelTestStrokes {
+    fn type_name(&self) -> &'static str { "PixelTestStrokes" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        // 3 rows, each row height = num_squares + thickness*2 + gap
+        let n = 10_usize; // number of squares
+        let max_thickness = 3.0_f64;
+        // Row heights: for thickness t, row_h = n + t*2 (in pixels)
+        let total_h: f64 = (1..=3).map(|t| n as f64 + t as f64 * 2.0 + 2.0).sum();
+        let total_w: f64 = (1..=n).map(|s| (s + max_thickness as usize * 2 + 1) as f64).sum::<f64>() + 4.0;
+        self.bounds = Rect::new(0.0, 0.0, total_w.min(available.width), total_h);
+        Size::new(total_w.min(available.width), total_h)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let v = ctx.visuals();
+        let color = v.text_color;
+        let n = 10_usize;
+        let h = self.bounds.height;
+
+        // Draw rows from bottom (thickness=1) to top (thickness=3) in Y-up.
+        let mut row_y = 0.0_f64;
+        for thickness in 1_usize..=3 {
+            let t = thickness as f64;
+            let row_h = n as f64 + t * 2.0 + 2.0;
+            let mut cursor_x = t; // start with left margin = thickness
+
+            ctx.set_stroke_color(color);
+            ctx.set_line_width(t);
+
+            for size in 1..=n {
+                let s = size as f64;
+                // rect inner size = s×s, outer = s+2t × s+2t
+                let rx = cursor_x;
+                let ry = row_y + 1.0;
+                ctx.begin_path();
+                ctx.rect(rx, ry, s, s);
+                ctx.stroke();
+                cursor_x += s + t * 2.0 + 1.0;
+            }
+
+            row_y += row_h;
+        }
+        let _ = h;
+    }
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
+// ---------------------------------------------------------------------------
+// Text rendering rows: "▣ The quick brown fox…" on colored backgrounds
+// ---------------------------------------------------------------------------
+
+/// One row matching egui's `text_on_bg()`: colored text on colored background
+/// followed by a "(fg) on (bg)" value label.
+struct TextOnBg {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+    font:     Arc<Font>,
+    fg:       Color,
+    bg:       Color,
+    fg_u8:    (u32, u32, u32),
+    bg_u8:    (u32, u32, u32),
+}
+
+const TEXT_ON_BG_H: f64 = 22.0;
+const TEXT_ON_BG_TEXT: &str =
+    "\u{25A3} The quick brown fox jumps over the lazy dog and runs away.";
+
+impl Widget for TextOnBg {
+    fn type_name(&self) -> &'static str { "TextOnBg" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, TEXT_ON_BG_H);
+        Size::new(available.width, TEXT_ON_BG_H)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let w   = self.bounds.width;
+        let h   = TEXT_ON_BG_H;
+        let pad = 4.0_f64;
+
+        // Measure text so we can draw a snug background rect.
+        ctx.set_font(Arc::clone(&self.font));
+        ctx.set_font_size(12.5);
+        let text_w = ctx.measure_text(TEXT_ON_BG_TEXT)
+            .map(|m| m.width)
+            .unwrap_or(300.0);
+        let text_h = 14.0_f64;
+
+        // Background rect behind the fox sentence.
+        ctx.set_fill_color(self.bg);
+        ctx.begin_path();
+        ctx.rect(0.0, (h - text_h - pad * 2.0) * 0.5, text_w + pad * 2.0, text_h + pad * 2.0);
+        ctx.fill();
+
+        // Colored text.
+        ctx.set_fill_color(self.fg);
+        let baseline = h * 0.32 + 3.0;
+        ctx.fill_text(TEXT_ON_BG_TEXT, pad, baseline);
+
+        // Value label (right of the bg rect).
+        let label = format!(
+            "({} {} {}) on ({} {} {})",
+            self.fg_u8.0, self.fg_u8.1, self.fg_u8.2,
+            self.bg_u8.0, self.bg_u8.1, self.bg_u8.2,
+        );
+        ctx.set_fill_color(ctx.visuals().text_dim);
+        ctx.set_font_size(11.5);
+        ctx.fill_text(&label, text_w + pad * 2.0 + 8.0, baseline);
+        let _ = w;
+    }
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
+// ---------------------------------------------------------------------------
+// Blending / feathering test
+// ---------------------------------------------------------------------------
+
+/// 512 × 256 canvas split top (black bg) / bottom (white bg).
+///
+/// Each half:
+/// - Left side: Bézier curves of 7 increasing stroke widths with width labels
+/// - Right side: opacity-fade text labels at 8 levels, then font-size text samples
+struct BlendingTest {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+    font:     Arc<Font>,
+}
+
+impl Widget for BlendingTest {
+    fn type_name(&self) -> &'static str { "BlendingTest" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        let w = available.width.min(512.0);
+        let h = 512.0_f64;
+        self.bounds = Rect::new(0.0, 0.0, w, h);
+        Size::new(w, h)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let w = self.bounds.width;
+        let h = self.bounds.height;
+        let half_h = h * 0.5;
+
+        // Top half: black background, white content.
+        ctx.set_fill_color(Color::black());
+        ctx.begin_path();
+        ctx.rect(0.0, half_h, w, half_h);
+        ctx.fill();
+        paint_half(ctx, &self.font, 0.0, half_h, w, half_h, Color::white());
+
+        // Bottom half: white background, black content.
+        ctx.set_fill_color(Color::white());
+        ctx.begin_path();
+        ctx.rect(0.0, 0.0, w, half_h);
+        ctx.fill();
+        paint_half(ctx, &self.font, 0.0, 0.0, w, half_h, Color::black());
+    }
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
+/// Paint one half of the blending test, matching egui's `paint_fine_lines_and_text`:
+/// - Left side:  corner-sweeping CubicBézier arcs (spiral inward) at 7 stroke widths
+/// - Right side: three text columns (white / gray / black) at 8 opacity levels,
+///               followed by font-size ramp samples
+///
+/// The arc rect starts at the left half of this half-panel, shrunk 16 px on every side.
+/// Each iteration the visual top drops 24 px and the right edge retreats 24 px, producing
+/// the characteristic nested-arc spiral seen in egui.  Y-up coordinate system throughout.
+fn paint_half(
+    ctx:    &mut dyn DrawCtx,
+    font:   &Arc<Font>,
+    ox:     f64,  // origin x (lower-left of this half in widget coords)
+    oy:     f64,  // origin y
+    w:      f64,
+    h:      f64,
+    color:  Color,
+) {
+    ctx.set_font(Arc::clone(font));
+
+    // ── Right side: three opacity columns + font-size ramp ───────────────
+    // Columns: white / gray / black at decreasing opacities (egui has all three).
+    let right_x = ox + w * 0.5 + 4.0;
+    let col_w   = (w * 0.5 - 8.0) / 3.0;
+    let row_h   = 20.0_f64;
+    // Y-up: visually "top" = oy + h; rows step downward.
+    let mut text_y = oy + h - row_h * 0.7;
+
+    let opacities: &[f32] = &[1.00, 0.50, 0.25, 0.10, 0.05, 0.02, 0.01, 0.00];
+    ctx.set_font_size(11.0);
+    for &op in opacities {
+        ctx.set_fill_color(Color::white().with_alpha(op));
+        ctx.fill_text(&format!("{:.0}% white", 100.0 * op), right_x, text_y);
+        ctx.set_fill_color(Color::rgb(0.5, 0.5, 0.5).with_alpha(op));
+        ctx.fill_text(&format!("{:.0}% gray",  100.0 * op), right_x + col_w, text_y);
+        ctx.set_fill_color(Color::black().with_alpha(op));
+        ctx.fill_text(&format!("{:.0}% black", 100.0 * op), right_x + col_w * 2.0, text_y);
+        text_y -= row_h;
+    }
+
+    // Font-size ramp: drawn in the half's primary color.
+    let font_sizes: &[f64] = &[6.0, 7.0, 8.0, 9.0, 10.0, 12.0, 14.0];
+    ctx.set_fill_color(color);
+    for &sz in font_sizes {
+        ctx.set_font_size(sz);
+        ctx.fill_text(
+            &format!("{sz}px - The quick brown fox jumps over the lazy dog and runs away."),
+            right_x,
+            text_y,
+        );
+        text_y -= sz + 1.0;
+    }
+
+    // ── Left side: corner-sweeping CubicBézier arcs (egui pattern) ───────
+    // Rect is the left half of this half-panel, shrunk 16 px on all sides.
+    // In Y-up: visual top = high Y, visual bottom = low Y.
+    let rect_left       = ox + 16.0;
+    let mut rect_right  = ox + w * 0.5 - 16.0;
+    let mut rect_top    = oy + h - 16.0; // Y-up: visual top has large Y
+    let rect_bottom     = oy + 16.0;
+
+    let widths: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0];
+    ctx.set_font_size(10.0);
+
+    for &lw in widths {
+        let center_y = (rect_top + rect_bottom) * 0.5;
+
+        // Label at the visual top-left of the current rect.
+        ctx.set_fill_color(color);
+        ctx.fill_text(&format!("{lw}"), rect_left, rect_top);
+
+        // CubicBézier sweeping from near left_top to right_top, then down to right_bottom.
+        // Egui Y-down: left_top+vec2(16,0) → right_top → right_center → right_bottom.
+        // Y-up translation: top=high Y, bottom=low Y — the shape is identical.
+        ctx.set_stroke_color(color);
+        ctx.set_line_width(lw);
+        ctx.begin_path();
+        ctx.move_to(rect_left + 16.0, rect_top);
+        ctx.cubic_to(
+            rect_right, rect_top,    // CP1: right_top
+            rect_right, center_y,    // CP2: right_center
+            rect_right, rect_bottom, // end:  right_bottom
+        );
+        ctx.stroke();
+
+        // Shrink rect for next iteration:
+        // egui Y-down min.y += 24 → visual top retreats → Y-up: rect_top decreases.
+        rect_top   -= 24.0;
+        rect_right -= 24.0;
+    }
+
+    // ── Gradient bar: transparent → opaque ───────────────────────────────
+    let left_x = ox + 16.0;
+    let grad_y = oy + 10.0;
+    ctx.set_fill_color(color);
+    ctx.set_font_size(9.0);
+    ctx.fill_text("transparent --> opaque", left_x, grad_y + 12.0);
+
+    let grad_w  = w * 0.5 - 24.0;
+    let steps   = 32_usize;
+    let step_w  = grad_w / steps as f64;
+    for i in 0..steps {
+        let alpha = i as f32 / steps as f32;
+        ctx.set_fill_color(color.with_alpha(alpha));
+        ctx.begin_path();
+        ctx.rect(left_x + i as f64 * step_w, grad_y - 8.0, step_w, 8.0);
+        ctx.fill();
+    }
 }

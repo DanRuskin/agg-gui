@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use crate::color::Color;
 use crate::event::{Event, EventResult, Key, MouseButton};
 use crate::geometry::{Rect, Size};
 use crate::draw_ctx::DrawCtx;
@@ -175,9 +174,9 @@ impl Widget for RadioGroup {
             ctx.circle(DOT_R, cy, DOT_R);
             ctx.stroke();
 
-            // Inner dot when checked.
+            // Inner dot when checked — always white since it's on the accent color background.
             if checked {
-                ctx.set_fill_color(Color::white());
+                ctx.set_fill_color(v.widget_bg);
                 ctx.begin_path();
                 ctx.circle(DOT_R, cy, DOT_R * 0.45);
                 ctx.fill();

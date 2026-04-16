@@ -78,6 +78,7 @@ pub struct Window {
     visible: bool,
     visible_cell: Option<Rc<Cell<bool>>>,
     reset_to: Option<Rc<Cell<Option<Rect>>>>,
+    position_cell: Option<Rc<Cell<Rect>>>,
 
     collapsed: bool,
     /// Height before collapsing, so we can restore it.
@@ -117,6 +118,7 @@ impl Window {
             visible: true,
             visible_cell: None,
             reset_to: None,
+            position_cell: None,
             collapsed: false,
             pre_collapse_h: 280.0,
             drag_mode: DragMode::None,
@@ -143,6 +145,11 @@ impl Window {
 
     pub fn with_reset_cell(mut self, cell: Rc<Cell<Option<Rect>>>) -> Self {
         self.reset_to = Some(cell);
+        self
+    }
+
+    pub fn with_position_cell(mut self, cell: Rc<Cell<Rect>>) -> Self {
+        self.position_cell = Some(cell);
         self
     }
 
@@ -301,6 +308,11 @@ impl Widget for Window {
         // Layout the title label so its intrinsic size is known before paint().
         let s = self.title_label.layout(Size::new(self.bounds.width - 48.0, TITLE_H));
         self.title_label.set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+
+        // Publish current position so external code can read it for persistence.
+        if let Some(ref cell) = self.position_cell {
+            cell.set(self.bounds);
+        }
 
         Size::new(self.bounds.width, visible_h)
     }

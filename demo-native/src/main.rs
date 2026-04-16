@@ -33,6 +33,29 @@ use winit::window::WindowAttributes;
 const FONT_BYTES: &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
 
 // ---------------------------------------------------------------------------
+// State persistence helpers
+// ---------------------------------------------------------------------------
+
+fn state_file_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(".agg-gui-demo-state")))
+        .unwrap_or_else(|| std::path::PathBuf::from(".agg-gui-demo-state"))
+}
+
+fn load_saved_state() -> Option<demo_ui::SavedState> {
+    let path = state_file_path();
+    let s = std::fs::read_to_string(&path).ok()?;
+    demo_ui::SavedState::deserialize(&s)
+}
+
+fn save_state(accessor: &demo_ui::StateAccessor) {
+    let path = state_file_path();
+    let state = accessor.current_state();
+    let _ = std::fs::write(&path, state.serialize());
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -97,8 +120,21 @@ fn main() {
     let init_h = size.height.max(1) as f32;
     let mut gl_ctx = unsafe { GlGfxCtx::new(Rc::clone(&gl), init_w, init_h) };
 
-    let (mut app, show_inspector, inspector_nodes, hovered_bounds, cube_visible) =
-        demo_ui::build_demo_ui(Arc::clone(&font), Box::new(GlCubeWidget::new()));
+    let initial_state = load_saved_state();
+    let (mut app, handles) = demo_ui::build_demo_ui(
+        Arc::clone(&font),
+        Box::new(GlCubeWidget::new()),
+        "OpenGL 3.3",
+        "native GL (glutin/winit)",
+        initial_state,
+    );
+    let show_inspector  = Rc::clone(&handles.show_inspector);
+    let inspector_nodes = Rc::clone(&handles.inspector_nodes);
+    let hovered_bounds  = Rc::clone(&handles.hovered_bounds);
+    let cube_visible    = Rc::clone(&handles.cube_visible);
+    let screen_size     = Rc::clone(&handles.screen_size);
+    let frame_history   = Rc::clone(&handles.frame_history);
+    let state_accessor  = handles.state;
 
     let mut cursor_x    = 0.0f64;
     let mut cursor_y    = 0.0f64;
@@ -109,8 +145,8 @@ fn main() {
     let mut current_mods = Modifiers::default();
 
     // Initial frame.
-    render_frame(&mut app, &mut gl_ctx, &gl, win_w, win_h, last_frame_ms,
-                 Arc::clone(&font), &hovered_bounds);
+    screen_size.set((win_w, win_h));
+    render_frame(&mut app, &mut gl_ctx, &gl, win_w, win_h, last_frame_ms, &hovered_bounds);
     gl_surface.swap_buffers(&gl_context).expect("swap_buffers");
 
     #[allow(deprecated)]
@@ -118,6 +154,7 @@ fn main() {
         .run(|event, elwt| {
             match event {
                 Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                    save_state(&state_accessor);
                     elwt.exit();
                 }
                 Event::WindowEvent {
@@ -131,11 +168,12 @@ fn main() {
                         );
                         win_w = new_size.width;
                         win_h = new_size.height;
+                        screen_size.set((win_w, win_h));
                         // Render immediately so content tracks the drag handle.
                         sync_inspector(&app, show_inspector.get(),
                                        &inspector_nodes, &hovered_bounds);
                         render_frame(&mut app, &mut gl_ctx, &gl,
-                                     win_w, win_h, last_frame_ms, Arc::clone(&font), &hovered_bounds);
+                                     win_w, win_h, last_frame_ms, &hovered_bounds);
                         gl_surface.swap_buffers(&gl_context).expect("swap_buffers");
                     }
                 }
@@ -209,11 +247,13 @@ fn main() {
                     sync_inspector(&app, show_inspector.get(),
                                    &inspector_nodes, &hovered_bounds);
 
+                    screen_size.set((win_w, win_h));
                     render_frame(&mut app, &mut gl_ctx, &gl,
-                                 win_w, win_h, last_frame_ms, Arc::clone(&font), &hovered_bounds);
+                                 win_w, win_h, last_frame_ms, &hovered_bounds);
                     gl_surface.swap_buffers(&gl_context).expect("swap_buffers");
 
                     last_frame_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                    frame_history.borrow_mut().push(last_frame_ms as f32);
                 }
                 _ => {}
             }
@@ -232,13 +272,12 @@ fn render_frame(
     w:              u32,
     h:              u32,
     frame_ms:       f64,
-    font:           Arc<Font>,
     hovered_bounds: &Rc<RefCell<Option<Rect>>>,
 ) {
     begin_frame(gl, w, h);
     CUBE_SCREEN_RECT.with(|r| r.set(Rect::default()));
     let hovered = *hovered_bounds.borrow();
-    render_app_frame(gl_ctx, app, font, w, h, frame_ms, hovered);
+    render_app_frame(gl_ctx, app, w, h, frame_ms, hovered);
 }
 
 // ---------------------------------------------------------------------------

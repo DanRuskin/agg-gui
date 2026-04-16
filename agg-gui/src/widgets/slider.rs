@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::color::Color;
 use crate::event::{Event, EventResult, Key, MouseButton};
 use crate::geometry::{Rect, Size};
 use crate::draw_ctx::DrawCtx;
@@ -162,7 +161,7 @@ impl Widget for Slider {
         ctx.circle(tx, cy, THUMB_R);
         ctx.fill();
 
-        ctx.set_fill_color(Color::white());
+        ctx.set_fill_color(v.widget_bg);
         ctx.begin_path();
         ctx.circle(tx, cy, THUMB_R - 3.5);
         ctx.fill();

@@ -1,11 +1,10 @@
-//! Top-bar widgets: theme toggle, app-tab bar, and backend toggle button.
+//! Top-bar widgets: theme toggle and backend toggle button.
 //!
 //! All text in this module is rendered through `Label` children with
 //! `buffered = true` (the default), so glyph rasterization is cached to an
 //! offscreen framebuffer and only repeated when the text or color changes.
 //!
 //! Exports:
-//! - `AppTab` — selects which body pane is shown (Demos / 3D Cube / Rendering test)
 //! - `build_top_bar_inner` — builds the FlexRow that fills the `TopMenuBar`
 
 use std::cell::Cell;
@@ -20,7 +19,7 @@ use agg_gui::{
 use agg_gui::widgets::label::Label;
 use agg_gui::widget::paint_subtree;
 
-/// Detect OS color scheme and return the matching `ThemePreference`.
+/// Detect OS colour scheme and return the matching `ThemePreference`.
 pub fn detect_system_theme() -> ThemePreference {
     match dark_light::detect() {
         dark_light::Mode::Light | dark_light::Mode::Default => ThemePreference::Light,
@@ -36,11 +35,6 @@ fn apply_system_visuals() {
         ThemePreference::System => {} // won't happen
     }
 }
-
-// ── App tab ───────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum AppTab { Demos, RenderingTest }
 
 // ── Theme toggle widget ────────────────────────────────────────────────────────
 
@@ -185,149 +179,6 @@ impl Widget for ThemeToggle {
     }
 }
 
-// ── App tab bar widget ────────────────────────────────────────────────────────
-
-/// Segmented tab selector: "Demos" | "Rendering test".
-/// Text rendered through backbuffered Label children.
-struct AppTabBar {
-    bounds:   Rect,
-    children: Vec<Box<dyn Widget>>, // always empty — labels stored separately
-    font:     Arc<Font>,
-    tab:      Rc<Cell<AppTab>>,
-    hovered:  Option<usize>,
-    /// One Label per tab segment.
-    labels:   Vec<Label>,
-}
-
-impl AppTabBar {
-    const LABELS: &'static [&'static str] = &["Demos", "Rendering test"];
-    const BTN_H:  f64 = 24.0;
-    const PAD_X:  f64 = 12.0;
-
-    fn new(font: Arc<Font>, tab: Rc<Cell<AppTab>>) -> Self {
-        let labels = Self::LABELS.iter().map(|text| {
-            Label::new(*text, Arc::clone(&font))
-                .with_font_size(12.0)
-        }).collect();
-        Self {
-            bounds: Rect::default(),
-            children: Vec::new(),
-            font,
-            tab,
-            hovered: None,
-            labels,
-        }
-    }
-
-    fn tab_width(font: &Font, label: &str, fs: f64) -> f64 {
-        agg_gui::text::measure_text_metrics(font, label, fs).width + Self::PAD_X * 2.0
-    }
-
-    fn natural_width(&self) -> f64 {
-        Self::LABELS.iter().map(|l| Self::tab_width(&self.font, l, 12.0)).sum::<f64>()
-    }
-
-    fn tab_rects(&self) -> Vec<Rect> {
-        let gy = (self.bounds.height - Self::BTN_H) * 0.5;
-        let mut x = 0.0;
-        Self::LABELS.iter().map(|l| {
-            let w = Self::tab_width(&self.font, l, 12.0);
-            let r = Rect::new(x, gy, w, Self::BTN_H);
-            x += w;
-            r
-        }).collect()
-    }
-
-    fn hit_idx(&self, pos: agg_gui::Point) -> Option<usize> {
-        for (i, r) in self.tab_rects().iter().enumerate() {
-            if pos.x >= r.x && pos.x <= r.x + r.width
-                && pos.y >= r.y && pos.y <= r.y + r.height
-            { return Some(i); }
-        }
-        None
-    }
-}
-
-impl Widget for AppTabBar {
-    fn type_name(&self) -> &'static str { "AppTabBar" }
-    fn bounds(&self) -> Rect { self.bounds }
-    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
-    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
-
-    fn layout(&mut self, available: Size) -> Size {
-        let w = self.natural_width().min(available.width);
-        self.bounds = Rect::new(0.0, 0.0, w, available.height);
-        // Pre-layout labels to compute their intrinsic sizes.
-        for i in 0..Self::LABELS.len() {
-            let r = self.tab_rects()[i];
-            let s = self.labels[i].layout(Size::new(r.width, r.height));
-            self.labels[i].set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
-        }
-        Size::new(w, available.height)
-    }
-
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v = ctx.visuals();
-        let current = self.tab.get();
-        let tabs = [AppTab::Demos, AppTab::RenderingTest];
-        let n = tabs.len();
-        let rects = self.tab_rects();
-
-        for (i, (rect, tab)) in rects.iter().zip(tabs.iter()).enumerate() {
-            let active  = current == *tab;
-            let hovered = self.hovered == Some(i);
-
-            let bg = if active { v.accent }
-                     else if hovered { v.widget_bg_hovered }
-                     else { v.widget_bg };
-            ctx.set_fill_color(bg);
-            ctx.begin_path();
-            let r = if i == 0 || i == n - 1 { 4.0 } else { 0.0 };
-            ctx.rounded_rect(rect.x, rect.y, rect.width, rect.height, r);
-            ctx.fill();
-
-            if i < n - 1 {
-                ctx.set_fill_color(v.widget_stroke);
-                ctx.begin_path();
-                ctx.rect(rect.x + rect.width - 1.0, rect.y, 1.0, rect.height);
-                ctx.fill();
-            }
-
-            // Update label color based on active/hover state.
-            let text_color = if active { v.window_title_text } else { v.text_color };
-            self.labels[i].set_color(text_color);
-
-            // Center label within button rect.
-            let lw = self.labels[i].bounds().width;
-            let lh = self.labels[i].bounds().height;
-            let lx = rect.x + (rect.width - lw) * 0.5;
-            let ly = rect.y + (rect.height - lh) * 0.5;
-            self.labels[i].set_bounds(Rect::new(lx, ly, lw, lh));
-
-            ctx.save();
-            ctx.translate(lx, ly);
-            paint_subtree(&mut self.labels[i], ctx);
-            ctx.restore();
-        }
-    }
-
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        match event {
-            Event::MouseMove { pos } => { self.hovered = self.hit_idx(*pos); EventResult::Ignored }
-            Event::MouseDown { button: agg_gui::MouseButton::Left, pos, .. } => {
-                if let Some(i) = self.hit_idx(*pos) {
-                    let tabs = [AppTab::Demos, AppTab::RenderingTest];
-                    self.tab.set(tabs[i]);
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
-    }
-}
-
 // ── Backend toggle button ─────────────────────────────────────────────────────
 
 /// "💻 Backend" button — toggles the left-side backend panel.
@@ -430,10 +281,9 @@ impl Widget for BackendButton {
 
 /// Build the FlexRow child for `TopMenuBar`.
 ///
-/// Layout: [Backend button] [spacer] [flex] [AppTabBar] [flex] [ThemeToggle]
+/// Layout: [Backend button] [spacer] [flex(1.0)] [ThemeToggle]
 pub fn build_top_bar_inner(
     font:         Arc<Font>,
-    app_tab:      Rc<Cell<AppTab>>,
     show_backend: Rc<Cell<bool>>,
     theme_pref:   Rc<Cell<ThemePreference>>,
 ) -> Box<dyn Widget> {
@@ -441,8 +291,6 @@ pub fn build_top_bar_inner(
         .with_gap(0.0)
         .add(Box::new(BackendButton::new(Arc::clone(&font), show_backend)))
         .add(Box::new(SizedBox::new().with_width(8.0)))
-        .add_flex(Box::new(SizedBox::new()), 1.0)
-        .add(Box::new(AppTabBar::new(Arc::clone(&font), app_tab)))
         .add_flex(Box::new(SizedBox::new()), 1.0)
         .add(Box::new(ThemeToggle::new(font, theme_pref))))
 }

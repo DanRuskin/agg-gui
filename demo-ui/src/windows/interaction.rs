@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use agg_gui::{
     Button, Color, Container, DrawCtx, Event, EventResult,
-    FlexColumn, Font, Label,
+    FlexColumn, Font, Label, current_visuals,
     MouseButton, Point, Rect, ScrollView, Separator,
     Size, SizedBox, Widget,
 };
@@ -241,7 +241,7 @@ impl DragAndDropWidget {
                         dnd_item_y_bottom(h, tr) + DND_ITEM_H + DND_ITEM_GAP * 0.5
                     };
 
-                    ctx.set_stroke_color(Color::white());
+                    ctx.set_stroke_color(v.text_color);
                     ctx.set_line_width(2.0);
                     ctx.begin_path();
                     ctx.move_to(DND_PAD, line_y);
@@ -404,12 +404,9 @@ pub fn scrolling_demo(font: Arc<Font>) -> Box<dyn Widget> {
     ).with_font_size(12.0)), 0.0);
 
     let mut inner = FlexColumn::new().with_gap(4.0).with_padding(6.0);
+    let v = current_visuals();
     for i in 0..50_usize {
-        let bg = if i % 2 == 0 {
-            Color::rgba(0.0, 0.0, 0.0, 0.04)
-        } else {
-            Color::rgba(0.0, 0.0, 0.0, 0.0)
-        };
+        let bg = if i % 2 == 0 { v.separator } else { Color::transparent() };
         let row = Container::new()
             .with_background(bg)
             .with_padding(4.0)
@@ -458,7 +455,7 @@ impl Widget for PanelsLayout {
 
         // Colors.
         let top_bg    = Color::rgba(v.accent.r, v.accent.g, v.accent.b, 0.25);
-        let bot_bg    = Color::rgba(0.0, 0.0, 0.0, 0.12);
+        let bot_bg    = v.track_bg;
         let side_bg   = v.panel_fill;
         let center_bg = v.bg_color;
 

@@ -231,14 +231,16 @@ impl Widget for TabView {
         let tab_w = tabs_w / n as f64;
         let bar_y = content_h;
 
+        let v = ctx.visuals();
+
         // Tab bar background
-        ctx.set_fill_color(Color::rgb(0.97, 0.97, 0.98));
+        ctx.set_fill_color(v.panel_fill);
         ctx.begin_path();
         ctx.rect(0.0, bar_y, w, tab_h);
         ctx.fill();
 
         // Bottom separator line
-        ctx.set_stroke_color(Color::rgba(0.0, 0.0, 0.0, 0.12));
+        ctx.set_stroke_color(v.separator);
         ctx.set_line_width(1.0);
         ctx.begin_path();
         ctx.move_to(0.0, bar_y);
@@ -255,23 +257,23 @@ impl Widget for TabView {
             let is_hovered = self.hovered_tab == Some(i);
 
             if is_hovered && !is_active {
-                ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.04));
+                ctx.set_fill_color(v.widget_bg_hovered);
                 ctx.begin_path();
                 ctx.rect(tx, bar_y, tab_w, tab_h);
                 ctx.fill();
             }
             if is_active {
-                ctx.set_fill_color(Color::rgb(0.22, 0.45, 0.88));
+                ctx.set_fill_color(v.accent);
                 ctx.begin_path();
                 ctx.rect(tx, h - 2.5, tab_w, 2.5);
                 ctx.fill();
             }
             let label_color = if is_active {
-                Color::rgb(0.22, 0.45, 0.88)
+                v.accent
             } else if is_hovered {
-                Color::rgb(0.3, 0.3, 0.35)
+                v.text_color
             } else {
-                Color::rgba(0.0, 0.0, 0.0, 0.55)
+                v.text_dim
             };
             ctx.set_fill_color(label_color);
             if let Some(m) = ctx.measure_text(label) {
@@ -285,9 +287,9 @@ impl Widget for TabView {
         if let Some(ref label) = self.action_label.clone() {
             let bx = tabs_w;
             let bg = if self.action_active {
-                Color::rgba(0.22, 0.45, 0.88, 0.18)
+                Color::rgba(v.accent.r, v.accent.g, v.accent.b, 0.18)
             } else if self.action_hovered {
-                Color::rgba(0.0, 0.0, 0.0, 0.06)
+                v.widget_bg_hovered
             } else {
                 Color::transparent()
             };
@@ -297,18 +299,14 @@ impl Widget for TabView {
                 ctx.rect(bx, bar_y, ACTION_BTN_W, tab_h);
                 ctx.fill();
             }
-            ctx.set_stroke_color(Color::rgba(0.0, 0.0, 0.0, 0.10));
+            ctx.set_stroke_color(v.separator);
             ctx.set_line_width(1.0);
             ctx.begin_path();
             ctx.move_to(bx, bar_y + 6.0);
             ctx.line_to(bx, h - 6.0);
             ctx.stroke();
 
-            let lc = if self.action_active {
-                Color::rgb(0.22, 0.45, 0.88)
-            } else {
-                Color::rgba(0.0, 0.0, 0.0, 0.60)
-            };
+            let lc = if self.action_active { v.accent } else { v.text_dim };
             ctx.set_fill_color(lc);
             if let Some(m) = ctx.measure_text(label) {
                 let lx = bx + (ACTION_BTN_W - m.width) * 0.5;
@@ -321,9 +319,9 @@ impl Widget for TabView {
         if self.sidebar_showing() {
             let div_x = self.divider_x();
             let div_color = if self.sidebar_dragging {
-                Color::rgba(0.22, 0.45, 0.88, 0.55)
+                Color::rgba(v.accent.r, v.accent.g, v.accent.b, 0.55)
             } else {
-                Color::rgba(0.0, 0.0, 0.0, 0.08)
+                v.separator
             };
             ctx.set_fill_color(div_color);
             ctx.begin_path();
@@ -333,9 +331,9 @@ impl Widget for TabView {
             // Grip dots
             if content_h > 30.0 {
                 let grip = if self.sidebar_dragging {
-                    Color::rgba(0.22, 0.45, 0.88, 0.8)
+                    Color::rgba(v.accent.r, v.accent.g, v.accent.b, 0.8)
                 } else {
-                    Color::rgba(0.0, 0.0, 0.0, 0.25)
+                    v.text_dim
                 };
                 ctx.set_fill_color(grip);
                 let cx = div_x + DIVIDER_W * 0.5;

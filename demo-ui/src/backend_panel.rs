@@ -3,13 +3,16 @@
 //!
 //! All text is rendered through `Label` children so that glyph rasterization
 //! is cached to offscreen framebuffers (backbuffer path).  For the live FPS
-//! display (which changes every frame) the label uses `buffered = false` since
-//! caching a value that changes every render cycle adds overhead with no
-//! benefit.
+//! display and screen-size label (which change every frame) the labels use
+//! `buffered = false` since caching a value that changes every render cycle
+//! adds overhead with no benefit.
 //!
 //! Contents mirror egui's backend panel:
+//! - Renderer / backend info
+//! - Screen size (live)
 //! - Run mode (Reactive / Continuous)
-//! - Frame rate display (last frame time)
+//! - Frame rate sparkline + mean CPU usage label
+//! - Inspector checkbox toggle
 //! - "Reset all state" button
 
 use std::cell::{Cell, RefCell};
@@ -17,13 +20,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    Color, DrawCtx, Event, EventResult,
+    Checkbox, Color, DrawCtx, Event, EventResult,
     FlexColumn, Font, Insets, Label, Rect, Separator,
     Size, SizedBox, Widget,
 };
 use agg_gui::widget::paint_subtree;
 use agg_gui::widgets::button::Button;
-use agg_gui::widgets::combo_box::ComboBox;
 
 // ── Run mode ──────────────────────────────────────────────────────────────────
 
@@ -46,7 +48,6 @@ impl FrameHistory {
         Self { times: vec![0.0; Self::CAP], head: 0, len: 0 }
     }
 
-    #[allow(dead_code)] // called by platform render loop once wired up
     pub fn push(&mut self, frame_ms: f32) {
         self.times[self.head] = frame_ms;
         self.head = (self.head + 1) % Self::CAP;
@@ -58,6 +59,7 @@ impl FrameHistory {
         self.times[..self.len].iter().sum::<f32>() / self.len as f32
     }
 
+    #[allow(dead_code)]
     pub fn fps(&self) -> f32 {
         let m = self.mean_ms();
         if m < 0.001 { 0.0 } else { 1000.0 / m }
@@ -100,7 +102,7 @@ impl Widget for Sparkline {
         let hist = self.history.borrow();
 
         // Background.
-        ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.15));
+        ctx.set_fill_color(v.track_bg);
         ctx.begin_path();
         ctx.rounded_rect(0.0, 0.0, w, h, 4.0);
         ctx.fill();
@@ -124,7 +126,7 @@ impl Widget for Sparkline {
         // 16.7 ms reference line (60 fps target).
         let ref_y = (1.0 - 16.7 / max_ms as f64) * (h - 4.0) + 2.0;
         if ref_y >= 2.0 && ref_y <= h - 2.0 {
-            ctx.set_stroke_color(Color::rgba(1.0, 0.6, 0.0, 0.5));
+            ctx.set_stroke_color(Color::rgba(1.0, 0.6, 0.0, 0.7)); // orange 60fps reference line
             ctx.set_line_width(1.0);
             ctx.begin_path();
             ctx.move_to(0.0, ref_y);
@@ -179,7 +181,7 @@ impl Widget for FpsLabel {
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let v = ctx.visuals();
         let hist = self.history.borrow();
-        let text = format!("{:.1} ms  ({:.0} fps)", hist.mean_ms(), hist.fps());
+        let text = format!("Mean CPU usage: {:.2} ms / frame", hist.mean_ms());
         drop(hist);
 
         // Update label text and color, then paint it.
@@ -190,6 +192,70 @@ impl Widget for FpsLabel {
         let lw = self.label.bounds().width;
         let lh = self.label.bounds().height;
         let ly = (h - lh) * 0.5;
+        self.label.set_bounds(Rect::new(0.0, ly, lw, lh));
+
+        ctx.save();
+        ctx.translate(12.0, ly);
+        paint_subtree(&mut self.label, ctx);
+        ctx.restore();
+    }
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
+// ── Screen size label ─────────────────────────────────────────────────────────
+
+/// Displays the current screen dimensions.  Uses `buffered = false` because
+/// the text changes on every resize event — direct rasterization is cheaper
+/// than rebuilding the cache on each change.
+struct ScreenSizeLabel {
+    bounds:      Rect,
+    children:    Vec<Box<dyn Widget>>,
+    screen_size: Rc<Cell<(u32, u32)>>,
+    /// Inner Label — not buffered (value changes on resize).
+    label:       Label,
+}
+
+impl ScreenSizeLabel {
+    fn new(font: Arc<Font>, screen_size: Rc<Cell<(u32, u32)>>) -> Self {
+        let mut label = Label::new("0 × 0", font)
+            .with_font_size(11.0);
+        label.buffered = false;
+        Self {
+            bounds: Rect::default(),
+            children: Vec::new(),
+            screen_size,
+            label,
+        }
+    }
+}
+
+impl Widget for ScreenSizeLabel {
+    fn type_name(&self) -> &'static str { "ScreenSizeLabel" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, 18.0);
+        let s = self.label.layout(Size::new(available.width, 18.0));
+        self.label.set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        Size::new(available.width, 18.0)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let v = ctx.visuals();
+        let (w, h) = self.screen_size.get();
+        let text = format!("{w} \u{00d7} {h}");
+
+        self.label.set_text(text);
+        self.label.set_color(v.text_dim);
+
+        let height = self.bounds.height;
+        let lw = self.label.bounds().width;
+        let lh = self.label.bounds().height;
+        let ly = (height - lh) * 0.5;
         self.label.set_bounds(Rect::new(0.0, ly, lw, lh));
 
         ctx.save();
@@ -312,14 +378,82 @@ impl Widget for RunModeRow {
     }
 }
 
+// ── Run mode description label ────────────────────────────────────────────────
+
+/// Dynamic label beneath the run-mode buttons.
+/// Reactive: "Only running UI code when there are animations or input."
+/// Continuous: "Repainting the UI each frame. FPS: X.X"
+struct RunModeDesc {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+    run_mode: Rc<Cell<RunMode>>,
+    history:  Rc<RefCell<FrameHistory>>,
+    label:    Label,
+}
+
+impl RunModeDesc {
+    fn new(font: Arc<Font>, run_mode: Rc<Cell<RunMode>>, history: Rc<RefCell<FrameHistory>>) -> Self {
+        let mut label = Label::new("", Arc::clone(&font)).with_font_size(10.0);
+        label.buffered = false;
+        Self { bounds: Rect::default(), children: Vec::new(), run_mode, history, label }
+    }
+}
+
+impl Widget for RunModeDesc {
+    fn type_name(&self) -> &'static str { "RunModeDesc" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, 30.0);
+        let s = self.label.layout(Size::new(available.width - 24.0, 30.0));
+        self.label.set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        Size::new(available.width, 30.0)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let v = ctx.visuals();
+        let text = match self.run_mode.get() {
+            RunMode::Reactive   => "Only running UI code when there are animations or input.".to_owned(),
+            RunMode::Continuous => {
+                let hist = self.history.borrow();
+                let fps = if hist.mean_ms() < 0.001 { 0.0 } else { 1000.0 / hist.mean_ms() };
+                format!("Repainting the UI each frame. FPS: {fps:.1}")
+            }
+        };
+        self.label.set_text(text);
+        self.label.set_color(v.text_dim);
+
+        let lh = self.label.bounds().height;
+        let ly = (self.bounds.height - lh) * 0.5;
+
+        ctx.save();
+        ctx.translate(12.0, ly);
+        agg_gui::widget::paint_subtree(&mut self.label, ctx);
+        ctx.restore();
+    }
+
+    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
+}
+
 // ── Backend panel ─────────────────────────────────────────────────────────────
 
 /// Build the backend panel widget (240 px wide).
+///
+/// Mirrors egui's Backend panel layout: renderer/backend info, screen size,
+/// run mode selector, FPS sparkline + mean CPU usage, inspector checkbox,
+/// and a reset button.
 pub fn build_backend_panel(
-    font:        Arc<Font>,
-    run_mode:    Rc<Cell<RunMode>>,
-    history:     Rc<RefCell<FrameHistory>>,
-    on_reset:    impl FnMut() + 'static,
+    font:           Arc<Font>,
+    run_mode:       Rc<Cell<RunMode>>,
+    history:        Rc<RefCell<FrameHistory>>,
+    screen_size:    Rc<Cell<(u32, u32)>>,
+    show_inspector: Rc<Cell<bool>>,
+    renderer_name:  &'static str,
+    backend_name:   &'static str,
+    on_reset:       impl FnMut() + 'static,
 ) -> Box<dyn Widget> {
     let mut col = FlexColumn::new()
         .with_gap(0.0)
@@ -334,62 +468,78 @@ pub fn build_backend_panel(
             .with_margin(Insets::from_sides(12.0, 12.0, 4.0, 4.0))
     ), 0.0);
     col.push(Box::new(Separator::horizontal()), 0.0);
+    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
+
+    // ── Renderer / backend info ────────────────────────────────────────────────
+    let running_text = format!("agg-gui running inside {backend_name}.");
+    col.push(Box::new(
+        Label::new(running_text, Arc::clone(&font))
+            .with_font_size(11.0)
+            .with_margin(Insets::from_sides(12.0, 12.0, 2.0, 2.0))
+    ), 0.0);
+    let renderer_text = format!("Renderer: {renderer_name}");
+    col.push(Box::new(
+        Label::new(renderer_text, Arc::clone(&font))
+            .with_font_size(11.0)
+            .with_margin(Insets::from_sides(12.0, 12.0, 2.0, 2.0))
+    ), 0.0);
+    let backend_text = format!("Backend: {backend_name}");
+    col.push(Box::new(
+        Label::new(backend_text, Arc::clone(&font))
+            .with_font_size(11.0)
+            .with_margin(Insets::from_sides(12.0, 12.0, 2.0, 2.0))
+    ), 0.0);
+
+    // ── Screen size (live) ─────────────────────────────────────────────────────
+    col.push(Box::new(ScreenSizeLabel::new(Arc::clone(&font), screen_size)), 0.0);
+    col.push(Box::new(Separator::horizontal()), 0.0);
     col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
 
-    // ── FPS sparkline ─────────────────────────────────────────────────────────
+    // ── Run mode toggle ───────────────────────────────────────────────────────
     col.push(Box::new(
-        Label::new("Frame time", Arc::clone(&font))
+        Label::new("Mode", Arc::clone(&font))
             .with_font_size(11.0)
             .with_margin(Insets::from_sides(12.0, 12.0, 2.0, 0.0))
     ), 0.0);
+
+    col.push(Box::new(RunModeRow::new(Arc::clone(&font), Rc::clone(&run_mode))), 0.0);
+
+    // Dynamic description: "Only running UI code..." (Reactive) or "FPS: X.X" (Continuous).
+    col.push(Box::new(RunModeDesc::new(Arc::clone(&font), Rc::clone(&run_mode), Rc::clone(&history))), 0.0);
+
+    col.push(Box::new(SizedBox::new().with_height(4.0)), 0.0);
+    col.push(Box::new(Separator::horizontal()), 0.0);
+    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
+
+    // ── Mean CPU usage label (primary display, matches egui reference) ────────
+    col.push(Box::new(FpsLabel::new(Arc::clone(&font), Rc::clone(&history))), 0.0);
+
+    // ── FPS sparkline (CPU history graph) ────────────────────────────────────
     col.push(Box::new(
         SizedBox::new()
-            .with_margin(Insets::from_sides(12.0, 12.0, 4.0, 4.0))
+            .with_margin(Insets::from_sides(12.0, 12.0, 4.0, 8.0))
             .with_child(Box::new(Sparkline {
                 bounds: Rect::default(), children: Vec::new(),
                 history: Rc::clone(&history),
             }))
     ), 0.0);
 
-    // ── FPS label (live, non-buffered) ────────────────────────────────────────
-    col.push(Box::new(FpsLabel::new(Arc::clone(&font), Rc::clone(&history))), 0.0);
-
     col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
     col.push(Box::new(Separator::horizontal()), 0.0);
     col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
 
-    // ── Run mode toggle ───────────────────────────────────────────────────────
+    // ── agg-gui windows section (Inspector checkbox) ───────────────────────────
     col.push(Box::new(
-        Label::new("Run mode", Arc::clone(&font))
+        Label::new("agg-gui windows:", Arc::clone(&font))
             .with_font_size(11.0)
             .with_margin(Insets::from_sides(12.0, 12.0, 2.0, 0.0))
     ), 0.0);
 
-    col.push(Box::new(RunModeRow::new(Arc::clone(&font), run_mode)), 0.0);
-
-    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
-    col.push(Box::new(Separator::horizontal()), 0.0);
-    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
-
-    // ── Font selector ─────────────────────────────────────────────────────────
     col.push(Box::new(
-        Label::new("Font", Arc::clone(&font))
-            .with_font_size(11.0)
-            .with_margin(Insets::from_sides(12.0, 12.0, 2.0, 0.0))
-    ), 0.0);
-
-    let font_options = vec![
-        "Cascadia Code (default)".to_string(),
-        "System monospace".to_string(),
-        "System proportional".to_string(),
-    ];
-    col.push(Box::new(
-        SizedBox::new()
-            .with_margin(Insets::from_sides(12.0, 12.0, 4.0, 4.0))
-            .with_child(Box::new(
-                ComboBox::new(font_options, 0, Arc::clone(&font))
-                    .on_change(|_| { /* Font switching requires restart */ })
-            ))
+        Checkbox::new("Inspector", Arc::clone(&font), show_inspector.get())
+            .with_font_size(13.0)
+            .with_state_cell(Rc::clone(&show_inspector))
+            .with_margin(Insets::from_sides(10.0, 0.0, 1.0, 1.0))
     ), 0.0);
 
     col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
@@ -409,6 +559,11 @@ pub fn build_backend_panel(
     ), 0.0);
 
     col.push(Box::new(SizedBox::new().with_height(12.0)), 0.0);
+
+    // Flex spacer fills any remaining vertical space so the FlexColumn always
+    // occupies the full panel height — this ensures with_panel_bg() paints
+    // panel_fill over the entire panel area rather than stopping at content height.
+    col.push(Box::new(SizedBox::new()), 1.0);
 
     Box::new(col)
 }

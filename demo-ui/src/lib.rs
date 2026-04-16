@@ -11,8 +11,12 @@
 mod backend_panel;
 mod rendering_test;
 mod sidebar;
+mod state;
 mod top_bar;
 mod windows;
+
+pub use state::{SavedState, StateAccessor, WindowState};
+pub use backend_panel::FrameHistory;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -25,9 +29,9 @@ use agg_gui::{
     ThemePreference,
 };
 
-use backend_panel::{FrameHistory, RunMode, build_backend_panel};
+use backend_panel::{RunMode, build_backend_panel};
 use sidebar::{SidebarEntry, build_sidebar};
-use top_bar::{AppTab, build_top_bar_inner};
+use top_bar::build_top_bar_inner;
 
 // ── Canvas background ──────────────────────────────────────────────────────────
 
@@ -105,39 +109,6 @@ impl Widget for TopMenuBar {
         ctx.fill();
     }
 
-    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
-}
-
-// ── Tab pane switcher — see TabPane below ─────────────────────────────────────
-// Tab switching is handled by individual TabPane wrappers in a Stack, each
-// returning is_visible() == false when their tab is not active.
-
-/// Wrapper that hides a widget when its tab is not active.
-struct TabPane {
-    bounds:   Rect,
-    children: Vec<Box<dyn Widget>>,
-    tab:      Rc<Cell<AppTab>>,
-    my_tab:   AppTab,
-}
-
-impl Widget for TabPane {
-    fn type_name(&self) -> &'static str { "TabPane" }
-    fn bounds(&self) -> Rect { self.bounds }
-    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
-    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
-    fn is_visible(&self) -> bool { self.tab.get() == self.my_tab }
-
-    fn layout(&mut self, available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
-        if let Some(child) = self.children.first_mut() {
-            child.layout(available);
-            child.set_bounds(Rect::new(0.0, 0.0, available.width, available.height));
-        }
-        available
-    }
-
-    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }
 
@@ -270,6 +241,7 @@ const DEMOS: &[DemoSpec] = &[
     DemoSpec { title: "Painting",              label: "Painting",              open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Panels",                label: "Panels",                open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Popups",                label: "Popups",                open: false, win_w: WIN_W, win_h: WIN_H },
+    DemoSpec { title: "Rendering Test",        label: "Rendering Test",        open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Scene",                 label: "Scene",                 open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Screenshot",            label: "Screenshot",            open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Scrolling",             label: "Scrolling",             open: false, win_w: WIN_W, win_h: WIN_H },
@@ -282,7 +254,7 @@ const DEMOS: &[DemoSpec] = &[
     DemoSpec { title: "Undo Redo",             label: "Undo Redo",             open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Widget Gallery",        label: "Widget Gallery",        open: true,  win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "Window Options",        label: "Window Options",        open: false, win_w: WIN_W, win_h: WIN_H },
-    DemoSpec { title: "3D Cube",               label: "3D Cube",               open: true,  win_w: 300.0, win_h: 260.0 },
+    DemoSpec { title: "3D Cube",               label: "3D Cube",               open: false, win_w: 300.0, win_h: 260.0 },
 ];
 
 // All 11 egui test windows — matching egui's Tests section exactly.
@@ -301,26 +273,36 @@ const TESTS: &[DemoSpec] = &[
 ];
 
 // ── Index of the 3D Cube in DEMOS (computed once) ─────────────────────────────
-const CUBE_IDX: usize = 28; // must match position of "3D Cube" in DEMOS
+const CUBE_IDX: usize = 29; // must match position of "3D Cube" in DEMOS (shifted by "Rendering Test")
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
+/// Handles returned by `build_demo_ui` — shared cells used by the platform harness.
+pub struct DemoHandles {
+    pub show_inspector:  Rc<Cell<bool>>,
+    pub inspector_nodes: Rc<RefCell<Vec<InspectorNode>>>,
+    pub hovered_bounds:  Rc<RefCell<Option<Rect>>>,
+    pub cube_visible:    Rc<Cell<bool>>,
+    pub screen_size:     Rc<Cell<(u32, u32)>>,
+    pub frame_history:   Rc<RefCell<FrameHistory>>,
+    pub state:           StateAccessor,
+}
+
 /// Build the full demo `App`.
 ///
-/// Returns:
-/// - `App` — the root widget tree
-/// - `show_inspector` — shared cell toggling the inspector overlay
-/// - `inspector_nodes` — snapshot updated each frame when inspector is shown
-/// - `hovered_bounds` — hovered-widget rect for the inspector overlay
-/// - `cube_visible` — mirrors the 3D Cube window's open state; used by the
-///   render loop to switch between `Poll` (animate) and `Wait` (idle)
+/// Returns `(App, DemoHandles)`. `initial_state` restores window positions and
+/// open flags from a previous session; pass `None` on first run.
 pub fn build_demo_ui(
-    font:        Arc<Font>,
-    cube_widget: Box<dyn Widget>,
-) -> (App, Rc<Cell<bool>>, Rc<RefCell<Vec<InspectorNode>>>, Rc<RefCell<Option<Rect>>>, Rc<Cell<bool>>) {
+    font:           Arc<Font>,
+    cube_widget:    Box<dyn Widget>,
+    renderer_name:  &'static str,
+    backend_name:   &'static str,
+    initial_state:  Option<SavedState>,
+) -> (App, DemoHandles) {
     let show_inspector  = Rc::new(Cell::new(false));
     let inspector_nodes = Rc::new(RefCell::new(Vec::<InspectorNode>::new()));
     let hovered_bounds  = Rc::new(RefCell::new(None::<Rect>));
+    let screen_size     = Rc::new(Cell::new((0u32, 0u32)));
 
     // Theme preference — detect OS color scheme so we start in the right mode.
     let initial_theme = top_bar::detect_system_theme();
@@ -330,8 +312,7 @@ pub fn build_demo_ui(
     }
     let theme_pref = Rc::new(Cell::new(initial_theme));
 
-    // ── App tab + backend panel visibility ─────────────────────────────────────
-    let app_tab      = Rc::new(Cell::new(AppTab::Demos));
+    // ── Backend panel visibility ───────────────────────────────────────────────
     let show_backend = Rc::new(Cell::new(false));
 
     // ── Backend panel state ────────────────────────────────────────────────────
@@ -339,14 +320,29 @@ pub fn build_demo_ui(
     let frame_history = Rc::new(RefCell::new(FrameHistory::new()));
 
     // ── About window open-state cell ──────────────────────────────────────────
-    let about_open = Rc::new(Cell::new(false));
+    let about_initially_open = initial_state.as_ref()
+        .map(|st| st.about.open)
+        .unwrap_or(true);
+    let about_open = Rc::new(Cell::new(about_initially_open));
 
     // ── Sidebar entries ────────────────────────────────────────────────────────
-    let demo_entries: Vec<SidebarEntry> = DEMOS.iter()
-        .map(|s| SidebarEntry::new(s.label, s.open))
+    let demo_entries: Vec<SidebarEntry> = DEMOS.iter().enumerate()
+        .map(|(i, s)| {
+            let open = initial_state.as_ref()
+                .and_then(|st| st.demos.get(i))
+                .map(|ws| ws.open)
+                .unwrap_or(s.open);
+            SidebarEntry::new(s.label, open)
+        })
         .collect();
-    let test_entries: Vec<SidebarEntry> = TESTS.iter()
-        .map(|s| SidebarEntry::new(s.label, s.open))
+    let test_entries: Vec<SidebarEntry> = TESTS.iter().enumerate()
+        .map(|(i, s)| {
+            let open = initial_state.as_ref()
+                .and_then(|st| st.tests.get(i))
+                .map(|ws| ws.open)
+                .unwrap_or(s.open);
+            SidebarEntry::new(s.label, open)
+        })
         .collect();
 
     // cube_visible shares the same cell as the 3D Cube sidebar entry.
@@ -357,6 +353,15 @@ pub fn build_demo_ui(
     let reset_cells: Vec<Rc<Cell<Option<Rect>>>> = (0..all_specs_count)
         .map(|_| Rc::new(Cell::new(None)))
         .collect();
+
+    // ── Position output cells — written each layout pass for persistence ───────
+    let demo_pos_cells: Vec<Rc<Cell<Rect>>> = (0..DEMOS.len())
+        .map(|_| Rc::new(Cell::new(Rect::default())))
+        .collect();
+    let test_pos_cells: Vec<Rc<Cell<Rect>>> = (0..TESTS.len())
+        .map(|_| Rc::new(Cell::new(Rect::default())))
+        .collect();
+    let about_pos_cell: Rc<Cell<Rect>> = Rc::new(Cell::new(Rect::default()));
 
     // Default canvas height used by tile_rect. 720px is a reasonable fallback;
     // it will look correct on most 1080p+ screens after accounting for the OS bar.
@@ -404,7 +409,10 @@ pub fn build_demo_ui(
     for (i, spec) in DEMOS.iter().enumerate() {
         let open_cell  = Rc::clone(&demo_entries[i].open);
         let reset_cell = Rc::clone(&reset_cells[i]);
-        let initial    = tile_rect(i, default_canvas_h, spec.win_w, spec.win_h);
+        let initial = initial_state.as_ref()
+            .and_then(|st| st.demos.get(i))
+            .map(|ws| ws.to_rect())
+            .unwrap_or_else(|| tile_rect(i, default_canvas_h, spec.win_w, spec.win_h));
 
         let content: Box<dyn Widget> = if i == CUBE_IDX {
             // Cube content requires the platform-provided cube_widget.
@@ -415,9 +423,10 @@ pub fn build_demo_ui(
         };
 
         let win = Window::new(spec.title, Arc::clone(&font), content)
-            .with_bounds(Rect::new(initial.x, initial.y, spec.win_w, spec.win_h))
+            .with_bounds(Rect::new(initial.x, initial.y, initial.width, initial.height))
             .with_visible_cell(open_cell)
-            .with_reset_cell(reset_cell);
+            .with_reset_cell(reset_cell)
+            .with_position_cell(Rc::clone(&demo_pos_cells[i]));
         canvas = canvas.add(Box::new(win));
     }
 
@@ -427,12 +436,16 @@ pub fn build_demo_ui(
         let open_cell  = Rc::clone(&demo_entries[CUBE_IDX].open);
         let reset_cell = Rc::clone(&reset_cells[CUBE_IDX]);
         let spec       = &DEMOS[CUBE_IDX];
-        let initial    = tile_rect(CUBE_IDX, default_canvas_h, spec.win_w, spec.win_h);
+        let initial = initial_state.as_ref()
+            .and_then(|st| st.demos.get(CUBE_IDX))
+            .map(|ws| ws.to_rect())
+            .unwrap_or_else(|| tile_rect(CUBE_IDX, default_canvas_h, spec.win_w, spec.win_h));
         let content    = windows::cube_content(Arc::clone(&font), cube_widget);
         let win = Window::new(spec.title, Arc::clone(&font), content)
-            .with_bounds(Rect::new(initial.x, initial.y, spec.win_w, spec.win_h))
+            .with_bounds(Rect::new(initial.x, initial.y, initial.width, initial.height))
             .with_visible_cell(open_cell)
-            .with_reset_cell(reset_cell);
+            .with_reset_cell(reset_cell)
+            .with_position_cell(Rc::clone(&demo_pos_cells[CUBE_IDX]));
         // Replace index 1 + CUBE_IDX (offset by the CanvasBg at [0]).
         canvas.children_mut()[1 + CUBE_IDX] = Box::new(win);
     }
@@ -442,7 +455,10 @@ pub fn build_demo_ui(
         let total_i    = DEMOS.len() + i;
         let open_cell  = Rc::clone(&test_entries[i].open);
         let reset_cell = Rc::clone(&reset_cells[total_i]);
-        let initial    = tile_rect(total_i, default_canvas_h, spec.win_w, spec.win_h);
+        let initial = initial_state.as_ref()
+            .and_then(|st| st.tests.get(i))
+            .map(|ws| ws.to_rect())
+            .unwrap_or_else(|| tile_rect(total_i, default_canvas_h, spec.win_w, spec.win_h));
         let content: Box<dyn Widget> = match spec.title {
             "Clipboard Test"      => windows::clipboard_test(Arc::clone(&font)),
             "Cursor Test"         => windows::cursor_test(Arc::clone(&font)),
@@ -458,17 +474,22 @@ pub fn build_demo_ui(
             _                     => windows::coming_soon(),
         };
         let win = Window::new(spec.title, Arc::clone(&font), content)
-            .with_bounds(Rect::new(initial.x, initial.y, spec.win_w, spec.win_h))
+            .with_bounds(Rect::new(initial.x, initial.y, initial.width, initial.height))
             .with_visible_cell(open_cell)
-            .with_reset_cell(reset_cell);
+            .with_reset_cell(reset_cell)
+            .with_position_cell(Rc::clone(&test_pos_cells[i]));
         canvas = canvas.add(Box::new(win));
     }
 
     // ── About window ──────────────────────────────────────────────────────────
     {
+        let about_initial = initial_state.as_ref()
+            .map(|st| st.about.to_rect())
+            .unwrap_or_else(|| Rect::new(80.0, 80.0, 440.0, 500.0));
         let about_win = Window::new("About agg-gui", Arc::clone(&font), windows::about(Arc::clone(&font)))
-            .with_bounds(Rect::new(80.0, 80.0, 440.0, 500.0))
-            .with_visible_cell(Rc::clone(&about_open));
+            .with_bounds(about_initial)
+            .with_visible_cell(Rc::clone(&about_open))
+            .with_position_cell(Rc::clone(&about_pos_cell));
         canvas = canvas.add(Box::new(about_win));
     }
 
@@ -494,7 +515,11 @@ pub fn build_demo_ui(
         Arc::clone(&font),
         Rc::clone(&run_mode),
         Rc::clone(&frame_history),
-        || {}, // reset callback placeholder
+        Rc::clone(&screen_size),
+        Rc::clone(&show_inspector),
+        renderer_name,
+        backend_name,
+        || {},
     );
     let backend_pane = BackendPane {
         bounds:   Rect::default(),
@@ -502,46 +527,25 @@ pub fn build_demo_ui(
         show:     Rc::clone(&show_backend),
     };
 
-    // ── Demos tab body: [backend panel] canvas [sidebar] ──────────────────────
+    // ── Demos body: [backend panel] [canvas] [sidebar] — sidebar on RIGHT ─────
     let demos_body = FlexRow::new()
         .with_gap(0.0)
         .add(Box::new(backend_pane))
         .add_flex(Box::new(main_area), 1.0)
         .add(Box::new(sidebar_panel));
 
-    let demos_pane = TabPane {
-        bounds:   Rect::default(),
-        children: vec![Box::new(demos_body)],
-        tab:      Rc::clone(&app_tab),
-        my_tab:   AppTab::Demos,
-    };
-
-    // ── Rendering test tab body ────────────────────────────────────────────────
-    let render_pane = TabPane {
-        bounds:   Rect::default(),
-        children: vec![Box::new(rendering_test::RenderingTestView::new(Arc::clone(&font)))],
-        tab:      Rc::clone(&app_tab),
-        my_tab:   AppTab::RenderingTest,
-    };
-
-    // ── Body: stack of tab panes (only the active one is visible + hittable) ──
-    let body = Stack::new()
-        .add(Box::new(demos_pane))
-        .add(Box::new(render_pane));
-
     // ── Top bar inner row ─────────────────────────────────────────────────────
     let top_bar_inner = build_top_bar_inner(
         Arc::clone(&font),
-        Rc::clone(&app_tab),
         Rc::clone(&show_backend),
         Rc::clone(&theme_pref),
     );
 
-    // ── Root: top menu bar above the body ──────────────────────────────────────
+    // ── Root: top menu bar above the demos body ────────────────────────────────
     let root = FlexColumn::new()
         .with_gap(0.0)
         .add(Box::new(TopMenuBar::new(top_bar_inner)))
-        .add_flex(Box::new(body), 1.0);
+        .add_flex(Box::new(demos_body), 1.0);
 
     let mut app = App::new(Box::new(root));
 
@@ -582,7 +586,26 @@ pub fn build_demo_ui(
         }
     });
 
-    (app, show_inspector, inspector_nodes, hovered_bounds, cube_visible)
+    // ── StateAccessor — collect all shared cells for the platform harness ─────
+    let state_accessor = StateAccessor {
+        demo_open: demo_entries.iter().map(|e| Rc::clone(&e.open)).collect(),
+        demo_pos:  demo_pos_cells,
+        test_open: test_entries.iter().map(|e| Rc::clone(&e.open)).collect(),
+        test_pos:  test_pos_cells,
+        about_open: Rc::clone(&about_open),
+        about_pos:  about_pos_cell,
+    };
+
+    let handles = DemoHandles {
+        show_inspector,
+        inspector_nodes,
+        hovered_bounds,
+        cube_visible,
+        screen_size,
+        frame_history,
+        state: state_accessor,
+    };
+    (app, handles)
 }
 
 // ── Demo content dispatcher ────────────────────────────────────────────────────
@@ -614,6 +637,7 @@ fn build_demo_content(title: &str, font: Arc<Font>) -> Box<dyn Widget> {
         "Scrolling"             => windows::scrolling_demo(font),
         "Panels"                => windows::panels_demo(font),
         "Popups"                => windows::popups_demo(font),
+        "Rendering Test"        => rendering_test::rendering_test_view(font),
         "Scene"                 => windows::scene_demo(font),
         "Screenshot"            => windows::screenshot_demo(font),
         // text_demos.rs

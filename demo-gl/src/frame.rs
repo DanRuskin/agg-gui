@@ -11,19 +11,18 @@
 //! ```text
 //! begin_frame(gl, w, h)
 //! sync_inspector(app, show, nodes, hovered_bounds)
-//! render_app_frame(gl_ctx, app, font, w, h, frame_ms, hovered)
+//! render_app_frame(gl_ctx, app, w, h, frame_ms, hovered)
 //! // ── platform-specific ──
 //! cube.draw_gl(...)
 //! ```
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use glow::HasContext;
 
-use agg_gui::{App, Font, InspectorNode, Rect, Size};
-use crate::{GlGfxCtx, draw_hover_overlay, draw_status_overlay};
+use agg_gui::{App, InspectorNode, Rect, Size};
+use crate::{GlGfxCtx, draw_hover_overlay};
 
 /// Clear the GL framebuffer and configure blend state for a new frame.
 ///
@@ -81,22 +80,20 @@ pub fn sync_inspector(
     }
 }
 
-/// Reset `ctx`, lay out and paint `app`, then draw the inspector hover overlay
-/// and the status bar.
+/// Reset `ctx`, lay out and paint `app`, then draw the inspector hover overlay.
 ///
 /// The caller must draw any platform-specific content (e.g. the rotating 3D
 /// cube) *after* this function returns so it appears on top.
 ///
-/// `frame_ms` is the render time of the **previous** frame; it is displayed in
-/// the status overlay so the readout does not include its own drawing cost.
-/// Pass `hovered_bounds = None` when the inspector is hidden.
+/// `frame_ms` is the render time of the **previous** frame, available to the
+/// backend panel display.  Pass `hovered_bounds = None` when the inspector is
+/// hidden.
 pub fn render_app_frame(
     ctx:            &mut GlGfxCtx,
     app:            &mut App,
-    font:           Arc<Font>,
     width:          u32,
     height:         u32,
-    frame_ms:       f64,
+    _frame_ms:      f64,
     hovered_bounds: Option<Rect>,
 ) {
     ctx.reset(width as f32, height as f32);
@@ -107,5 +104,4 @@ pub fn render_app_frame(
     if let Some(rect) = hovered_bounds {
         draw_hover_overlay(ctx, rect);
     }
-    draw_status_overlay(ctx, font, width, height, frame_ms);
 }

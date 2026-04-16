@@ -1,5 +1,6 @@
 pub mod button;
 pub mod checkbox;
+pub mod collapsing_header;
 pub mod combo_box;
 pub mod container;
 pub mod drag_value;
@@ -24,6 +25,7 @@ pub mod window;
 
 pub use button::Button;
 pub use checkbox::Checkbox;
+pub use collapsing_header::CollapsingHeader;
 pub use combo_box::ComboBox;
 pub use container::Container;
 pub use drag_value::DragValue;

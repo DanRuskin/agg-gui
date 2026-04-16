@@ -46,8 +46,14 @@ thread_local! {
     static INSPECTOR_NODES: RefCell<Option<Rc<RefCell<Vec<InspectorNode>>>>>    = RefCell::new(None);
     /// Shared hover-bounds handle — written by the inspector, read by render().
     static HOVERED_BOUNDS: RefCell<Option<Rc<RefCell<Option<Rect>>>>>           = RefCell::new(None);
-    /// Font reference kept for the status overlay.
-    static FONT: RefCell<Option<Arc<Font>>>                                      = RefCell::new(None);
+    /// Current canvas dimensions — written each frame, read by the backend panel.
+    static SCREEN_SIZE: RefCell<Option<Rc<Cell<(u32, u32)>>>>                   = RefCell::new(None);
+    /// Accessor for reading window open/position state for localStorage persistence.
+    static STATE_ACCESSOR: RefCell<Option<demo_ui::StateAccessor>>                              = RefCell::new(None);
+    /// Shared frame history — written each frame so the backend panel shows live CPU usage.
+    static FRAME_HISTORY: RefCell<Option<Rc<RefCell<demo_ui::FrameHistory>>>>                   = RefCell::new(None);
+    /// Frame counter used to throttle localStorage saves.
+    static FRAME_COUNT: Cell<u32> = Cell::new(0);
 }
 
 /// Initialise panic hook so Rust panics appear in the browser console.
@@ -56,16 +62,43 @@ pub fn wasm_start() {
     console_error_panic_hook::set_once();
 }
 
+// ---------------------------------------------------------------------------
+// State persistence helpers (localStorage)
+// ---------------------------------------------------------------------------
+
+fn load_state_wasm() -> Option<demo_ui::SavedState> {
+    let storage = web_sys::window()?.local_storage().ok()??;
+    let s = storage.get_item("agg-gui-demo-state").ok()??;
+    demo_ui::SavedState::deserialize(&s)
+}
+
+fn save_state_wasm(accessor: &demo_ui::StateAccessor) {
+    if let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    {
+        let state = accessor.current_state();
+        let _ = storage.set_item("agg-gui-demo-state", &state.serialize());
+    }
+}
+
 fn ensure_demo_app() {
     DEMO_APP.with(|cell| {
         if cell.borrow().is_none() {
             let font = make_font();
-            let (app, show_inspector, inspector_nodes, hovered_bounds, _cube_visible) =
-                demo_ui::build_demo_ui(Arc::clone(&font), Box::new(GlCubeWidget::new()));
-            SHOW_INSPECTOR.with(|c| *c.borrow_mut() = Some(Rc::clone(&show_inspector)));
-            INSPECTOR_NODES.with(|c| *c.borrow_mut() = Some(Rc::clone(&inspector_nodes)));
-            HOVERED_BOUNDS.with(|c| *c.borrow_mut() = Some(Rc::clone(&hovered_bounds)));
-            FONT.with(|c| *c.borrow_mut() = Some(font));
+            let initial_state = load_state_wasm();
+            let (app, handles) = demo_ui::build_demo_ui(
+                Arc::clone(&font),
+                Box::new(GlCubeWidget::new()),
+                "WebGL2",
+                "Browser WebGL2",
+                initial_state,
+            );
+            SHOW_INSPECTOR.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.show_inspector)));
+            INSPECTOR_NODES.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.inspector_nodes)));
+            HOVERED_BOUNDS.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.hovered_bounds)));
+            SCREEN_SIZE.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screen_size)));
+            FRAME_HISTORY.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.frame_history)));
+            STATE_ACCESSOR.with(|c| *c.borrow_mut() = Some(handles.state));
             *cell.borrow_mut() = Some(app);
         }
     });
@@ -155,7 +188,14 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
         }
     });
 
-    // ── 3. Paint widget tree (cube draws inline via DrawCtx::gl_paint) ──────
+    // ── 3. Update screen size for the backend panel ─────────────────────────
+    SCREEN_SIZE.with(|c| {
+        if let Some(ref rc) = *c.borrow() {
+            rc.set((width, height));
+        }
+    });
+
+    // ── 4. Paint widget tree (cube draws inline via DrawCtx::gl_paint) ──────
     CUBE_SCREEN_RECT.with(|r| r.set(agg_gui::Rect::default()));
     GL_CTX.with(|ctx_cell| {
         let mut ctx_borrow = ctx_cell.borrow_mut();
@@ -163,18 +203,34 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
             let hovered = HOVERED_BOUNDS.with(|c| {
                 c.borrow().as_ref().and_then(|rc| *rc.borrow())
             });
-            let font = FONT.with(|c| c.borrow().as_ref().map(Arc::clone));
-
-            if let Some(font) = font {
-                DEMO_APP.with(|app_cell| {
-                    let mut app_borrow = app_cell.borrow_mut();
-                    if let Some(app) = app_borrow.as_mut() {
-                        render_app_frame(gl_ctx, app, font, width, height, frame_ms, hovered);
-                    }
-                });
-            }
+            DEMO_APP.with(|app_cell| {
+                let mut app_borrow = app_cell.borrow_mut();
+                if let Some(app) = app_borrow.as_mut() {
+                    render_app_frame(gl_ctx, app, width, height, frame_ms, hovered);
+                }
+            });
         }
     });
+
+    // ── 5. Push frame time to history so backend panel shows live CPU usage ───
+    if frame_ms > 0.0 {
+        FRAME_HISTORY.with(|c| {
+            if let Some(ref rc) = *c.borrow() {
+                rc.borrow_mut().push(frame_ms as f32);
+            }
+        });
+    }
+
+    // ── 7. Periodically save window layout to localStorage ──────────────────
+    let fc = FRAME_COUNT.get() + 1;
+    FRAME_COUNT.set(fc);
+    if fc % 120 == 0 {
+        STATE_ACCESSOR.with(|c| {
+            if let Some(ref acc) = *c.borrow() {
+                save_state_wasm(acc);
+            }
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
