@@ -127,7 +127,8 @@ impl Widget for TopMenuBar {
         ctx.begin_path();
         ctx.rect(0.0, 0.0, self.bounds.width, self.bounds.height);
         ctx.fill();
-        // Bottom separator line.
+        // Bottom separator line — match the `Separator` widget colour so
+        // horizontal and vertical splits share the same tone.
         ctx.set_fill_color(v.separator);
         ctx.begin_path();
         ctx.rect(0.0, self.bounds.height - 1.0, self.bounds.width, 1.0);
@@ -171,13 +172,15 @@ impl Widget for BackendPane {
         Size::new(w, available.height)
     }
 
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+    fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
         if !self.show.get() { return; }
-        // 1-px vertical separator line on the right edge.  Uses `text_dim`
-        // (font color at 50% alpha) so the edge tracks the theme and stays
-        // soft instead of high-contrast.
+        // 1-px vertical separator line on the right edge, matched to the
+        // `Separator` widget colour so horizontal and vertical splits
+        // share the same tone.  Drawn in `paint_overlay` so it sits above
+        // the child `FlexColumn`'s panel_bg fill.
         let v = ctx.visuals();
-        ctx.set_fill_color(v.text_dim);
+        ctx.set_fill_color(v.separator);
         ctx.begin_path();
         ctx.rect(self.bounds.width - 1.0, 0.0, 1.0, self.bounds.height);
         ctx.fill();
@@ -220,10 +223,13 @@ impl Widget for SidebarPane {
         Size::new(w, available.height)
     }
 
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        // Uses text_dim for the same theme-aware, low-contrast edge as BackendPane.
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+    fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        // Uses `separator` to match the `Separator` widget tone used by
+        // horizontal splits elsewhere.  Drawn in `paint_overlay` so the
+        // sidebar's panel_bg fill can't cover it.
         let v = ctx.visuals();
-        ctx.set_fill_color(v.text_dim);
+        ctx.set_fill_color(v.separator);
         ctx.begin_path();
         ctx.rect(0.0, 0.0, 1.0, self.bounds.height);
         ctx.fill();

@@ -43,7 +43,11 @@ use crate::{GlGfxCtx, draw_hover_overlay};
 pub fn begin_frame(gl: &glow::Context, width: u32, height: u32) {
     unsafe {
         gl.viewport(0, 0, width as i32, height as i32);
-        gl.clear_color(0.1, 0.1, 0.1, 1.0);
+        // Clear to the active theme's `bg_color` so any area the widget tree
+        // doesn't paint over shows the theme background (important for
+        // translucent separators / edges that composite over this colour).
+        let bg = agg_gui::current_visuals().bg_color;
+        gl.clear_color(bg.r, bg.g, bg.b, 1.0);
         gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
         gl.enable(glow::BLEND);
         // RGB: standard alpha compositing.

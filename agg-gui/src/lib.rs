@@ -24,6 +24,7 @@
 //! This is a non-negotiable architectural invariant — see the dev plan for
 //! the rationale.
 
+pub mod app_state;
 pub mod color;
 pub mod cursor;
 pub mod device_scale;
@@ -37,12 +38,15 @@ pub mod geometry;
 pub mod gfx_ctx;
 pub mod gl_renderer;
 pub mod layout_props;
+pub mod screenshot;
 pub mod text;
 pub mod theme;
 pub mod widget;
 pub mod widgets;
 
 // Re-export the most commonly used types at the crate root.
+pub use app_state::{OsWindowHandle, OsWindowState};
+pub use screenshot::ScreenshotHandle;
 pub use color::Color;
 pub use cursor::{CursorIcon, current_cursor_icon, set_cursor_icon, reset_cursor_icon};
 pub use device_scale::{device_scale, set_device_scale};
@@ -57,7 +61,7 @@ pub use text::{Font, TextMetrics, measure_text_metrics};
 pub use undo::{DoUndoActions, UndoBuffer, UndoRedoCommand};
 pub use widget::{App, InspectorNode, Widget, collect_inspector_nodes};
 pub use widgets::{Button, Checkbox, CollapsingHeader, ComboBox, Container, DragValue, FlexColumn, FlexRow,
-                  Hyperlink, InspectorPanel,
+                  Hyperlink, ImageView, InspectorPanel,
                   Label, LabelAlign, MarkdownView, NodeIcon, Padding, ProgressBar, RadioGroup,
                   ScrollBarColor, ScrollBarKind, ScrollBarStyle, ScrollBarVisibility,
                   ScrollView, Separator, SizedBox, Slider, Spacer, Splitter, Stack,
