@@ -204,12 +204,17 @@ pub fn system_view(font: Arc<Font>) -> Box<dyn Widget> {
     }
     col.push(Box::new(Separator::horizontal()), 0.0);
 
-    // ── Font size scale ─────────────────────────────────────────────────
-    col.push(heading("Text size"), 0.0);
+    // ── Point size ──────────────────────────────────────────────────────
+    // Displayed as actual point size (base 14pt × scale).  Internally the
+    // system still stores a scale multiplier for `font_settings`, so every
+    // Label's declared size gets multiplied consistently; the user just
+    // sees the resulting body-text point size and types in those units.
+    const BASE_POINT_SIZE: f64 = 14.0;
+    col.push(heading("Point size"), 0.0);
     col.push(body(
-        "System-wide font-size multiplier.  Scales every Label's size \
-         proportionally — headings stay bigger than body, but the whole \
-         UI grows or shrinks with the slider.  Range 0.5×–3.0×.",
+        "Body-text point size.  Scales every Label proportionally — \
+         headings stay bigger than body, but the whole UI grows or \
+         shrinks.  Range 7–42 pt (0.5×–3.0× of 14 pt base).",
     ), 0.0);
     {
         // Typable numeric input — a `TextField` that parses on edit-complete
@@ -217,14 +222,15 @@ pub fn system_view(font: Arc<Font>) -> Box<dyn Widget> {
         // (the cell / global stay at the last valid value), and the
         // clamp in `font_settings::set_font_size_scale` guards the range.
         let cells_for_size = cells.clone();
-        let initial = format!("{:.2}", cells.font_size_scale.get());
+        let initial = format!("{:.1}",
+            cells.font_size_scale.get() * BASE_POINT_SIZE);
         let field = TextField::new(Arc::clone(&font))
             .with_font_size(13.0)
             .with_text(initial)
             .with_select_all_on_focus(true)
             .on_edit_complete(move |s| {
-                if let Ok(v) = s.trim().parse::<f64>() {
-                    font_settings::set_font_size_scale(v);
+                if let Ok(pt) = s.trim().parse::<f64>() {
+                    font_settings::set_font_size_scale(pt / BASE_POINT_SIZE);
                     // `set_font_size_scale` clamps; mirror the clamped
                     // value into the cell so disk save stays in range.
                     cells_for_size.font_size_scale

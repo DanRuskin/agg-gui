@@ -534,7 +534,18 @@ impl TextField {
             }
 
             // ── Enter ─────────────────────────────────────────────────────
-            Key::Enter => { self.flush_pending(); self.notify_enter(); EventResult::Consumed }
+            // Commit as edit-complete too so numeric/parsed fields apply the
+            // value on Enter (not only on blur).  Snapshot text to prevent a
+            // second edit-complete firing on later focus loss.
+            Key::Enter => {
+                self.flush_pending();
+                self.notify_enter();
+                if self.text() != self.text_on_focus {
+                    self.notify_edit_complete();
+                    self.text_on_focus = self.text();
+                }
+                EventResult::Consumed
+            }
 
             // ── Escape: clear selection ───────────────────────────────────
             Key::Escape => {
