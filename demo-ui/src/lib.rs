@@ -575,8 +575,14 @@ pub fn build_demo_ui(
     for (i, spec) in DEMOS.iter().enumerate() {
         let open_cell  = Rc::clone(&demo_entries[i].open);
         let reset_cell = Rc::clone(&reset_cells[i]);
+        // `has_valid_bounds` filters out zero-size saved rects — a demo that
+        // was never opened last session persists with (0,0,0,0) because its
+        // position cell never got written.  Without this filter, those
+        // entries turn into `with_bounds(0,0,0,0)` which the parent Stack
+        // stretches to fill the whole canvas on first layout.
         let initial = initial_state.as_ref()
             .and_then(|st| st.demos.get(i))
+            .filter(|ws| ws.has_valid_bounds())
             .map(|ws| ws.to_rect())
             .unwrap_or_else(|| tile_rect(i, default_canvas_h, spec.win_w, spec.win_h));
 
@@ -609,6 +615,7 @@ pub fn build_demo_ui(
         let spec       = &DEMOS[CUBE_IDX];
         let initial = initial_state.as_ref()
             .and_then(|st| st.demos.get(CUBE_IDX))
+            .filter(|ws| ws.has_valid_bounds())
             .map(|ws| ws.to_rect())
             .unwrap_or_else(|| tile_rect(CUBE_IDX, default_canvas_h, spec.win_w, spec.win_h));
         let content    = windows::cube_content(Arc::clone(&font), cube_widget);
@@ -628,6 +635,7 @@ pub fn build_demo_ui(
         let reset_cell = Rc::clone(&reset_cells[total_i]);
         let initial = initial_state.as_ref()
             .and_then(|st| st.tests.get(i))
+            .filter(|ws| ws.has_valid_bounds())
             .map(|ws| ws.to_rect())
             .unwrap_or_else(|| tile_rect(total_i, default_canvas_h, spec.win_w, spec.win_h));
         let content: Box<dyn Widget> = match spec.title {
@@ -670,7 +678,9 @@ pub fn build_demo_ui(
     // ── About window ──────────────────────────────────────────────────────────
     {
         let about_initial = initial_state.as_ref()
-            .map(|st| st.about.to_rect())
+            .map(|st| &st.about)
+            .filter(|ws| ws.has_valid_bounds())
+            .map(|ws| ws.to_rect())
             .unwrap_or_else(|| Rect::new(80.0, 80.0, 440.0, 500.0));
         let about_win = Window::new("About agg-gui", Arc::clone(&font), windows::about(Arc::clone(&font)))
             .with_bounds(about_initial)

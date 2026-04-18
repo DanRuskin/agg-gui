@@ -26,6 +26,15 @@ impl WindowState {
     pub fn to_rect(&self) -> Rect {
         Rect::new(self.x, self.y, self.w, self.h)
     }
+
+    /// True when width and height are both positive.  A never-laid-out window
+    /// (sidebar entry never toggled visible) has its position cell stuck at
+    /// `Rect::default()` = (0,0,0,0); persisting that would stretch the
+    /// window to fill the canvas on restore, because `Window::set_bounds`
+    /// treats zero-size bounds as "uninitialised, take parent's rect".
+    pub fn has_valid_bounds(&self) -> bool {
+        self.w > 0.0 && self.h > 0.0
+    }
 }
 
 // ── SavedState ────────────────────────────────────────────────────────────────
@@ -295,5 +304,68 @@ impl StateAccessor {
             lcd_enabled:       self.lcd_enabled.get(),
             hinting_enabled:   self.hinting_enabled.get(),
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reproduces the "demo opens full-screen on re-open" bug:
+    ///
+    ///   - User opens some demos, closes the app.  Demos they NEVER opened
+    ///     have `demo_pos_cells[i] == Rect::default()` (zero rect) because
+    ///     `Window::layout()` short-circuits on invisible windows and never
+    ///     writes the position cell.
+    ///   - `current_state()` writes that zero rect into the saved file.
+    ///   - Next launch, the restore path turns it into `with_bounds(0,0,0,0)`.
+    ///   - Parent `Stack::set_bounds` sees zero-size bounds and overwrites
+    ///     them with the full canvas rect (`window.rs` set_bounds fallback).
+    ///   - Demo appears full-screen.
+    ///
+    /// The fix lives in the restore path: `has_valid_bounds()` lets the
+    /// caller filter zero rects back to the tile-rect default.
+    #[test]
+    fn zero_sized_window_state_is_not_valid() {
+        let never_laid_out = WindowState { open: false, x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+        assert!(!never_laid_out.has_valid_bounds(),
+            "zero-size rect must be rejected so the restore path can fall back to tile_rect");
+
+        let real = WindowState { open: true, x: 60.0, y: 60.0, w: 360.0, h: 280.0 };
+        assert!(real.has_valid_bounds());
+    }
+
+    /// Round-trip a saved state that has a mix of real and zero-size demo
+    /// entries — mirrors what `current_state()` emits when some demos were
+    /// opened last session and others never were.  After deserialising, the
+    /// zero entries must still be detectable as invalid so restore falls
+    /// back to defaults.
+    #[test]
+    fn serialised_zero_entries_round_trip_as_invalid() {
+        let saved = SavedState {
+            demos: vec![
+                WindowState { open: true,  x: 60.0, y: 60.0, w: 360.0, h: 280.0 },
+                WindowState { open: false, x: 0.0,  y: 0.0,  w: 0.0,   h: 0.0   },
+            ],
+            tests: vec![],
+            about: WindowState { open: false, x: 80.0, y: 80.0, w: 440.0, h: 500.0 },
+            backend_open: false,
+            window_w: None,
+            window_h: None,
+            window_fullscreen: false,
+            window_maximized:  false,
+            inspector: None,
+            font_name: None,
+            font_size_scale: 1.0,
+            lcd_enabled: false,
+            hinting_enabled: false,
+        };
+
+        let text = saved.serialize();
+        let back = SavedState::deserialize(&text).expect("round-trip must parse");
+        assert!( back.demos[0].has_valid_bounds(), "opened demo must survive round-trip as valid");
+        assert!(!back.demos[1].has_valid_bounds(), "never-opened demo must remain flagged as invalid");
     }
 }
