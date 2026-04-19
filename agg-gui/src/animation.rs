@@ -9,7 +9,7 @@
 //! "some widget still wants more frames after this paint finished".
 
 use std::cell::Cell;
-use std::time::Instant;
+use web_time::Instant;
 
 std::thread_local! {
     static NEEDS_TICK: Cell<bool> = Cell::new(false);
