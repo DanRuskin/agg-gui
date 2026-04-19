@@ -779,7 +779,11 @@ impl Widget for TextField {
             if sw > 0.0 {
                 let hl_bot = baseline_y - m.descent;
                 let hl_h   = (m.ascent + m.descent) * 1.2;
-                ctx.set_fill_color(v.accent_focus);
+                ctx.set_fill_color(if self.focused {
+                    v.selection_bg
+                } else {
+                    v.selection_bg_unfocused
+                });
                 ctx.begin_path();
                 ctx.rect(sx, hl_bot - hl_h * 0.1, sw, hl_h);
                 ctx.fill();

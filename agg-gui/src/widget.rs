@@ -105,11 +105,18 @@ pub struct BackbufferCache {
     /// (`set_text`, `set_color`, focus/hover changes, etc.) and the
     /// framework clears it after a successful re-raster.
     pub dirty:  bool,
+    /// Visuals epoch (see [`crate::theme::current_visuals_epoch`]) recorded
+    /// the last time this cache was populated.  `paint_subtree_backbuffered`
+    /// compares it against the live epoch and forces a re-raster on mismatch,
+    /// so widgets whose text/fill colours come from `ctx.visuals()` refresh
+    /// automatically on a dark/light theme flip without needing every widget
+    /// to subscribe to theme-change events.
+    pub theme_epoch: u64,
 }
 
 impl BackbufferCache {
     pub fn new() -> Self {
-        Self { pixels: None, lcd_alpha: None, width: 0, height: 0, dirty: true }
+        Self { pixels: None, lcd_alpha: None, width: 0, height: 0, dirty: true, theme_epoch: 0 }
     }
 
     /// Mark the cache dirty so the next paint re-rasterises.
@@ -470,6 +477,7 @@ fn paint_subtree_backbuffered(widget: &mut dyn Widget, ctx: &mut dyn DrawCtx) {
     // `cache.lcd_alpha`: `Some` means LCD cache, `None` means Rgba.
     let mode = widget.backbuffer_mode();
     let mode_is_lcd = matches!(mode, BackbufferMode::LcdCoverage);
+    let theme_epoch = crate::theme::current_visuals_epoch();
     let (needs_raster, has_bitmap) = {
         let cache = widget.backbuffer_cache_mut()
             .expect("backbuffered widget must return Some from backbuffer_cache_mut");
@@ -478,7 +486,8 @@ fn paint_subtree_backbuffered(widget: &mut dyn Widget, ctx: &mut dyn DrawCtx) {
             || cache.pixels.is_none()
             || cache.width != w_phys
             || cache.height != h_phys
-            || cache_is_lcd != mode_is_lcd;
+            || cache_is_lcd != mode_is_lcd
+            || cache.theme_epoch != theme_epoch;
         (needs, cache.pixels.is_some())
     };
 
@@ -561,9 +570,10 @@ fn paint_subtree_backbuffered(widget: &mut dyn Widget, ctx: &mut dyn DrawCtx) {
         let cache = widget.backbuffer_cache_mut().unwrap();
         cache.pixels    = Some(Arc::clone(&pixels));
         cache.lcd_alpha = lcd_alpha.as_ref().map(Arc::clone);
-        cache.width     = w_phys;
-        cache.height    = h_phys;
-        cache.dirty     = false;
+        cache.width        = w_phys;
+        cache.height       = h_phys;
+        cache.dirty        = false;
+        cache.theme_epoch  = theme_epoch;
     }
 
     // Blit the cached bitmap onto the outer ctx.  Two paths:

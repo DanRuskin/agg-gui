@@ -15,6 +15,7 @@
 //! `ctx.visuals()`.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::color::Color;
 
@@ -118,6 +119,13 @@ pub struct Visuals {
 
     // ── Separator / divider ───────────────────────────────────────────────────
     pub separator:              Color,
+
+    // ── Text selection highlight ──────────────────────────────────────────────
+    /// Background colour behind selected text while the widget is focused.
+    pub selection_bg:           Color,
+    /// Background colour behind selected text while the widget is NOT focused.
+    /// Uses a neutral grey to signal that the selection is inactive.
+    pub selection_bg_unfocused: Color,
 }
 
 impl Visuals {
@@ -167,6 +175,9 @@ impl Visuals {
             scroll_thumb_dragging:  Color::rgba(1.0,  1.0,  1.0,  0.45),
             // Separator
             separator:              Color::rgba(1.0,  1.0,  1.0,  0.10),
+            // Selection
+            selection_bg:           Color::rgba(0.22, 0.45, 0.88, 0.45),
+            selection_bg_unfocused: Color::rgba(0.60, 0.60, 0.65, 0.35),
         }
     }
 
@@ -216,6 +227,9 @@ impl Visuals {
             scroll_thumb_dragging:  Color::rgba(0.0,  0.0,  0.0,  0.45),
             // Separator
             separator:              Color::rgba(0.0,  0.0,  0.0,  0.12),
+            // Selection
+            selection_bg:           Color::rgba(0.22, 0.45, 0.88, 0.45),
+            selection_bg_unfocused: Color::rgba(0.45, 0.45, 0.50, 0.35),
         }
     }
 
@@ -236,12 +250,28 @@ thread_local! {
     static VISUALS: RefCell<Visuals> = RefCell::new(Visuals::dark());
 }
 
+/// Monotonic counter bumped every time `set_visuals` installs a new palette.
+///
+/// Backbuffered widgets (e.g. `Label`) compare this against the epoch they
+/// last rasterised at and self-invalidate on mismatch — without this, a
+/// `Label` whose color follows `visuals.text_color` would keep blitting the
+/// bitmap it baked in the old palette after a dark/light flip, leaving
+/// stale-coloured text until some other mutation invalidated the cache.
+static VISUALS_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+/// Current visuals epoch.  See [`VISUALS_EPOCH`] docstring for how the
+/// widget layer uses it.
+pub fn current_visuals_epoch() -> u64 {
+    VISUALS_EPOCH.load(Ordering::Relaxed)
+}
+
 /// Replace the active [`Visuals`].
 ///
 /// Call this once per frame *before* painting, typically from the platform
 /// render loop after reading the user's `ThemePreference`.
 pub fn set_visuals(v: Visuals) {
     VISUALS.with(|cell| *cell.borrow_mut() = v);
+    VISUALS_EPOCH.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Clone and return the active [`Visuals`].

@@ -16,7 +16,10 @@
 //!
 //! - **Drag** — click-drag the title bar to move the window.
 //! - **Resize** — drag any of the 8 edges/corners to resize; min size 120×80.
-//! - **Collapse** — double-click the title bar to collapse to title-bar-only height.
+//! - **Collapse** — click the chevron on the left of the title bar to collapse
+//!   to title-bar-only height (click again to expand).
+//! - **Maximize** — double-click the title bar (or click the maximize button)
+//!   to toggle between maximised and restored size.
 //! - **Close** — click the × button; syncs with an optional shared `visible_cell`.
 //!
 //! # Coordinate notes (Y-up)
@@ -303,6 +306,37 @@ impl Window {
         let dx = local.x - c.x;
         let dy = local.y - c.y;
         dx * dx + dy * dy <= (CLOSE_R + 3.0) * (CLOSE_R + 3.0)
+    }
+
+    /// Hit-box for the collapse / expand chevron on the LEFT of the title bar.
+    /// Kept in sync with the paint geometry in
+    /// `WindowTitleBar::paint` (chevron at `x = 12`, half-size 4).  A padded
+    /// square around that point gives users a click target big enough to
+    /// hit without pixel precision.
+    fn in_chevron_button(&self, local: Point) -> bool {
+        let cx = 12.0;
+        let cy = self.bounds.height - TITLE_H * 0.5;
+        let half = 8.0;
+        local.x >= cx - half && local.x <= cx + half
+            && local.y >= cy - half && local.y <= cy + half
+    }
+
+    /// Toggle collapsed <-> expanded, keeping the top edge of the window
+    /// fixed in place.  Factored out of the event path so both the chevron
+    /// click and any future keyboard shortcut go through the same math.
+    fn toggle_collapse(&mut self) {
+        let top = self.bounds.y + self.bounds.height;
+        if self.collapsed {
+            self.bounds.height = self.pre_collapse_h;
+            self.bounds.y = (top - self.pre_collapse_h).round();
+            self.collapsed = false;
+        } else {
+            self.pre_collapse_h = self.bounds.height;
+            self.bounds.height = TITLE_H;
+            self.bounds.y = (top - TITLE_H).round();
+            self.collapsed = true;
+        }
+        self.clamp_to_canvas();
     }
 
     fn toggle_maximize(&mut self) {
@@ -740,6 +774,16 @@ impl Widget for Window {
                     return EventResult::Consumed;
                 }
 
+                // Collapse / expand chevron.
+                if self.in_chevron_button(*pos) {
+                    self.toggle_collapse();
+                    // Null out the double-click timer so clicking the
+                    // chevron then quickly clicking the bar doesn't
+                    // trigger a maximize toggle.
+                    self.last_title_click = None;
+                    return EventResult::Consumed;
+                }
+
                 // Resize edge — check before title bar to handle corner overlap.
                 if let Some(dir) = self.resize_dir(*pos) {
                     // Only start resize if not in the close button area and not a pure title bar drag.
@@ -751,7 +795,7 @@ impl Widget for Window {
                     return EventResult::Consumed;
                 }
 
-                // Title bar drag + double-click collapse.
+                // Title bar drag + double-click maximize.
                 if self.in_title_bar(*pos) {
                     // Double-click detection.
                     let now = Instant::now();
@@ -760,24 +804,10 @@ impl Widget for Window {
                         .unwrap_or(false);
 
                     if is_double {
-                        // Toggle collapse.
-                        // We adjust bounds.y so the title bar (top edge) stays fixed.
-                        // In Y-up: top = bounds.y + bounds.height.
-                        if self.collapsed {
-                            // Expanding: restore full height, keep top edge in place.
-                            let top = self.bounds.y + self.bounds.height;
-                            self.bounds.height = self.pre_collapse_h;
-                            self.bounds.y = (top - self.pre_collapse_h).round();
-                            self.collapsed = false;
-                        } else {
-                            // Collapsing: shrink to title-bar only, keep top edge in place.
-                            let top = self.bounds.y + self.bounds.height;
-                            self.pre_collapse_h = self.bounds.height;
-                            self.bounds.height = TITLE_H;
-                            self.bounds.y = (top - TITLE_H).round();
-                            self.collapsed = true;
-                        }
-                        self.clamp_to_canvas();
+                        // Windows convention: double-click title bar toggles
+                        // maximize / restore.  Collapse/expand lives on the
+                        // chevron button to the left.
+                        self.toggle_maximize();
                         self.last_title_click = None;
                     } else {
                         self.last_title_click = Some(now);

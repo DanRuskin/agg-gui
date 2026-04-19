@@ -221,6 +221,15 @@ pub fn set_scroll_visibility(v: ScrollBarVisibility) {
     CURRENT_SCROLL_VISIBILITY.with(|c| c.set(v));
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Multiply the alpha channel of `c` by `a`.  Used to fade the track /
+/// thumb during the hover fade-in / fade-out animation — the colour stays
+/// its palette-defined hue and only transparency changes.
+fn scale_alpha(c: Color, a: f64) -> Color {
+    Color::rgba(c.r, c.g, c.b, c.a * (a as f32).clamp(0.0, 1.0))
+}
+
 // ── Runtime constants ────────────────────────────────────────────────────────
 
 /// Pixels at the right edge reserved for the parent window's resize grip.
@@ -245,6 +254,11 @@ struct AxisState {
     dragging:    bool,
     drag_thumb_offset: f64,
     hover_anim:  crate::animation::Tween,
+    /// Alpha tween for the fade-in / fade-out animation when a
+    /// `Floating + VisibleWhenNeeded` bar appears on hover.  For every
+    /// other visibility/kind combination the bar is painted at full
+    /// opacity, so this tween stays at 1.0 and does nothing.
+    visibility_anim: crate::animation::Tween,
 }
 
 impl Default for AxisState {
@@ -254,6 +268,7 @@ impl Default for AxisState {
             hovered_bar: false, hovered_thumb: false, dragging: false,
             drag_thumb_offset: 0.0,
             hover_anim: crate::animation::Tween::new(0.0, 0.12),
+            visibility_anim: crate::animation::Tween::new(0.0, 0.18),
         }
     }
 }
@@ -668,10 +683,24 @@ impl Widget for ScrollView {
     fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
         let v = ctx.visuals();
 
-        let paint_v = self.v.enabled && self.should_paint_v();
-        let paint_h = self.h.enabled && self.should_paint_h();
+        // Drive the fade-in / fade-out alpha animation.  `should_paint_*`
+        // returns true exactly when the bar would be shown in the old
+        // pop-in behaviour; the tween now smooths that transition so a
+        // `Floating + VisibleWhenNeeded` bar dissolves in instead of
+        // snapping.  For non-animating combinations the target stays
+        // pinned at its terminal value, so the tween is a no-op.
+        self.v.visibility_anim.set_target(if self.should_paint_v() { 1.0 } else { 0.0 });
+        self.h.visibility_anim.set_target(if self.should_paint_h() { 1.0 } else { 0.0 });
+        let v_alpha = self.v.visibility_anim.tick();
+        let h_alpha = self.h.visibility_anim.tick();
 
-        let track_color = match self.style.color {
+        // Paint whenever alpha is visible — including the tail of a
+        // fade-out after the cursor leaves, so the bar smoothly dissolves
+        // instead of vanishing.
+        let paint_v = self.v.enabled && self.v.content > self.viewport().1 && v_alpha > 0.001;
+        let paint_h = self.h.enabled && self.h.content > self.viewport().0 && h_alpha > 0.001;
+
+        let track_color_base = match self.style.color {
             ScrollBarColor::Background => v.scroll_track,
             ScrollBarColor::Foreground => Color::rgba(
                 v.accent.r, v.accent.g, v.accent.b, 0.08),
@@ -692,7 +721,7 @@ impl Widget for ScrollView {
                 let r         = bar_w * 0.5;
 
                 let (lo, hi) = self.v_track_range();
-                ctx.set_fill_color(track_color);
+                ctx.set_fill_color(scale_alpha(track_color_base, v_alpha));
                 ctx.begin_path();
                 ctx.rounded_rect(bar_x, lo, bar_w, hi - lo, r);
                 ctx.fill();
@@ -702,7 +731,7 @@ impl Widget for ScrollView {
                 } else if self.v.hovered_thumb {
                     v.scroll_thumb_hovered
                 } else { thumb_idle };
-                ctx.set_fill_color(tc);
+                ctx.set_fill_color(scale_alpha(tc, v_alpha));
                 ctx.begin_path();
                 ctx.rounded_rect(bar_x, ty, bar_w, th, r);
                 ctx.fill();
@@ -719,7 +748,7 @@ impl Widget for ScrollView {
                 let r          = bar_h * 0.5;
 
                 let (lo, hi) = self.h_track_range();
-                ctx.set_fill_color(track_color);
+                ctx.set_fill_color(scale_alpha(track_color_base, h_alpha));
                 ctx.begin_path();
                 ctx.rounded_rect(lo, bar_bottom, hi - lo, bar_h, r);
                 ctx.fill();
@@ -729,7 +758,7 @@ impl Widget for ScrollView {
                 } else if self.h.hovered_thumb {
                     v.scroll_thumb_hovered
                 } else { thumb_idle };
-                ctx.set_fill_color(tc);
+                ctx.set_fill_color(scale_alpha(tc, h_alpha));
                 ctx.begin_path();
                 ctx.rounded_rect(tx, bar_bottom, tw, bar_h, r);
                 ctx.fill();

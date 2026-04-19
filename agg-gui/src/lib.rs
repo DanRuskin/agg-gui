@@ -56,7 +56,7 @@ pub use color::Color;
 pub use cursor::{CursorIcon, current_cursor_icon, set_cursor_icon, reset_cursor_icon};
 pub use device_scale::{device_scale, set_device_scale};
 pub use draw_ctx::{DrawCtx, GlPaint};
-pub use theme::{ThemePreference, Visuals, current_visuals, set_visuals};
+pub use theme::{ThemePreference, Visuals, current_visuals, current_visuals_epoch, set_visuals};
 pub use event::{Event, EventResult, Key, Modifiers, MouseButton};
 pub use framebuffer::Framebuffer;
 pub use geometry::{Point, Rect, Size};
