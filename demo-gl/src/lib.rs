@@ -415,8 +415,16 @@ impl GlGfxCtx {
     ) {
         let gl = &*self.gl;
         let ctm = *self.ctm();
-        let bl_x = dst_x * ctm.sx + dst_y * ctm.shx + ctm.tx;
-        let bl_y = dst_x * ctm.shy + dst_y * ctm.sy + ctm.ty;
+        // LCD coverage masks bake a carefully-phased R/G/B subpixel pattern
+        // at 1:1 texel-to-pixel resolution.  If the quad lands at fractional
+        // pixel coordinates, each fragment samples a texel whose subpixel
+        // phase is offset from the destination's — the 3× filter's chroma
+        // structure smears across pixel boundaries and text reads as blurry.
+        // Snap the origin to the integer pixel grid so every texel maps to
+        // exactly one screen pixel.  (Mirrors the CPU path in
+        // `gfx_ctx::draw_lcd_mask`, which `.round()`s for the same reason.)
+        let bl_x = (dst_x * ctm.sx + dst_y * ctm.shx + ctm.tx).round();
+        let bl_y = (dst_x * ctm.shy + dst_y * ctm.sy + ctm.ty).round();
         let tr_x = bl_x + mask_w as f64;
         let tr_y = bl_y + mask_h as f64;
 

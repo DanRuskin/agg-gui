@@ -292,13 +292,20 @@ impl Widget for Label {
     fn lcd_preference(&self) -> Option<bool> { self.lcd_pref }
 
     fn backbuffer_cache_mut(&mut self) -> Option<&mut crate::widget::BackbufferCache> {
-        // Buffer only when grayscale.  See `Label::new` for the
-        // rationale: grayscale needs AGG raster (tessellated GL glyphs
-        // are thinner), LCD needs direct-to-surface dual-source blend
-        // (a sub-ctx backbuffer can't carry per-channel coverage back
-        // out through alpha compositing).  Toggling the global LCD
-        // flag therefore flips Label between "own bitmap cache" and
-        // "paint directly" automatically.
+        // Cache only when LCD is off.  Label is a transparent overlay —
+        // it paints text only, no bg — so it doesn't satisfy the
+        // `LcdCoverage` contract ("paint opaque fills covering full
+        // bounds") and can't safely use an LCD backbuffer.  A
+        // parent-seeded LCD cache would work once but go stale the
+        // moment the widget scrolls, reparents, or its parent bg
+        // changes (the seed bakes in the parent's pixels at cache
+        // time).  When LCD is on, Label instead paints directly
+        // through the parent ctx — the parent's `GfxCtx` has
+        // `lcd_mode=true` globally, or a future LcdCoverage-mode
+        // parent widget provides an `LcdGfxCtx` that Label's
+        // `fill_text` flows into correctly.  Either way LCD quality
+        // is preserved without caching a screen-position-sensitive
+        // bitmap.
         if self.buffered && !crate::font_settings::lcd_enabled() {
             Some(&mut self.cache)
         } else {

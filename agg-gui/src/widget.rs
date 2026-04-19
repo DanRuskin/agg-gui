@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::draw_ctx::DrawCtx;
 use crate::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use crate::framebuffer::Framebuffer;
+use crate::lcd_coverage::LcdBuffer;
 use crate::geometry::{Point, Rect, Size};
 use crate::gfx_ctx::GfxCtx;
 use crate::layout_props::{HAnchor, Insets, VAnchor};
@@ -443,37 +444,75 @@ fn paint_subtree_backbuffered(widget: &mut dyn Widget, ctx: &mut dyn DrawCtx) {
     };
 
     if needs_raster {
-        // Allocate a fresh CPU framebuffer and paint the whole subtree
-        // into it via a software GfxCtx.  The widget paints its own
-        // background first (required for `LcdCoverage` mode), and
-        // children paint on top.  LCD mode on the sub-ctx is set from
-        // the widget's `backbuffer_mode` — inside the buffer, `fill_text`
-        // takes either the per-channel LCD path or grayscale AA.
-        let mode    = widget.backbuffer_mode();
-        let lcd_on  = matches!(mode, BackbufferMode::LcdCoverage);
-        let mut fb  = Framebuffer::new(w, h);
-        {
-            let mut sub = GfxCtx::new(&mut fb);
-            sub.set_lcd_mode(lcd_on);
-            paint_subtree_direct(widget, &mut sub);
-        }
-        // Two conversions before caching so the bitmap is directly
-        // blittable:
+        // Allocate a fresh render target whose format matches the
+        // widget's chosen backbuffer mode, paint the subtree into it,
+        // then convert to top-down RGBA for the cache (the blit lane
+        // expects `(R, G, B, A)` rows top-first).
         //
-        // 1. **Row order** — `Framebuffer` is Y-up (row 0 = bottom)
-        //    but `draw_image_rgba_arc` (and the markdown image
-        //    loader) uses top-down convention.  Flip rows.
-        //
-        // 2. **Alpha format** — AGG writes *premultiplied* RGBA into
-        //    the framebuffer, but the GL blit uses the standard
-        //    straight-alpha blend function
-        //    `(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`.  Converting to
-        //    straight alpha here means AA edge pixels composite
-        //    correctly (half-coverage white edge = (255,255,255,128),
-        //    not (128,128,128,128) — the latter shows as a dark
-        //    fringe / "blur" when blended onto any colour).
-        let mut pixels = fb.pixels_flipped();
-        crate::framebuffer::unpremultiply_rgba_inplace(&mut pixels);
+        // `LcdCoverage` mode now uses an `LcdGfxCtx` over an `LcdBuffer`
+        // — every primitive (fill, stroke, text, image) flows through
+        // the per-channel LCD pipeline, so child widgets that paint
+        // into this widget's backbuffer compose correctly with
+        // LCD-treated text instead of breaking the per-channel
+        // coverage at the first non-text fill (the alpha bug the
+        // search-box screenshot showed before this change).
+        let mode = widget.backbuffer_mode();
+        let pixels = match mode {
+            BackbufferMode::Rgba => {
+                let mut fb = Framebuffer::new(w, h);
+                {
+                    let mut sub = GfxCtx::new(&mut fb);
+                    sub.set_lcd_mode(false);   // RGBA mode never uses LCD text
+                    paint_subtree_direct(widget, &mut sub);
+                }
+                // Two conversions to make the bitmap directly blittable:
+                //   1. Row order — Framebuffer is Y-up, blit lane is top-down.
+                //   2. Alpha format — AGG writes premultiplied; the blend
+                //      function expects straight alpha so that half-coverage
+                //      AA edges composite without the dark-fringe artifact.
+                let mut pixels = fb.pixels_flipped();
+                crate::framebuffer::unpremultiply_rgba_inplace(&mut pixels);
+                pixels
+            }
+            BackbufferMode::LcdCoverage => {
+                // The LCD pipeline is strictly WRITE-only.  The buffer
+                // starts at zero coverage everywhere; the widget paints
+                // opaque content covering its full bounds (the contract
+                // for this mode) into it via an `LcdGfxCtx`; then it's
+                // blitted to the destination as an opaque RGB texture,
+                // where per-channel src-over mixes the buffer's RGB
+                // into whatever colour was at the destination.
+                //
+                // We deliberately do NOT read from any destination —
+                // seeding the buffer from the parent's pixels would
+                // tie the cache's validity to the widget's current
+                // screen position (stale on scroll / reparent), stall
+                // the GPU pipeline on GL (glReadPixels is sync), and
+                // break on backends that can't read their own target.
+                // Widgets that can't paint their own opaque bg should
+                // use `Rgba` mode or paint through the parent's ctx
+                // directly instead.
+                let mut buf = LcdBuffer::new(w, h);
+                {
+                    let mut sub = crate::lcd_gfx_ctx::LcdGfxCtx::new(&mut buf);
+                    paint_subtree_direct(widget, &mut sub);
+                }
+                // LcdBuffer is opaque RGB.  Convert to top-down RGBA
+                // with alpha=255 so the existing blit path can carry
+                // it as a regular texture.  No premultiply step
+                // because the LCD pipeline already composited every
+                // paint into the buffer's R/G/B values directly.
+                let rgb_top_down = buf.pixels_flipped();
+                let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
+                for (rgb, rgba_chunk) in rgb_top_down.chunks_exact(3).zip(rgba.chunks_exact_mut(4)) {
+                    rgba_chunk[0] = rgb[0];
+                    rgba_chunk[1] = rgb[1];
+                    rgba_chunk[2] = rgb[2];
+                    rgba_chunk[3] = 255;
+                }
+                rgba
+            }
+        };
         let pixels = Arc::new(pixels);
 
         let cache = widget.backbuffer_cache_mut().unwrap();
