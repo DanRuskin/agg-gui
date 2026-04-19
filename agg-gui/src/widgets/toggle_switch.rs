@@ -211,21 +211,36 @@ impl Widget for ToggleSwitch {
         ctx.circle(cx, cy, CIRCLE_R);
         ctx.fill();
 
-        // ── Press-ring overlay ─────────────────────────────────────────────
-        // Translucent disc centred on the toggle circle.  Radius grows with
-        // the press animation and colour follows the toggle state (accent
-        // when on, neutral stroke grey when off).  Alpha also scales with the
-        // tween so the ring fades in on press and fades out on release.
+        // The press-ring itself is drawn in `paint_overlay` — it needs to
+        // expand beyond the widget's own bounds, which requires escaping the
+        // parent-set clip that `paint` runs under.
+    }
+
+    fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        // ── Press-ring overlay (ripple) ────────────────────────────────────
+        // Translucent disc centred on the toggle circle.  At full expansion
+        // the ring is ~2.4× the circle radius and would be cropped by the
+        // pill-sized widget clip if drawn in `paint()`.  We therefore draw it
+        // in `paint_overlay` and temporarily lift the parent's clip via
+        // `reset_clip` so the ring can render the full ripple geometry (then
+        // `restore` puts the saved clip state back before returning).
         let ring_t = self.press_anim.tick();
-        if ring_t > 0.001 {
-            let toggle_color = if self.is_on() { v.accent } else { v.widget_stroke };
-            let alpha = RING_PEAK_ALPHA * (ring_t as f32);
-            ctx.set_fill_color(Color::rgba(
-                toggle_color.r, toggle_color.g, toggle_color.b, alpha));
-            ctx.begin_path();
-            ctx.circle(cx, cy, RING_MAX_R * ring_t);
-            ctx.fill();
-        }
+        if ring_t <= 0.001 { return; }
+
+        let v  = ctx.visuals();
+        let cx = Self::circle_cx_at(self.anim.value());
+        let cy = PILL_H * 0.5;
+        let toggle_color = if self.is_on() { v.accent } else { v.widget_stroke };
+        let alpha        = RING_PEAK_ALPHA * (ring_t as f32);
+
+        ctx.save();
+        ctx.reset_clip();
+        ctx.set_fill_color(Color::rgba(
+            toggle_color.r, toggle_color.g, toggle_color.b, alpha));
+        ctx.begin_path();
+        ctx.circle(cx, cy, RING_MAX_R * ring_t);
+        ctx.fill();
+        ctx.restore();
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
