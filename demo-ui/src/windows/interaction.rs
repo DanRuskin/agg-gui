@@ -744,16 +744,19 @@ pub fn scene_demo(font: Arc<Font>) -> Box<dyn Widget> {
 /// 2. Below: a preview panel that displays the most recent capture (via
 ///    `DrawCtx::draw_image_rgba`) or a "No screenshot taken yet." placeholder.
 ///
-/// The platform harness watches `screenshot_request`; on the next fully-
-/// rendered frame it reads the GL back buffer, writes the top-down RGBA8 data
-/// plus dimensions into `screenshot_image`, and resets the request cell.
+/// The platform harness watches `screenshot_request` AND `screenshot_continuous`.
+/// On a capture frame it renders twice: pass 1 paints an empty preview pane
+/// (so the captured pixels don't nest a stale previous capture), then reads
+/// the GL back buffer into `screenshot_image`; pass 2 re-renders with the
+/// fresh image visible.  `screenshot_capturing` is the flag the harness sets
+/// around pass 1 so the preview pane knows to hide itself.
 pub fn screenshot_demo(
     font: Arc<Font>,
     screenshot_request: Rc<Cell<bool>>,
-    screenshot_image:   std::rc::Rc<std::cell::RefCell<Option<(Vec<u8>, u32, u32)>>>,
+    screenshot_image:   std::rc::Rc<std::cell::RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>>,
+    screenshot_continuous: Rc<Cell<bool>>,
+    screenshot_capturing:  Rc<Cell<bool>>,
 ) -> Box<dyn Widget> {
-    let continuous = Rc::new(Cell::new(false));
-
     let mut col = FlexColumn::new()
         .with_gap(10.0)
         .with_padding(12.0)
@@ -764,8 +767,8 @@ pub fn screenshot_demo(
         Arc::clone(&font),
     ).with_font_size(12.0).with_wrap(true)), 0.0);
 
-    let req_for_btn    = Rc::clone(&screenshot_request);
-    let continuous_cb  = Rc::clone(&continuous);
+    let req_for_btn   = Rc::clone(&screenshot_request);
+    let continuous_cb = Rc::clone(&screenshot_continuous);
 
     let button_row = agg_gui::FlexRow::new().with_gap(10.0)
         .add(Box::new(
@@ -782,21 +785,16 @@ pub fn screenshot_demo(
         ));
     col.push(Box::new(button_row), 0.0);
 
-    // Continuous-capture driver: while the checkbox is checked, set the
-    // request flag on every layout so the harness captures the frame.
-    col.push(Box::new(ContinuousCapture {
-        bounds:   Rect::default(), children: Vec::new(),
-        enabled:  Rc::clone(&continuous),
-        request:  Rc::clone(&screenshot_request),
-    }), 0.0);
-
     col.push(Box::new(Separator::horizontal()), 0.0);
 
-    // Preview pane that displays the captured image, scaled to fit.
+    // Preview pane.  During a capture pass (screenshot_capturing=true) it
+    // paints only the frame background so the captured pixels don't include
+    // the preview-of-a-preview from the previous frame.
     col.push(Box::new(ImageView {
         bounds:   Rect::default(), children: Vec::new(),
         font:     Arc::clone(&font),
         source:   Rc::clone(&screenshot_image),
+        capturing: Rc::clone(&screenshot_capturing),
     }), 1.0);
 
     Box::new(col)
@@ -808,7 +806,11 @@ struct ImageView {
     bounds:   Rect,
     children: Vec<Box<dyn Widget>>,
     font:     Arc<Font>,
-    source:   std::rc::Rc<std::cell::RefCell<Option<(Vec<u8>, u32, u32)>>>,
+    source:   std::rc::Rc<std::cell::RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>>,
+    /// Set by the platform harness during the FIRST pass of a capture
+    /// frame.  When true, paint only the background so the captured pixels
+    /// don't contain this pane's previous image.
+    capturing: Rc<Cell<bool>>,
 }
 
 impl Widget for ImageView {
@@ -835,6 +837,12 @@ impl Widget for ImageView {
         ctx.rounded_rect(0.0, 0.0, w, h, 4.0);
         ctx.fill();
 
+        // During the first render pass of a capture frame, skip painting
+        // the image / placeholder so the captured pixels show an empty pane
+        // instead of the previous capture (which would produce the "mirror
+        // in a mirror" nested-screenshot recursion).
+        if self.capturing.get() { return; }
+
         let src = self.source.borrow();
         if let Some((pixels, iw, ih)) = src.as_ref() {
             // Shrink-to-fit preserving aspect ratio.
@@ -845,7 +853,13 @@ impl Widget for ImageView {
             let dh = ihf * scale;
             let dx = (w - dw) * 0.5;
             let dy = (h - dh) * 0.5;
-            ctx.draw_image_rgba(pixels, *iw, *ih, dx, dy, dw, dh);
+            // Arc-keyed draw: the GL backend caches textures by the Arc's
+            // pointer identity, so a new screenshot (new Arc) evicts the
+            // prior entry correctly.  `draw_image_rgba` with a raw slice
+            // keys on `(ptr, len, first/last 8 bytes)`, which gave false
+            // cache hits when the allocator recycled addresses for
+            // same-size captures whose corner pixels were stable.
+            ctx.draw_image_rgba_arc(pixels, *iw, *ih, dx, dy, dw, dh);
 
             // Outline in the text color so the image boundary is always
             // visible against the neutral pane, even when the screenshot's
@@ -869,29 +883,5 @@ impl Widget for ImageView {
         }
     }
 
-    fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
-}
-
-// ── ContinuousCapture: drives `screenshot_request` when enabled ──────────────
-
-struct ContinuousCapture {
-    bounds:   Rect,
-    children: Vec<Box<dyn Widget>>,
-    enabled:  Rc<Cell<bool>>,
-    request:  Rc<Cell<bool>>,
-}
-
-impl Widget for ContinuousCapture {
-    fn type_name(&self) -> &'static str { "ContinuousCapture" }
-    fn bounds(&self) -> Rect { self.bounds }
-    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
-    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
-    fn show_in_inspector(&self) -> bool { false }
-    fn layout(&mut self, _: Size) -> Size {
-        if self.enabled.get() { self.request.set(true); }
-        Size::ZERO
-    }
-    fn paint(&mut self, _: &mut dyn DrawCtx) {}
     fn on_event(&mut self, _: &Event) -> EventResult { EventResult::Ignored }
 }

@@ -238,6 +238,8 @@ fn main() {
     let window_maximized   = Rc::clone(&handles.window_maximized);
     let screenshot_request      = Rc::clone(&handles.screenshot_request);
     let handles_screenshot_image = Rc::clone(&handles.screenshot_image);
+    let screenshot_continuous   = Rc::clone(&handles.screenshot_continuous);
+    let screenshot_capturing    = Rc::clone(&handles.screenshot_capturing);
     let state_accessor          = handles.state;
     #[allow(unused_assignments, unused_mut)]
     let mut screenshot_counter: u32 = 0;
@@ -471,13 +473,43 @@ fn main() {
                                    &inspector_nodes, &hovered_bounds);
 
                     screen_size.set((win_w, win_h));
-                    render_frame(&mut app, &mut gl_ctx, &gl,
-                                 win_w, win_h, last_frame_ms, &hovered_bounds);
+
+                    // Capture frame?  Either a single-shot request (button /
+                    // F9) or continuous-mode checkbox.  A capture frame does
+                    // a double render: pass 1 paints the Screenshot demo's
+                    // preview pane as an empty frame so the captured pixels
+                    // don't nest the previous capture (hall-of-mirrors bug);
+                    // then we read the GL back buffer and store the image;
+                    // pass 2 re-renders with the fresh image visible.
+                    let want_capture = screenshot_request.get()
+                                    || screenshot_continuous.get();
+                    if want_capture {
+                        screenshot_capturing.set(true);
+                        render_frame(&mut app, &mut gl_ctx, &gl,
+                                     win_w, win_h, last_frame_ms, &hovered_bounds);
+                        let (rgba, w, h) = gl_ctx.read_screenshot();
+                        *handles_screenshot_image.borrow_mut()
+                            = Some((Arc::new(rgba), w, h));
+                        screenshot_capturing.set(false);
+                        screenshot_request.set(false);
+                        screenshot_counter = screenshot_counter.wrapping_add(1);
+                        render_frame(&mut app, &mut gl_ctx, &gl,
+                                     win_w, win_h, last_frame_ms, &hovered_bounds);
+                    } else {
+                        render_frame(&mut app, &mut gl_ctx, &gl,
+                                     win_w, win_h, last_frame_ms, &hovered_bounds);
+                    }
 
                     // Poll while the cube animates OR any widget is running a
-                    // hover/transition animation; WaitUntil(500ms) when a text
-                    // field has focus so the cursor blink fires; Wait otherwise.
-                    elwt.set_control_flow(if cube_visible.get() || app.wants_animation_tick() {
+                    // hover/transition animation OR continuous screenshot is on
+                    // OR a single-shot screenshot is queued; WaitUntil(500ms)
+                    // when a text field has focus so the cursor blink fires;
+                    // Wait otherwise.
+                    elwt.set_control_flow(if cube_visible.get()
+                        || app.wants_animation_tick()
+                        || screenshot_continuous.get()
+                        || screenshot_request.get()
+                    {
                         ControlFlow::Poll
                     } else if app.has_focus() {
                         ControlFlow::WaitUntil(
@@ -487,15 +519,6 @@ fn main() {
                     } else {
                         ControlFlow::Wait
                     });
-
-                    // Satisfy any pending screenshot request BEFORE buffer swap
-                    // while the back buffer still holds this frame's pixels.
-                    if screenshot_request.get() {
-                        let (rgba, w, h) = gl_ctx.read_screenshot();
-                        *handles_screenshot_image.borrow_mut() = Some((rgba, w, h));
-                        screenshot_request.set(false);
-                        screenshot_counter = screenshot_counter.wrapping_add(1);
-                    }
 
                     gl_surface.swap_buffers(&gl_context).expect("swap_buffers");
 

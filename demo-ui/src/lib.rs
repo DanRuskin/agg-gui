@@ -363,7 +363,23 @@ pub struct DemoHandles {
     pub screenshot_request: Rc<Cell<bool>>,
     /// Latest captured frame.  `None` until at least one capture completes.
     /// Top-down RGBA8; first `width * 4` bytes are the TOP row.
-    pub screenshot_image: Rc<RefCell<Option<(Vec<u8>, u32, u32)>>>,
+    ///
+    /// Wrapped in `Arc<Vec<u8>>` so the GL texture cache can key on the
+    /// Arc's pointer identity (via `draw_image_rgba_arc`).  Using a bare
+    /// `Vec<u8>` triggered false cache hits — the allocator reused
+    /// addresses across consecutive captures and the content-hash key
+    /// (first/last 8 bytes) collided on screenshots whose corners were
+    /// stable, causing stale frames to be bound.
+    pub screenshot_image: Rc<RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>>,
+    /// Checkbox state for "Capture continuously".  Exposed to the harness so
+    /// the event loop can keep running (ControlFlow::Poll) while continuous
+    /// capture is on — otherwise Wait mode would stall the capture cadence.
+    pub screenshot_continuous: Rc<Cell<bool>>,
+    /// Transient flag set by the harness during the FIRST render pass of a
+    /// capture frame.  Read by the screenshot demo's preview pane so it
+    /// paints an empty frame (not the stale previous capture) — this keeps
+    /// the captured pixels free of the screenshot-of-a-screenshot recursion.
+    pub screenshot_capturing: Rc<Cell<bool>>,
     pub state:           StateAccessor,
 }
 
@@ -393,8 +409,10 @@ pub fn build_demo_ui(
         initial_state.as_ref().map(|s| s.window_maximized).unwrap_or(false)
     ));
     let screenshot_request = Rc::new(Cell::new(false));
-    let screenshot_image: Rc<RefCell<Option<(Vec<u8>, u32, u32)>>> =
+    let screenshot_image: Rc<RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>> =
         Rc::new(RefCell::new(None));
+    let screenshot_continuous = Rc::new(Cell::new(false));
+    let screenshot_capturing  = Rc::new(Cell::new(false));
 
     // Theme preference — detect OS color scheme so we start in the right mode.
     let initial_theme = top_bar::detect_system_theme();
@@ -678,6 +696,8 @@ pub fn build_demo_ui(
                 Arc::clone(&font),
                 Rc::clone(&screenshot_request),
                 Rc::clone(&screenshot_image),
+                Rc::clone(&screenshot_continuous),
+                Rc::clone(&screenshot_capturing),
             )
         };
 
@@ -1035,6 +1055,8 @@ pub fn build_demo_ui(
         window_maximized,
         screenshot_request: Rc::clone(&screenshot_request),
         screenshot_image:   Rc::clone(&screenshot_image),
+        screenshot_continuous: Rc::clone(&screenshot_continuous),
+        screenshot_capturing:  Rc::clone(&screenshot_capturing),
         state: state_accessor,
     };
     (app, handles)
@@ -1046,7 +1068,9 @@ fn build_demo_content(
     title: &str,
     font: Arc<Font>,
     screenshot_request: Rc<Cell<bool>>,
-    screenshot_image:   Rc<RefCell<Option<(Vec<u8>, u32, u32)>>>,
+    screenshot_image:   Rc<RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>>,
+    screenshot_continuous: Rc<Cell<bool>>,
+    screenshot_capturing:  Rc<Cell<bool>>,
 ) -> Box<dyn Widget> {
     match title {
         // basic.rs
@@ -1081,6 +1105,7 @@ fn build_demo_content(
         "\u{F002} Scene"                 => windows::scene_demo(font),
         "\u{F030} Screenshot"            => windows::screenshot_demo(
             font, screenshot_request, screenshot_image,
+            screenshot_continuous, screenshot_capturing,
         ),
         // text_demos.rs
         "\u{F0C9} Strip"                 => windows::strip_demo(font),

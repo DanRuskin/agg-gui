@@ -95,7 +95,12 @@ thread_local! {
     /// Screenshot request flag — set by the demo button, cleared by render().
     static SCREENSHOT_REQUEST: RefCell<Option<Rc<Cell<bool>>>>                  = RefCell::new(None);
     /// Shared latest-screenshot image (top-down RGBA8 + dims).
-    static SCREENSHOT_IMAGE:   RefCell<Option<Rc<RefCell<Option<(Vec<u8>, u32, u32)>>>>> = RefCell::new(None);
+    static SCREENSHOT_IMAGE:   RefCell<Option<Rc<RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>>>> = RefCell::new(None);
+    /// "Capture continuously" checkbox state — keeps the rAF loop alive when on.
+    static SCREENSHOT_CONTINUOUS: RefCell<Option<Rc<Cell<bool>>>>               = RefCell::new(None);
+    /// Transient flag set by `render()` around the first pass of a capture
+    /// frame so the preview pane hides itself (prevents recursive nesting).
+    static SCREENSHOT_CAPTURING:  RefCell<Option<Rc<Cell<bool>>>>               = RefCell::new(None);
 }
 
 /// Initialise panic hook so Rust panics appear in the browser console.
@@ -145,6 +150,8 @@ fn ensure_demo_app() {
             FRAME_HISTORY.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.frame_history)));
             SCREENSHOT_REQUEST.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_request)));
             SCREENSHOT_IMAGE.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_image)));
+            SCREENSHOT_CONTINUOUS.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_continuous)));
+            SCREENSHOT_CAPTURING.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_capturing)));
             CUBE_VISIBLE.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.cube_visible)));
             STATE_ACCESSOR.with(|c| *c.borrow_mut() = Some(handles.state));
             *cell.borrow_mut() = Some(app);
@@ -244,6 +251,15 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
     });
 
     // ── 4. Paint widget tree (cube draws inline via DrawCtx::gl_paint) ──────
+    //
+    // Capture frames render TWICE:
+    //  - Pass 1 paints the Screenshot demo's preview pane as an empty frame
+    //    (via the `screenshot_capturing` flag) so the read_pixels output does
+    //    not contain the previous capture — prevents the hall-of-mirrors
+    //    recursion in continuous mode.
+    //  - We then glReadPixels the back buffer into the shared screenshot
+    //    image and clear the request / capturing flags.
+    //  - Pass 2 re-renders with the fresh image visible so the user sees it.
     CUBE_SCREEN_RECT.with(|r| r.set(agg_gui::Rect::default()));
     GL_CTX.with(|ctx_cell| {
         let mut ctx_borrow = ctx_cell.borrow_mut();
@@ -251,28 +267,57 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
             let hovered = HOVERED_BOUNDS.with(|c| {
                 c.borrow().as_ref().and_then(|rc| *rc.borrow())
             });
-            DEMO_APP.with(|app_cell| {
-                let mut app_borrow = app_cell.borrow_mut();
-                if let Some(app) = app_borrow.as_mut() {
-                    render_app_frame(gl_ctx, app, width, height, frame_ms, hovered);
-                }
-            });
 
-            // Satisfy any pending screenshot request — must happen BEFORE the
-            // browser presents the frame so the WebGL back buffer still holds
-            // these pixels.
-            let requested = SCREENSHOT_REQUEST.with(|c| {
+            let want_capture = SCREENSHOT_REQUEST.with(|c| {
+                c.borrow().as_ref().map(|rc| rc.get()).unwrap_or(false)
+            }) || SCREENSHOT_CONTINUOUS.with(|c| {
                 c.borrow().as_ref().map(|rc| rc.get()).unwrap_or(false)
             });
-            if requested {
+
+            if want_capture {
+                SCREENSHOT_CAPTURING.with(|c| {
+                    if let Some(ref rc) = *c.borrow() { rc.set(true); }
+                });
+                DEMO_APP.with(|app_cell| {
+                    let mut app_borrow = app_cell.borrow_mut();
+                    if let Some(app) = app_borrow.as_mut() {
+                        render_app_frame(gl_ctx, app, width, height, frame_ms, hovered);
+                    }
+                });
                 let (rgba, w, h) = gl_ctx.read_screenshot();
+                let rgba = Arc::new(rgba);
                 SCREENSHOT_IMAGE.with(|c| {
                     if let Some(ref rc) = *c.borrow() {
                         *rc.borrow_mut() = Some((rgba, w, h));
                     }
                 });
+                SCREENSHOT_CAPTURING.with(|c| {
+                    if let Some(ref rc) = *c.borrow() { rc.set(false); }
+                });
                 SCREENSHOT_REQUEST.with(|c| {
                     if let Some(ref rc) = *c.borrow() { rc.set(false); }
+                });
+                // Pass 2 — re-clear + re-render so the preview pane shows
+                // the new image.  begin_frame clears the back buffer so
+                // pass 1's pixels don't bleed through where pass 2's paint
+                // is transparent.
+                GL_STATE.with(|gl_cell| {
+                    if let Some(state) = gl_cell.borrow().as_ref() {
+                        begin_frame(&state.gl_rc(), width, height);
+                    }
+                });
+                DEMO_APP.with(|app_cell| {
+                    let mut app_borrow = app_cell.borrow_mut();
+                    if let Some(app) = app_borrow.as_mut() {
+                        render_app_frame(gl_ctx, app, width, height, frame_ms, hovered);
+                    }
+                });
+            } else {
+                DEMO_APP.with(|app_cell| {
+                    let mut app_borrow = app_cell.borrow_mut();
+                    if let Some(app) = app_borrow.as_mut() {
+                        render_app_frame(gl_ctx, app, width, height, frame_ms, hovered);
+                    }
                 });
             }
         }
@@ -583,6 +628,8 @@ pub fn needs_repaint() -> bool {
     if cube_on { return true; }
     let ss_req = SCREENSHOT_REQUEST.with(|c| c.borrow().as_ref().map(|rc| rc.get()).unwrap_or(false));
     if ss_req { return true; }
+    let ss_cont = SCREENSHOT_CONTINUOUS.with(|c| c.borrow().as_ref().map(|rc| rc.get()).unwrap_or(false));
+    if ss_cont { return true; }
     // Widget-driven animation: e.g. scroll bar hover expansion.  Set during the
     // last paint via `animation::request_tick`; cleared at the start of the
     // next paint.
