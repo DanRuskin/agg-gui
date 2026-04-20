@@ -147,6 +147,17 @@ pub struct Window {
     canvas_size: Size,
     /// When true, the window is kept fully inside the canvas bounds during drag/resize.
     constrain: bool,
+
+    /// Window title string — stored so external callers (z-order
+    /// persistence, inspector display, etc.) can identify this window
+    /// without going through the inner `title_bar` sub-widget.
+    title: String,
+    /// Optional callback invoked whenever this window requests a raise
+    /// (click-to-front or visibility rising-edge from the sidebar).
+    /// Receives the window title.  Used by the demo's z-order tracker
+    /// to record "most recently raised" so the stacking order survives
+    /// a save/restore round-trip.
+    on_raised: Option<Box<dyn FnMut(&str)>>,
 }
 
 impl Window {
@@ -197,7 +208,21 @@ impl Window {
             // by `layout()` before any drag/resize/collapse hit-test runs.
             canvas_size: Size::new(0.0, 0.0),
             constrain: true,
+            title: title_str,
+            on_raised: None,
         }
+    }
+
+    /// Returns the window title as it was passed to [`Window::new`].
+    pub fn title(&self) -> &str { &self.title }
+
+    /// Register a callback fired whenever this window requests a raise
+    /// (click-to-front or visibility rising-edge from the sidebar).
+    /// Receives the window title.  The demo uses this to feed a shared
+    /// z-order tracker that gets persisted to disk.
+    pub fn on_raised(mut self, cb: impl FnMut(&str) + 'static) -> Self {
+        self.on_raised = Some(Box::new(cb));
+        self
     }
 
     pub fn with_bounds(mut self, b: Rect) -> Self {
@@ -428,6 +453,8 @@ fn resize_cursor(dir: ResizeDir) -> CursorIcon {
 
 impl Widget for Window {
     fn type_name(&self) -> &'static str { "Window" }
+    /// External identity for z-order persistence, inspector lookup, etc.
+    fn id(&self) -> Option<&str> { Some(&self.title) }
 
     fn is_visible(&self) -> bool {
         if let Some(ref cell) = self.visible_cell { cell.get() } else { self.visible }
@@ -495,6 +522,7 @@ impl Widget for Window {
         let now_visible = self.is_visible();
         if now_visible && !self.last_visible.get() {
             self.raise_request.set(true);
+            if let Some(cb) = self.on_raised.as_mut() { cb(&self.title); }
             // Un-maximize on reopen.  Clicking a sidebar checkbox is "open
             // this window for use" — the user expects the window to come
             // up at its normal size, not still stretched to fill the canvas
@@ -759,6 +787,7 @@ impl Widget for Window {
                 // next frame via `take_raise_request`; one-frame visual
                 // delay is invisible in practice.
                 self.raise_request.set(true);
+                if let Some(cb) = self.on_raised.as_mut() { cb(&self.title); }
 
                 // Close button — highest priority.
                 if self.in_close_button(*pos) {

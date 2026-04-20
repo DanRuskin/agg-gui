@@ -86,6 +86,16 @@ pub struct SavedState {
     pub faux_italic:     f64,
     /// LCD primary-weight tap ratio.
     pub primary_weight:  f64,
+
+    /// Window z-order — list of titles (DEMOS / TESTS / About) in
+    /// **back-to-front** order.  Recorded each time a window is raised
+    /// (click-to-front or sidebar rising-edge).  Empty / missing on
+    /// first run; on restore, used to physically reorder the canvas
+    /// `Stack`'s children so the user's last "this window was on top"
+    /// choice survives across sessions.  Titles not present in the
+    /// saved list keep their default DEMOS/TESTS-array position
+    /// (rendered behind the persisted ones).
+    pub z_order: Vec<String>,
 }
 
 /// Persisted inspector UI state.  Flat bit-vector of expanded nodes in DFS
@@ -140,6 +150,12 @@ impl SavedState {
             // for this line-oriented format.
             out.push_str(&format!("font_name={name}\n"));
         }
+        // Z-order: pipe-separated titles in back-to-front order.  Titles
+        // never contain '|' or '\n' so this round-trips cleanly without
+        // escaping.  Skipped on first run / when no raises happened.
+        if !self.z_order.is_empty() {
+            out.push_str(&format!("z_order={}\n", self.z_order.join("|")));
+        }
         out.push_str(&format!("font_size_scale={}\n", self.font_size_scale));
         out.push_str(&format!("lcd={}\n",     self.lcd_enabled     as u8));
         out.push_str(&format!("hinting={}\n", self.hinting_enabled as u8));
@@ -174,6 +190,7 @@ impl SavedState {
         let mut faux_weight:     f64 = 0.0;
         let mut faux_italic:     f64 = 0.0;
         let mut primary_weight:  f64 = 1.0 / 3.0;
+        let mut z_order:         Vec<String> = Vec::new();
 
         for line in s.lines() {
             let line = line.trim();
@@ -204,6 +221,12 @@ impl SavedState {
                 "faux_weight"     => { faux_weight    = val.parse().unwrap_or(0.0); }
                 "faux_italic"     => { faux_italic    = val.parse().unwrap_or(0.0); }
                 "primary_weight"  => { primary_weight = val.parse().unwrap_or(1.0 / 3.0); }
+                "z_order"         => {
+                    z_order = val.split('|')
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                }
                 "inspector" => {
                     let mut halves = val.splitn(2, ';');
                     let head = halves.next().unwrap_or("");
@@ -255,6 +278,7 @@ impl SavedState {
             faux_weight,
             faux_italic,
             primary_weight,
+            z_order,
         })
     }
 }
@@ -320,6 +344,13 @@ pub struct StateAccessor {
     pub faux_weight:     Rc<Cell<f64>>,
     pub faux_italic:     Rc<Cell<f64>>,
     pub primary_weight:  Rc<Cell<f64>>,
+
+    /// Shared z-order tracker — back-to-front list of window titles
+    /// updated whenever any `Window` fires its `on_raised` callback.
+    /// Read at save time so the saved state captures the user's last
+    /// stacking choice.  See `SavedState::z_order` for the persistence
+    /// format and restore semantics.
+    pub z_order: Rc<RefCell<Vec<String>>>,
 }
 
 impl StateAccessor {
@@ -353,6 +384,7 @@ impl StateAccessor {
             faux_weight:       self.faux_weight.get(),
             faux_italic:       self.faux_italic.get(),
             primary_weight:    self.primary_weight.get(),
+            z_order:           self.z_order.borrow().clone(),
         }
     }
 }
@@ -417,6 +449,7 @@ mod tests {
             faux_weight: 0.0,
             faux_italic: 0.0,
             primary_weight: 1.0 / 3.0,
+            z_order: Vec::new(),
         };
 
         let text = saved.serialize();

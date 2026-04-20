@@ -205,6 +205,18 @@ pub trait Widget {
         "Widget"
     }
 
+    /// Optional human-readable identifier for this widget instance.
+    ///
+    /// Distinct from [`type_name`] (which is per-type and constant):
+    /// `id` lets external code look up a specific *instance* — used
+    /// today by the demo's z-order persistence to match a saved title
+    /// against a live `Window` in the canvas `Stack`.  Default
+    /// implementation returns `None`; widgets that want to be
+    /// identifiable (e.g. `Window` returning its title) override.
+    fn id(&self) -> Option<&str> {
+        None
+    }
+
     /// Return `false` to suppress painting this widget **and all its children**.
     /// The widget's own `paint()` will not be called.  Default: `true`.
     fn is_visible(&self) -> bool {

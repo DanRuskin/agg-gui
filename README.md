@@ -11,7 +11,7 @@ The rendering model is immediate-mode: full redraw every frame, deterministic la
 
 > **[Open interactive WASM demo →](https://larsbrubaker.github.io/agg-gui/)**
 
-![agg-gui demo screenshot](readme_hero.png)
+[![agg-gui demo: System and Scrolling windows over the animated bar-grid background](readme_hero.png)](https://larsbrubaker.github.io/agg-gui/)
 
 ## Features
 

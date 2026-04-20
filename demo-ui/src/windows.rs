@@ -286,20 +286,14 @@ fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 // ---------------------------------------------------------------------------
-// 3D Cube window content
+// 3D Animation window content
 // ---------------------------------------------------------------------------
 
-/// Wrap the platform-provided GL cube widget in a dark-themed column with a
-/// label, ready to be placed inside a floating `Window`.
-pub fn cube_content(font: Arc<Font>, cube_widget: Box<dyn Widget>) -> Box<dyn Widget> {
-    let mut col = FlexColumn::new()
-        .with_gap(8.0)
-        .with_padding(10.0)
-        .with_background(Color::rgb(0.08, 0.08, 0.12));
-
-    col.push(Box::new(Label::new("GL — rotating cube", Arc::clone(&font))
-        .with_font_size(11.0).with_color(Color::rgba(1.0, 1.0, 1.0, 0.55))), 0.0);
-    col.push(cube_widget, 1.0);
-
-    Box::new(col)
+/// Wrap the platform-provided GL widget for placement inside a floating
+/// `Window`.  No label, no decorative chrome — the GL widget fills the
+/// window's content rect and paints its own theme-aware background each
+/// frame (see `GlCubeWidget::paint`), so the whole content area follows
+/// the active theme automatically when the user toggles light / dark.
+pub fn cube_content(_font: Arc<Font>, cube_widget: Box<dyn Widget>) -> Box<dyn Widget> {
+    cube_widget
 }

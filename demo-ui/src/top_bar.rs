@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use agg_gui::{
     Color, DrawCtx, Event, EventResult,
-    FlexRow, Font, Rect, Size, SizedBox, Widget,
+    FlexRow, Font, Hyperlink, Rect, Size, SizedBox, VAnchor, Widget,
     ThemePreference, Visuals, set_visuals,
 };
 use agg_gui::widgets::label::Label;
@@ -285,18 +285,46 @@ impl Widget for BackendButton {
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
+/// URL of the project on GitHub — opened by the "View on GitHub" link.
+/// Single source of truth so the README badge and the in-app link stay
+/// in sync.
+const GITHUB_URL: &str = "https://github.com/larsbrubaker/agg-gui";
+
 /// Build the FlexRow child for `TopMenuBar`.
 ///
-/// Layout: [Backend button] [spacer] [flex(1.0)] [ThemeToggle]
+/// Layout: `[Backend button] [spacer] [flex(1.0)] [GitHub link] [gap] [ThemeToggle]`.
+/// The GitHub `Hyperlink` opens the project page in a new tab on both
+/// native (via the `webbrowser` crate) and WASM (via
+/// `window.open(_, "_blank")`).
 pub fn build_top_bar_inner(
     font:         Arc<Font>,
     show_backend: Rc<Cell<bool>>,
     theme_pref:   Rc<Cell<ThemePreference>>,
 ) -> Box<dyn Widget> {
+    let github_link = Hyperlink::new("View on GitHub", Arc::clone(&font))
+        .with_font_size(13.0)
+        // VAnchor::CENTER tells the wrapping `SizedBox` to vertically
+        // centre the link inside its 28-px-tall slot.  Default
+        // `VAnchor::FIT` would bottom-anchor it (Y-up convention),
+        // leaving it sitting low in the row instead of lined up with
+        // the theme toggle.
+        .with_v_anchor(VAnchor::CENTER)
+        .on_click(|| crate::url::open_url(GITHUB_URL));
+
+    // Sized box wraps the link so the FlexRow doesn't try to flex it
+    // — Hyperlink reports `available.width` as its natural width and
+    // would otherwise stretch across the bar.
+    let github_widget: Box<dyn Widget> = Box::new(
+        SizedBox::new().with_width(110.0).with_height(28.0)
+            .with_child(Box::new(github_link))
+    );
+
     Box::new(FlexRow::new()
         .with_gap(0.0)
         .add(Box::new(BackendButton::new(Arc::clone(&font), show_backend)))
         .add(Box::new(SizedBox::new().with_width(8.0)))
         .add_flex(Box::new(SizedBox::new()), 1.0)
+        .add(github_widget)
+        .add(Box::new(SizedBox::new().with_width(12.0)))
         .add(Box::new(ThemeToggle::new(font, theme_pref))))
 }

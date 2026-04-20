@@ -9,3 +9,12 @@ agg-gui    = { path = "../agg-gui" }
 png        = "0.17"
 dark-light = "1"
 web-time   = "1"
+
+# Cross-platform URL opener for the GitHub link in the top bar.
+# Native uses `webbrowser` (cross-OS shell-out); WASM uses `web-sys`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+webbrowser = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
+version  = "0.3"
+features = ["Window"]

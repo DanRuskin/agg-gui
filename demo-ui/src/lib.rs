@@ -6,7 +6,7 @@
 //! - **Right sidebar** (~220 px): scrollable checkbox list grouped by Demos/Tests,
 //!   with "Organize windows" button at the bottom — matching egui exactly.
 //!
-//! The only platform-specific piece is the 3D cube widget, passed by the caller.
+//! The only platform-specific piece is the 3D animation widget, passed by the caller.
 
 mod backend_panel;
 mod font_picker;
@@ -14,6 +14,7 @@ mod rendering_test;
 mod sidebar;
 mod state;
 mod top_bar;
+mod url;
 mod windows;
 
 pub use state::{SavedState, StateAccessor, WindowState};
@@ -273,7 +274,7 @@ struct DemoSpec {
 }
 
 // Exact egui demo list (alphabetical) with egui's original icon prefixes.
-// Default open matches egui: Code Example + Widget Gallery.  3D Cube is our
+// Default open matches egui: Code Example + Widget Gallery.  3D Animation is our
 // addition and is open by default as the showcase feature.
 // Font Awesome 4 codepoints used as icon prefixes.
 // All in the Unicode Private Use Area (U+F000–U+F2FF) so they never
@@ -308,7 +309,7 @@ const DEMOS: &[DemoSpec] = &[
     DemoSpec { title: "\u{F0C3} Rendering Test",         label: "\u{F0C3} Rendering Test",         group: "Graphics", open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "\u{F030} Screenshot",             label: "\u{F030} Screenshot",             group: "Graphics", open: false, win_w: WIN_W, win_h: WIN_H },
     DemoSpec { title: "\u{F0D0} Highlighting",           label: "\u{F0D0} Highlighting",           group: "Graphics", open: false, win_w: WIN_W, win_h: WIN_H },
-    DemoSpec { title: "\u{F1B3} 3D Cube",               label: "\u{F1B3} 3D Cube",                group: "Graphics", open: false, win_w: 300.0, win_h: 260.0 },
+    DemoSpec { title: "\u{F1B3} 3D Animation",          label: "\u{F1B3} 3D Animation",           group: "Graphics", open: false, win_w: 300.0, win_h: 260.0 },
     DemoSpec { title: "\u{F013} System",                 label: "\u{F013} System",                 group: "Graphics", open: false, win_w: 520.0, win_h: 640.0 },
     DemoSpec { title: "\u{F031} LCD Subpixel",           label: "\u{F031} LCD Subpixel",           group: "Graphics", open: false, win_w: 640.0, win_h: 720.0 },
 
@@ -336,8 +337,8 @@ const TESTS: &[DemoSpec] = &[
     DemoSpec { title: "\u{F065} Window Resize Test",  label: "\u{F065} Window Resize Test",  group: "Tests", open: false, win_w: WIN_W, win_h: WIN_H },
 ];
 
-// ── Index of the 3D Cube in DEMOS (computed once) ─────────────────────────────
-// Must match position of "\u{F1B3} 3D Cube" in DEMOS (last Graphics entry).
+// ── Index of the 3D Animation in DEMOS (computed once) ─────────────────────────────
+// Must match position of "\u{F1B3} 3D Animation" in DEMOS (last Graphics entry).
 const CUBE_IDX: usize = 24;
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -439,8 +440,26 @@ pub fn build_demo_ui(
         })
         .collect();
 
-    // cube_visible shares the same cell as the 3D Cube sidebar entry.
+    // cube_visible shares the same cell as the 3D Animation sidebar entry.
     let cube_visible = Rc::clone(&demo_entries[CUBE_IDX].open);
+
+    // Shared z-order tracker — every `Window` reports its title here on
+    // raise (click-to-front + sidebar rising-edge), maintaining a
+    // back-to-front list of recently-touched windows.  Seeded from the
+    // saved order so freshly-built windows get re-sorted further down.
+    let z_order_cell: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        initial_state.as_ref().map(|s| s.z_order.clone()).unwrap_or_default()
+    ));
+    let make_on_raised = || {
+        let cell = Rc::clone(&z_order_cell);
+        move |title: &str| {
+            let mut v = cell.borrow_mut();
+            // Move-to-back: removing any prior occurrence keeps the
+            // list a true z-order rather than a raise log.
+            v.retain(|t| t != title);
+            v.push(title.to_string());
+        }
+    };
 
     // ── System-settings persistence cells ─────────────────────────────────────
     //
@@ -666,7 +685,8 @@ pub fn build_demo_ui(
             .with_bounds(Rect::new(initial.x, initial.y, initial.width, initial.height))
             .with_visible_cell(open_cell)
             .with_reset_cell(reset_cell)
-            .with_position_cell(Rc::clone(&demo_pos_cells[i]));
+            .with_position_cell(Rc::clone(&demo_pos_cells[i]))
+            .on_raised(make_on_raised());
         canvas = canvas.add(Box::new(win));
     }
 
@@ -686,7 +706,8 @@ pub fn build_demo_ui(
             .with_bounds(Rect::new(initial.x, initial.y, initial.width, initial.height))
             .with_visible_cell(open_cell)
             .with_reset_cell(reset_cell)
-            .with_position_cell(Rc::clone(&demo_pos_cells[CUBE_IDX]));
+            .with_position_cell(Rc::clone(&demo_pos_cells[CUBE_IDX]))
+            .on_raised(make_on_raised());
         // Replace index 1 + CUBE_IDX (offset by the CanvasBg at [0]).
         canvas.children_mut()[1 + CUBE_IDX] = Box::new(win);
     }
@@ -719,7 +740,8 @@ pub fn build_demo_ui(
             .with_bounds(Rect::new(initial.x, initial.y, initial.width, initial.height))
             .with_visible_cell(open_cell)
             .with_reset_cell(reset_cell)
-            .with_position_cell(Rc::clone(&test_pos_cells[i]));
+            .with_position_cell(Rc::clone(&test_pos_cells[i]))
+            .on_raised(make_on_raised());
         canvas = canvas.add(Box::new(win));
     }
 
@@ -733,7 +755,8 @@ pub fn build_demo_ui(
         {
             let win = Window::new(&title, Arc::clone(&font), content)
                 .with_bounds(initial_rect)
-                .with_visible_cell(Rc::clone(&wrt_open));
+                .with_visible_cell(Rc::clone(&wrt_open))
+                .on_raised(make_on_raised());
             canvas = canvas.add(Box::new(win));
         }
     }
@@ -748,7 +771,8 @@ pub fn build_demo_ui(
         let about_win = Window::new("About agg-gui", Arc::clone(&font), windows::about(Arc::clone(&font)))
             .with_bounds(about_initial)
             .with_visible_cell(Rc::clone(&about_open))
-            .with_position_cell(Rc::clone(&about_pos_cell));
+            .with_position_cell(Rc::clone(&about_pos_cell))
+            .on_raised(make_on_raised());
         canvas = canvas.add(Box::new(about_win));
     }
 
@@ -778,11 +802,39 @@ pub fn build_demo_ui(
             Box::new(inspector),
         )
             .with_bounds(Rect::new(960.0, 60.0, 320.0, 520.0))
-            .with_visible_cell(Rc::clone(&show_inspector));
+            .with_visible_cell(Rc::clone(&show_inspector))
+            .on_raised(make_on_raised());
         canvas = canvas.add(Box::new(inspector_win));
     }
 
-    // Main area is now just the canvas — no separate overlay layer.
+    // ── Restore saved z-order ─────────────────────────────────────────────────
+    //
+    // Up to this point every Window was added in DEMOS / TESTS array
+    // order.  If a previous session wrote a `z_order`, walk that list
+    // back-to-front and physically pull each matching child to the end
+    // of `canvas.children` — so when the Stack paints, the user's last
+    // top-most window is still on top.  Windows the user never raised
+    // keep their default array-order position (rendered behind the
+    // persisted ones).
+    {
+        let saved_order = z_order_cell.borrow().clone();
+        if !saved_order.is_empty() {
+            let kids = canvas.children_mut();
+            // Walk back-to-front.  After processing, the most-recently
+            // raised window ends up at the very end of `kids`, which is
+            // the front of the z-order in `Stack`'s render scheme.
+            // Match by `Widget::id()` — `Window` returns its title;
+            // other children (CanvasBg) return None and never match.
+            for title in &saved_order {
+                if let Some(idx) = kids.iter().position(|w|
+                    w.id() == Some(title.as_str())
+                ) {
+                    let win = kids.remove(idx);
+                    kids.push(win);
+                }
+            }
+        }
+    }
     let main_area = canvas;
 
     // ── Backend panel (left side, visible only when show_backend is true) ────────
@@ -969,6 +1021,7 @@ pub fn build_demo_ui(
         faux_weight:     Rc::clone(&faux_weight_cell),
         faux_italic:     Rc::clone(&faux_italic_cell),
         primary_weight:  Rc::clone(&primary_weight_cell),
+        z_order:         Rc::clone(&z_order_cell),
     };
 
     let handles = DemoHandles {
@@ -1037,7 +1090,7 @@ fn build_demo_content(
         "\u{F013} Window Options"        => windows::window_options(font),
         "\u{F2D0} Modals"                => windows::modals_demo(font),
         "\u{F0A4} Multi Touch"           => windows::multi_touch(font),
-        // 3D Cube title is matched in the caller; fallthrough here is fine.
+        // 3D Animation title is matched in the caller; fallthrough here is fine.
         _                                => windows::coming_soon(),
     }
 }
