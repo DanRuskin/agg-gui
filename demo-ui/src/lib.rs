@@ -130,10 +130,13 @@ impl Widget for TopMenuBar {
         ctx.rect(0.0, 0.0, self.bounds.width, self.bounds.height);
         ctx.fill();
         // Bottom separator line — match the `Separator` widget colour so
-        // horizontal and vertical splits share the same tone.
+        // horizontal and vertical splits share the same tone.  Y-up: the
+        // bar's local y=0 is its BOTTOM edge (where it meets the body
+        // below), so the line goes there, not at `height - 1` (which is
+        // the top of the bar, flush with the window edge).
         ctx.set_fill_color(v.separator);
         ctx.begin_path();
-        ctx.rect(0.0, self.bounds.height - 1.0, self.bounds.width, 1.0);
+        ctx.rect(0.0, 0.0, self.bounds.width, 1.0);
         ctx.fill();
     }
 

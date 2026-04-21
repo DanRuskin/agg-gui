@@ -12,7 +12,7 @@ use agg_gui::{
     Button, Color, DrawCtx, Event, EventResult,
     FlexColumn, Font, Label,
     MouseButton, Point, Rect, Separator,
-    Size, SizedBox, Widget,
+    Size, SizedBox, VAnchor, Widget,
 };
 use agg_gui::widget::paint_subtree;
 
@@ -770,10 +770,14 @@ pub fn screenshot_demo(
     let req_for_btn   = Rc::clone(&screenshot_request);
     let continuous_cb = Rc::clone(&screenshot_continuous);
 
+    // VAnchor::CENTER on each child — without it FlexRow FIT-anchors to the
+    // bottom (Y-up convention), so the shorter Checkbox sits flush with the
+    // base of the taller Button rather than centred beside it.
     let button_row = agg_gui::FlexRow::new().with_gap(10.0)
         .add(Box::new(
             Button::new("\u{F030}  Take Screenshot", Arc::clone(&font))
                 .with_font_size(12.0)
+                .with_v_anchor(VAnchor::CENTER)
                 .on_click(move || req_for_btn.set(true))
         ))
         .add(Box::new(
@@ -781,6 +785,7 @@ pub fn screenshot_demo(
                 "Capture continuously", Arc::clone(&font), continuous_cb.get()
             )
                 .with_font_size(12.0)
+                .with_v_anchor(VAnchor::CENTER)
                 .with_state_cell(Rc::clone(&continuous_cb))
         ));
     col.push(Box::new(button_row), 0.0);

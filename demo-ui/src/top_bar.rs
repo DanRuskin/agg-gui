@@ -313,9 +313,13 @@ pub fn build_top_bar_inner(
 
     // Sized box wraps the link so the FlexRow doesn't try to flex it
     // — Hyperlink reports `available.width` as its natural width and
-    // would otherwise stretch across the bar.
+    // would otherwise stretch across the bar.  `VAnchor::CENTER` on the
+    // box itself pulls it to the vertical centre of the top bar;
+    // without it FlexRow bottom-anchors the box (Y-up FIT default) and
+    // the link would sit low next to the ThemeToggle.
     let github_widget: Box<dyn Widget> = Box::new(
         SizedBox::new().with_width(110.0).with_height(28.0)
+            .with_v_anchor(VAnchor::CENTER)
             .with_child(Box::new(github_link))
     );
 
