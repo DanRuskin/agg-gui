@@ -378,6 +378,118 @@ impl Widget for RunModeRow {
     }
 }
 
+// ── MSAA row ─────────────────────────────────────────────────────────────────
+
+/// MSAA sample-count selector — five segmented buttons (Off / 2× / 4× / 8× /
+/// 16×).  Writes to a shared `Rc<Cell<u8>>`; the platform harness reads that
+/// value from the persisted state file at startup to configure the GL
+/// surface.  Matches `RunModeRow`'s look and event model.
+///
+/// Exposed to other crate modules (the System window's Render tab uses the
+/// same widget) via `pub(crate)`.
+pub(crate) struct MsaaRow {
+    bounds:   Rect,
+    children: Vec<Box<dyn Widget>>,
+    samples:  Rc<Cell<u8>>,
+    hovered:  Option<usize>,
+    labels:   Vec<Label>,
+}
+
+impl MsaaRow {
+    const BTN_W: f64 = 44.0;
+    const BTN_H: f64 = 24.0;
+    const TEXT:  &'static [&'static str] = &["Off", "2×", "4×", "8×", "16×"];
+    const VALS:  &'static [u8] = &[0, 2, 4, 8, 16];
+
+    pub(crate) fn new(font: Arc<Font>, samples: Rc<Cell<u8>>) -> Self {
+        let labels = Self::TEXT.iter()
+            .map(|t| Label::new(*t, Arc::clone(&font)).with_font_size(12.0))
+            .collect();
+        Self {
+            bounds: Rect::default(),
+            children: Vec::new(),
+            samples,
+            hovered: None,
+            labels,
+        }
+    }
+
+    fn btn_rect(&self, i: usize) -> Rect {
+        let gy = (self.bounds.height - Self::BTN_H) * 0.5;
+        Rect::new(12.0 + i as f64 * (Self::BTN_W + 4.0), gy, Self::BTN_W, Self::BTN_H)
+    }
+}
+
+impl Widget for MsaaRow {
+    fn type_name(&self) -> &'static str { "MsaaRow" }
+    fn bounds(&self) -> Rect { self.bounds }
+    fn set_bounds(&mut self, b: Rect) { self.bounds = b; }
+    fn children(&self) -> &[Box<dyn Widget>] { &self.children }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> { &mut self.children }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, available.width, Self::BTN_H + 8.0);
+        for i in 0..Self::TEXT.len() {
+            let r = self.btn_rect(i);
+            let s = self.labels[i].layout(Size::new(r.width, r.height));
+            self.labels[i].set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        }
+        Size::new(available.width, Self::BTN_H + 8.0)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let v = ctx.visuals();
+        let current = self.samples.get();
+
+        for i in 0..Self::TEXT.len() {
+            let r = self.btn_rect(i);
+            let active  = current == Self::VALS[i];
+            let hovered = self.hovered == Some(i);
+
+            let bg = if active { v.accent }
+                     else if hovered { v.widget_bg_hovered }
+                     else { v.widget_bg };
+            ctx.set_fill_color(bg);
+            ctx.begin_path();
+            ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
+            ctx.fill();
+
+            self.labels[i].set_text(Self::TEXT[i]);
+            let text_color = if active { Color::white() } else { v.text_color };
+            self.labels[i].set_color(text_color);
+
+            let lw = self.labels[i].bounds().width;
+            let lh = self.labels[i].bounds().height;
+            let lx = r.x + (r.width - lw) * 0.5;
+            let ly = r.y + (r.height - lh) * 0.5;
+            self.labels[i].set_bounds(Rect::new(lx, ly, lw, lh));
+
+            ctx.save();
+            ctx.translate(lx, ly);
+            paint_subtree(&mut self.labels[i], ctx);
+            ctx.restore();
+        }
+    }
+
+    fn on_event(&mut self, event: &Event) -> EventResult {
+        let hit = |p: agg_gui::Point| (0..Self::TEXT.len()).find(|&i| {
+            let r = self.btn_rect(i);
+            p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
+        });
+        match event {
+            Event::MouseMove { pos } => { self.hovered = hit(*pos); EventResult::Ignored }
+            Event::MouseDown { button: agg_gui::MouseButton::Left, pos, .. } => {
+                if let Some(i) = hit(*pos) {
+                    self.samples.set(Self::VALS[i]);
+                    return EventResult::Consumed;
+                }
+                EventResult::Ignored
+            }
+            _ => EventResult::Ignored,
+        }
+    }
+}
+
 // ── Run mode description label ────────────────────────────────────────────────
 
 /// Dynamic label beneath the run-mode buttons.
@@ -461,6 +573,7 @@ pub fn build_backend_panel(
     history:        Rc<RefCell<FrameHistory>>,
     screen_size:    Rc<Cell<(u32, u32)>>,
     show_inspector: Rc<Cell<bool>>,
+    msaa_samples:   Rc<Cell<u8>>,
     renderer_name:  &'static str,
     backend_name:   &'static str,
     on_reset:       impl FnMut() + 'static,
@@ -536,6 +649,22 @@ pub fn build_backend_panel(
                 history: Rc::clone(&history),
             }))
     ), 0.0);
+
+    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
+    col.push(Box::new(Separator::horizontal()), 0.0);
+    col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
+
+    // ── MSAA sample count ─────────────────────────────────────────────────────
+    //
+    // Applied at GL-context creation by the platform harness, so changing
+    // the value only takes effect on restart.  Label below the ComboBox
+    // surfaces that caveat so users don't think it's broken.
+    col.push(Box::new(
+        Label::new("MSAA (restart to apply)", Arc::clone(&font))
+            .with_font_size(11.0)
+            .with_margin(Insets::from_sides(12.0, 12.0, 2.0, 0.0))
+    ), 0.0);
+    col.push(Box::new(MsaaRow::new(Arc::clone(&font), Rc::clone(&msaa_samples))), 0.0);
 
     col.push(Box::new(SizedBox::new().with_height(8.0)), 0.0);
     col.push(Box::new(Separator::horizontal()), 0.0);

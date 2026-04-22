@@ -535,6 +535,13 @@ pub fn build_demo_ui(
     let primary_weight_cell: Rc<Cell<f64>> = Rc::new(Cell::new(
         initial_state.as_ref().map(|s| s.primary_weight).unwrap_or(1.0 / 3.0)
     ));
+    // OS-surface MSAA sample count.  0 = off (halo-AA only); the platform
+    // harness reads this from the persisted state file at boot to set up
+    // the GL config, so runtime edits only take effect on restart.  Panel
+    // text below makes this explicit.
+    let msaa_samples_cell: Rc<Cell<u8>> = Rc::new(Cell::new(
+        initial_state.as_ref().map(|s| s.msaa_samples).unwrap_or(0)
+    ));
     // Shared font-index cell — both the System window's combo and the
     // LCD Subpixel demo's combo bind to this cell, so a font picked in
     // either window updates the other live.  Seeded from the persisted
@@ -582,6 +589,7 @@ pub fn build_demo_ui(
         faux_weight:     Rc::clone(&faux_weight_cell),
         faux_italic:     Rc::clone(&faux_italic_cell),
         primary_weight:  Rc::clone(&primary_weight_cell),
+        msaa_samples:    Rc::clone(&msaa_samples_cell),
     });
 
     // ── Reset cells — one per window ───────────────────────────────────────────
@@ -952,6 +960,7 @@ pub fn build_demo_ui(
         Rc::clone(&frame_history),
         Rc::clone(&screen_size),
         Rc::clone(&show_inspector),
+        Rc::clone(&msaa_samples_cell),
         renderer_name,
         backend_name,
         on_reset_all,
@@ -1053,6 +1062,7 @@ pub fn build_demo_ui(
         faux_weight:     Rc::clone(&faux_weight_cell),
         faux_italic:     Rc::clone(&faux_italic_cell),
         primary_weight:  Rc::clone(&primary_weight_cell),
+        msaa_samples:    Rc::clone(&msaa_samples_cell),
         z_order:         Rc::clone(&z_order_cell),
     };
 

@@ -87,6 +87,11 @@ pub struct SavedState {
     /// LCD primary-weight tap ratio.
     pub primary_weight:  f64,
 
+    /// OS GL-surface MSAA sample count.  0 = off (halo-AA does all work);
+    /// 2/4/8/16 request hardware multisampling at context creation.
+    /// Change takes effect on next launch.
+    pub msaa_samples:    u8,
+
     /// Window z-order — list of titles (DEMOS / TESTS / About) in
     /// **back-to-front** order.  Recorded each time a window is raised
     /// (click-to-front or sidebar rising-edge).  Empty / missing on
@@ -165,6 +170,7 @@ impl SavedState {
         out.push_str(&format!("faux_weight={}\n",    self.faux_weight));
         out.push_str(&format!("faux_italic={}\n",    self.faux_italic));
         out.push_str(&format!("primary_weight={}\n", self.primary_weight));
+        out.push_str(&format!("msaa={}\n",           self.msaa_samples));
         out
     }
 
@@ -190,6 +196,7 @@ impl SavedState {
         let mut faux_weight:     f64 = 0.0;
         let mut faux_italic:     f64 = 0.0;
         let mut primary_weight:  f64 = 1.0 / 3.0;
+        let mut msaa_samples:    u8  = 0;
         let mut z_order:         Vec<String> = Vec::new();
 
         for line in s.lines() {
@@ -221,6 +228,7 @@ impl SavedState {
                 "faux_weight"     => { faux_weight    = val.parse().unwrap_or(0.0); }
                 "faux_italic"     => { faux_italic    = val.parse().unwrap_or(0.0); }
                 "primary_weight"  => { primary_weight = val.parse().unwrap_or(1.0 / 3.0); }
+                "msaa"            => { msaa_samples  = val.parse().unwrap_or(0); }
                 "z_order"         => {
                     z_order = val.split('|')
                         .filter(|s| !s.is_empty())
@@ -278,6 +286,7 @@ impl SavedState {
             faux_weight,
             faux_italic,
             primary_weight,
+            msaa_samples,
             z_order,
         })
     }
@@ -344,6 +353,11 @@ pub struct StateAccessor {
     pub faux_weight:     Rc<Cell<f64>>,
     pub faux_italic:     Rc<Cell<f64>>,
     pub primary_weight:  Rc<Cell<f64>>,
+    /// OS-level MSAA sample count (0/2/4/8/16).  Read by the backend panel
+    /// dropdown; the platform harness reads the persisted value at boot to
+    /// configure the GL surface — changing this at runtime therefore only
+    /// takes effect after a restart.
+    pub msaa_samples:    Rc<Cell<u8>>,
 
     /// Shared z-order tracker — back-to-front list of window titles
     /// updated whenever any `Window` fires its `on_raised` callback.
@@ -384,6 +398,7 @@ impl StateAccessor {
             faux_weight:       self.faux_weight.get(),
             faux_italic:       self.faux_italic.get(),
             primary_weight:    self.primary_weight.get(),
+            msaa_samples:      self.msaa_samples.get(),
             z_order:           self.z_order.borrow().clone(),
         }
     }
@@ -449,6 +464,7 @@ mod tests {
             faux_weight: 0.0,
             faux_italic: 0.0,
             primary_weight: 1.0 / 3.0,
+            msaa_samples: 0,
             z_order: Vec::new(),
         };
 

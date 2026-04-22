@@ -221,12 +221,18 @@ pub fn expand_aa_halo(
             if flag[k] == 0 { continue; }
             let a = p[k];
             let b = p[(k + 1) % 3];
+            let c = p[(k + 2) % 3];
             let dx = b[0] - a[0];
             let dy = b[1] - a[1];
             let len = (dx * dx + dy * dy).sqrt();
             if len < 1e-6 { continue; }
-            let nx =  dy / len * halo_px;
-            let ny = -dx / len * halo_px;
+            // Right-hand perpendicular, flipped if it points into the
+            // triangle (toward `c`).  See `tessellate_path_aa` for the
+            // full explanation.
+            let mut nx =  dy / len * halo_px;
+            let mut ny = -dx / len * halo_px;
+            let dot_c = nx * (c[0] - a[0]) + ny * (c[1] - a[1]);
+            if dot_c > 0.0 { nx = -nx; ny = -ny; }
             let base = out_verts.len() as u32;
             out_verts.push([a[0],      a[1],      1.0]);
             out_verts.push([b[0],      b[1],      1.0]);
@@ -288,9 +294,16 @@ pub fn tessellate_path_aa<VS: VertexSource>(
     }
     out_indices.extend_from_slice(in_indices);
 
-    // Halo strips — one quad per boundary edge, outward from the polygon.
-    // Tess2 emits triangles in CCW order with the fill on the LEFT of each
-    // edge direction, so "right-of-edge" = OUTSIDE the polygon in Y-up.
+    // Halo strips — one quad per boundary edge, always extruded AWAY from
+    // the triangle's third vertex.
+    //
+    // Mirrors MatterCAD agg-sharp `AARenderTesselator.Draw1EdgeTriangle`:
+    // compute the right-hand perpendicular of the edge, then flip its sign
+    // if it points toward the third (non-edge) vertex.  A single winding
+    // assumption isn't reliable — tess2 can emit CW triangles for CW-input
+    // polygons or for internal regions of self-intersecting inputs, and
+    // those would have gotten their halo pushed INWARD (invisible), which
+    // is what produced the jagged lion silhouette edges.
     let n_tris = n_indices / 3;
     for t in 0..n_tris {
         let ia = in_indices[t * 3    ] as usize;
@@ -311,21 +324,26 @@ pub fn tessellate_path_aa<VS: VertexSource>(
             if flag[k] == 0 { continue; }
             let a = p[k];
             let b = p[(k + 1) % 3];
+            let c = p[(k + 2) % 3]; // third vertex — the "nonAaPoint"
             let dx = b[0] - a[0];
             let dy = b[1] - a[1];
             let len = (dx * dx + dy * dy).sqrt();
             if len < 1e-6 { continue; }
-            // Y-up CCW traversal → interior on LEFT, outward on RIGHT.
-            // Right-hand perpendicular of (dx, dy) is (dy, -dx).
-            let nx =  dy / len * halo_px;
-            let ny = -dx / len * halo_px;
+            // Right-hand perpendicular of (dx, dy).  Sign is flipped below
+            // if it ends up pointing toward `c` (i.e. into the triangle).
+            let mut nx =  dy / len * halo_px;
+            let mut ny = -dx / len * halo_px;
+            let dot_c = nx * (c[0] - a[0]) + ny * (c[1] - a[1]);
+            if dot_c > 0.0 {
+                nx = -nx;
+                ny = -ny;
+            }
 
             let base = out_verts.len() as u32;
             out_verts.push([a[0],      a[1],      1.0]); // 0: inner a
             out_verts.push([b[0],      b[1],      1.0]); // 1: inner b
             out_verts.push([a[0] + nx, a[1] + ny, 0.0]); // 2: outer a
             out_verts.push([b[0] + nx, b[1] + ny, 0.0]); // 3: outer b
-            // Two tris; winding doesn't matter (2-D, no cull).
             out_indices.extend_from_slice(&[
                 base, base + 1, base + 2,
                 base + 1, base + 3, base + 2,

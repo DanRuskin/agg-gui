@@ -136,24 +136,39 @@ fn main() {
             .with_fullscreen(Some(Fullscreen::Borderless(None)));
     }
 
-    // AA is handled analytically in-shader via tess2 edge-flag halo strips,
-    // so we explicitly do NOT request MSAA — hardware multisampling doubles
-    // memory bandwidth and doesn't help sub-pixel text.
-    let template = ConfigTemplateBuilder::new().with_alpha_size(0);
+    // MSAA sample count comes from the persisted Backend panel setting.
+    // 0 = off (analytic halo-AA in-shader handles triangle edges);
+    // 2/4/8/16 = hardware multisampling.  Applied at context-creation time,
+    // so the user has to restart for a new value to take effect — the
+    // Backend panel's row label ("MSAA (restart to apply)") calls that out.
+    let msaa_request: u8 = initial_state.as_ref().map(|s| s.msaa_samples).unwrap_or(0);
+    // Glutin's `with_multisampling` asserts the argument is a power of two,
+    // and 0 fails that check — so we only call it when the user actually
+    // asked for MSAA.  Omitting the hint leaves sample-count as "any", and
+    // the picker below tie-breaks toward a 0-sample config to honour the
+    // off setting.
+    let mut template = ConfigTemplateBuilder::new().with_alpha_size(0);
+    if matches!(msaa_request, 2 | 4 | 8 | 16) {
+        template = template.with_multisampling(msaa_request);
+    }
     let display_builder =
         DisplayBuilder::new().with_window_attributes(Some(window_attributes));
 
     let (window, gl_config) = display_builder
         .build(&event_loop, template, |configs| {
-            // Pick the MAX-samples config — MSAA is what provides AA for the
-            // direct-GL tessellated-glyph path (wrapped text paragraphs that
-            // bypass the Label backbuffer cache).  MSAA samples live at
-            // sub-pixel offsets within each pixel, so pixel-aligned integer
-            // triangle edges still produce 0 % / 100 % coverage (no fringe)
-            // as long as the CTM is integer — which `paint_subtree`'s
-            // enforce-integer-bounds snap guarantees on widgets that opt in.
+            // Pick the config whose sample count is closest to (but ≤) the
+            // requested value.  `with_multisampling(0)` at template level
+            // already means "no MSAA required", but some drivers enumerate
+            // both 0-sample and high-sample configs regardless — prefer the
+            // one that actually matches the request so the Backend panel
+            // setting stays authoritative.
+            let want = msaa_request as u8;
             configs
-                .reduce(|a, b| if b.num_samples() > a.num_samples() { b } else { a })
+                .reduce(|a, b| {
+                    let a_err = (a.num_samples() as i32 - want as i32).abs();
+                    let b_err = (b.num_samples() as i32 - want as i32).abs();
+                    if b_err < a_err { b } else { a }
+                })
                 .expect("no suitable GL config")
         })
         .expect("DisplayBuilder::build");

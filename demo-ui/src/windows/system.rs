@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use agg_gui::{
     font_settings, FlexColumn, FlexRow, Font, Label,
-    ScrollView, Separator, SizedBox, Slider, TextField, ToggleSwitch, Widget,
+    ScrollView, Separator, SizedBox, Slider, TabView, TextField, ToggleSwitch, Widget,
 };
 
 // ---------------------------------------------------------------------------
@@ -50,6 +50,10 @@ pub struct SystemCells {
     pub faux_weight:     Rc<Cell<f64>>,
     pub faux_italic:     Rc<Cell<f64>>,
     pub primary_weight:  Rc<Cell<f64>>,
+    /// GL surface MSAA sample count (0/2/4/8/16).  Persisted via
+    /// `StateAccessor::msaa_samples`; surfaced in the Render tab with an
+    /// "applies on next launch" caveat.
+    pub msaa_samples:    Rc<Cell<u8>>,
 }
 
 thread_local! {
@@ -213,6 +217,24 @@ pub fn default_font_index() -> usize {
 // ---------------------------------------------------------------------------
 
 pub fn system_view(font: Arc<Font>) -> Box<dyn Widget> {
+    // Split into two tabs so typography and OS-render settings don't
+    // share a single wall-of-sliders.  Content body builders live below
+    // as `build_font_tab` / `build_render_tab` so the TabView builder
+    // can stay readable.
+    let font_tab   = build_font_tab(Arc::clone(&font));
+    let render_tab = build_render_tab(Arc::clone(&font));
+
+    Box::new(
+        TabView::new(Arc::clone(&font))
+            .with_font_size(13.0)
+            .add_tab("Font",   font_tab)
+            .add_tab("Render", render_tab)
+    )
+}
+
+// ── Font tab ─────────────────────────────────────────────────────────────────
+
+fn build_font_tab(font: Arc<Font>) -> Box<dyn Widget> {
     let cells = cells();
     let mut col = FlexColumn::new().with_gap(10.0).with_padding(14.0);
 
@@ -227,7 +249,6 @@ pub fn system_view(font: Arc<Font>) -> Box<dyn Widget> {
         )
     };
 
-    col.push(heading("System"), 0.0);
     col.push(body(
         "Process-wide text rendering settings.  Changes apply on the next frame.",
     ), 0.0);
@@ -401,6 +422,46 @@ pub fn system_view(font: Arc<Font>) -> Box<dyn Widget> {
     col.push(style_row("Primary Weight", 0.0, 1.0, 0.01,
         Rc::clone(&cells.primary_weight),
         Box::new(font_settings::set_primary_weight)), 0.0);
+
+    Box::new(ScrollView::new(Box::new(col)))
+}
+
+// ── Render tab ───────────────────────────────────────────────────────────────
+
+fn build_render_tab(font: Arc<Font>) -> Box<dyn Widget> {
+    let cells = cells();
+    let mut col = FlexColumn::new().with_gap(10.0).with_padding(14.0);
+
+    let heading = |text: &str| -> Box<dyn Widget> {
+        Box::new(Label::new(text, Arc::clone(&font)).with_font_size(16.0))
+    };
+    let body = |text: &str| -> Box<dyn Widget> {
+        Box::new(
+            Label::new(text, Arc::clone(&font))
+                .with_font_size(13.0)
+                .with_wrap(true),
+        )
+    };
+
+    col.push(body(
+        "OS-level rendering settings.  Changes here require the app to restart \
+         to take effect — the GL surface is created once at startup.",
+    ), 0.0);
+    col.push(Box::new(Separator::horizontal()), 0.0);
+
+    // ── MSAA ─────────────────────────────────────────────────────────────
+    col.push(heading("MSAA"), 0.0);
+    col.push(body(
+        "Hardware multi-sample anti-aliasing for direct-GL content (e.g. the \
+         3D Animation cube grid).  Widget / text rendering uses analytic \
+         halo-AA instead and is unaffected.",
+    ), 0.0);
+    col.push(Box::new(
+        crate::backend_panel::MsaaRow::new(Arc::clone(&font), Rc::clone(&cells.msaa_samples))
+    ), 0.0);
+    col.push(body(
+        "Changes apply on the next launch.",
+    ), 0.0);
 
     Box::new(ScrollView::new(Box::new(col)))
 }
