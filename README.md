@@ -6,6 +6,8 @@ The rendering model is immediate-mode: full redraw every frame, deterministic la
 
 > Part of the [rust-apps](https://github.com/larsbrubaker/rust-apps) suite — a collection of Rust graphics and geometry libraries by Lars Brubaker.
 
+[![crates.io](https://img.shields.io/crates/v/agg-gui.svg)](https://crates.io/crates/agg-gui)
+[![docs.rs](https://docs.rs/agg-gui/badge.svg)](https://docs.rs/agg-gui)
 [![CI](https://github.com/larsbrubaker/agg-gui/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/larsbrubaker/agg-gui/actions/workflows/ci.yml)
 [![Demo](https://github.com/larsbrubaker/agg-gui/actions/workflows/deploy-demo.yml/badge.svg?branch=main&event=push)](https://larsbrubaker.github.io/agg-gui/)
 
@@ -14,6 +16,24 @@ The rendering model is immediate-mode: full redraw every frame, deterministic la
 > **[Open interactive WASM demo →](https://larsbrubaker.github.io/agg-gui/)**
 
 [![agg-gui demo: System and Scrolling windows over the animated bar-grid background](readme_hero.png)](https://larsbrubaker.github.io/agg-gui/)
+
+## Install
+
+The library crate is published to crates.io:
+
+```sh
+cargo add agg-gui
+```
+
+```toml
+[dependencies]
+agg-gui = "0.1"
+# Optional: winit event-type adapters (for desktop hosts)
+# agg-gui = { version = "0.1", features = ["winit-adapter", "clipboard"] }
+```
+
+Only the `agg-gui` library crate is published — the demo crates
+(`demo-native`, `demo-wasm`, `demo-gl`, `demo-ui`) stay in-repo.
 
 ## Features
 
