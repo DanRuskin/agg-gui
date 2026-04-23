@@ -173,6 +173,96 @@ canvas.addEventListener("paste", (e: Event) => {
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
+// --- Touch support ---
+//
+// Single-touch is forwarded as mouse button 0 (down / move / up) so
+// every existing widget works on mobile with zero changes.  Two-finger
+// pinch becomes `on_mouse_wheel` at the pinch midpoint, matching the
+// wheel-zoom behaviour already wired for desktop.  Anything beyond two
+// fingers is intentionally ignored — real multi-touch (egui's
+// "Multi Touch" demo) would need a new Event::Touch variant and
+// widget-level handling.
+//
+// `touch-action: none` on the canvas (index.html) prevents the browser
+// from stealing these events for scrolling or pinch-to-zoom.
+
+type TouchFn = (id: number, x: number, y: number, force: number) => void;
+type TouchEndFn = (id: number) => void;
+
+/// Tracks which `Touch.identifier` the mouse emulation is currently
+/// following.  When that touch lifts, we release the mouse; a second
+/// finger arriving (or the first being replaced) never promotes itself
+/// to mouse, matching the "drag starts with one finger" contract.
+let primaryTouchId: number | null = null;
+
+function touchPos(t: Touch): [number, number] {
+  const rect = canvas.getBoundingClientRect();
+  const dpr  = window.devicePixelRatio || 1;
+  return [(t.clientX - rect.left) * dpr, (t.clientY - rect.top) * dpr];
+}
+
+canvas.addEventListener("touchstart", (e) => {
+  if (!wasmModule) return;
+  e.preventDefault();
+  canvas.focus();
+  // Forward every new touch to the multi-touch aggregator; all
+  // fingers, not just the first, contribute to pinch / rotate / pan.
+  for (const t of Array.from(e.changedTouches)) {
+    const [x, y] = touchPos(t);
+    (wasmModule["on_touch_start"] as TouchFn)(t.identifier, x, y, t.force ?? 0);
+  }
+  // ALSO map the first finger to a mouse button-0 press so widgets
+  // that only understand mouse input still respond to single-finger
+  // taps.  Once a primary is established, later touches skip this.
+  if (primaryTouchId === null && e.touches.length >= 1) {
+    const t = e.touches[0];
+    primaryTouchId = t.identifier;
+    const [x, y] = touchPos(t);
+    (wasmModule["on_mouse_move"] as MouseXYFn)(x, y);
+    (wasmModule["on_mouse_down"] as MouseXYBFn)(x, y, 0);
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (e) => {
+  if (!wasmModule) return;
+  e.preventDefault();
+  for (const t of Array.from(e.changedTouches)) {
+    const [x, y] = touchPos(t);
+    (wasmModule["on_touch_move"] as TouchFn)(t.identifier, x, y, t.force ?? 0);
+    // Primary finger also drives the mouse cursor.
+    if (t.identifier === primaryTouchId) {
+      (wasmModule["on_mouse_move"] as MouseXYFn)(x, y);
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchend", (e) => {
+  if (!wasmModule) return;
+  e.preventDefault();
+  for (const t of Array.from(e.changedTouches)) {
+    (wasmModule["on_touch_end"] as TouchEndFn)(t.identifier);
+    if (t.identifier === primaryTouchId) {
+      const [x, y] = touchPos(t);
+      (wasmModule["on_mouse_up"] as MouseXYBFn)(x, y, 0);
+      (wasmModule["on_mouse_leave"] as VoidFn)();
+      primaryTouchId = null;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchcancel", (e) => {
+  if (!wasmModule) return;
+  for (const t of Array.from(e.changedTouches)) {
+    (wasmModule["on_touch_cancel"] as TouchEndFn)(t.identifier);
+    if (t.identifier === primaryTouchId) {
+      const [x, y] = touchPos(t);
+      (wasmModule["on_mouse_up"] as MouseXYBFn)(x, y, 0);
+      (wasmModule["on_mouse_leave"] as VoidFn)();
+      primaryTouchId = null;
+    }
+  }
+});
+
 // --- Resize observer ---
 // Canvas size changes are picked up automatically by the animation loop.
 const ro = new ResizeObserver(() => {

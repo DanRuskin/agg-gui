@@ -918,6 +918,10 @@ pub struct App {
     /// Optional global key handler called *before* dispatching to the focused widget.
     /// Returns `true` if the key was handled globally (suppresses focused dispatch).
     global_key_handler: Option<Box<dyn FnMut(Key, Modifiers) -> bool>>,
+    /// Multi-touch gesture recogniser.  Platform shells feed raw touches
+    /// through [`App::on_touch_start/move/end/cancel`]; widgets read the
+    /// per-frame aggregate via [`crate::current_multi_touch`].
+    touch_state: crate::touch_state::TouchState,
 }
 
 impl App {
@@ -930,6 +934,7 @@ impl App {
             captured: None,
             viewport_height: 1.0,
             global_key_handler: None,
+            touch_state: crate::touch_state::TouchState::new(),
         }
     }
 
@@ -974,6 +979,11 @@ impl App {
     /// after `paint` returns to decide whether to schedule continuous redraws.
     pub fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         crate::animation::clear_tick();
+        // Recompute the multi-touch aggregate once per paint and publish
+        // to the thread-local — widgets read it during `on_event` or
+        // `paint` without an explicit `&App` reference.
+        self.touch_state.update_gesture();
+        crate::touch_state::set_current(self.touch_state.current());
         let scale = crate::device_scale::device_scale();
         if (scale - 1.0).abs() > 1e-6 {
             ctx.save();
@@ -1163,6 +1173,56 @@ impl App {
     pub fn on_mouse_leave(&mut self) {
         crate::cursor::reset_cursor_icon();
         self.dispatch_mouse_move(Point::new(-1.0, -1.0));
+    }
+
+    // --- Touch ingestion ---
+    //
+    // Raw touches go into the multi-touch gesture recogniser; widgets
+    // read `current_multi_touch()` each frame.  Platform shells ALSO
+    // route the first finger through the existing `on_mouse_*` entry
+    // points so widgets that only understand mouse input keep working
+    // without changes.  Coordinates are the same physical-pixel Y-down
+    // units the mouse entry points accept.
+    pub fn on_touch_start(
+        &mut self,
+        device:  crate::touch_state::TouchDeviceId,
+        id:      crate::touch_state::TouchId,
+        screen_x: f64, screen_y: f64,
+        force:    Option<f32>,
+    ) {
+        let pos = self.flip_y(screen_x, screen_y);
+        self.touch_state.on_start(device, id, pos, force);
+    }
+    pub fn on_touch_move(
+        &mut self,
+        device:  crate::touch_state::TouchDeviceId,
+        id:      crate::touch_state::TouchId,
+        screen_x: f64, screen_y: f64,
+        force:    Option<f32>,
+    ) {
+        let pos = self.flip_y(screen_x, screen_y);
+        self.touch_state.on_move(device, id, pos, force);
+    }
+    pub fn on_touch_end(
+        &mut self,
+        device:  crate::touch_state::TouchDeviceId,
+        id:      crate::touch_state::TouchId,
+    ) {
+        self.touch_state.on_end_or_cancel(device, id);
+    }
+    pub fn on_touch_cancel(
+        &mut self,
+        device:  crate::touch_state::TouchDeviceId,
+        id:      crate::touch_state::TouchId,
+    ) {
+        self.touch_state.on_end_or_cancel(device, id);
+    }
+    /// Current number of fingers down across all devices.  Used by
+    /// widgets that want to know the gesture has *begun* before the
+    /// first frame has had a chance to produce a delta (where
+    /// `current_multi_touch()` may still be `None`).
+    pub fn active_touch_count(&self) -> usize {
+        self.touch_state.active_count()
     }
 
     // --- Private helpers ---

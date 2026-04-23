@@ -45,6 +45,7 @@ pub mod lcd_gfx_ctx;
 pub mod layout_props;
 pub mod screenshot;
 pub mod text;
+pub mod touch_state;
 pub mod persistence;
 pub mod theme;
 pub mod widget;
@@ -78,6 +79,7 @@ pub use geometry::{Point, Rect, Size};
 pub use gfx_ctx::GfxCtx;
 pub use layout_props::{HAnchor, Insets, VAnchor, WidgetBase, resolve_fit_or_stretch};
 pub use text::{Font, TextMetrics, measure_text_metrics};
+pub use touch_state::{current_multi_touch, MultiTouchInfo, TouchDeviceId, TouchId, TouchPhase};
 pub use undo::{DoUndoActions, UndoBuffer, UndoRedoCommand};
 pub use widget::{App, InspectorNode, Widget, collect_inspector_nodes};
 pub use widgets::{Button, Checkbox, ColorPicker, CollapsingHeader, ComboBox, Container, DragValue, FlexColumn, FlexRow,

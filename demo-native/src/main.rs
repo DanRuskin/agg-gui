@@ -48,7 +48,7 @@ use glutin::surface::{GlSurface, SurfaceAttributesBuilder, WindowSurface};
 use glutin_winit::DisplayBuilder;
 use raw_window_handle::HasWindowHandle;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, Event, WindowEvent};
+use winit::event::{ElementState, Event, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, NamedKey};
 use winit::window::{Fullscreen, WindowAttributes};
@@ -286,6 +286,11 @@ fn main() {
 
     let mut cursor_x    = 0.0f64;
     let mut cursor_y    = 0.0f64;
+    // First-finger tracking for `WindowEvent::Touch` → mouse emulation.
+    // Second+ fingers are dropped so the widget tree sees exactly one
+    // pointer, matching the single-touch contract used by the web
+    // harness.
+    let mut primary_touch_id: Option<u64> = None;
     let mut last_frame_ms = 0.0f64;
     let mut win_w       = size.width.max(1);
     let mut win_h       = size.height.max(1);
@@ -473,6 +478,83 @@ fn main() {
                         dy = 0.0;
                     }
                     app.on_mouse_wheel_xy(cursor_x, cursor_y, dx, dy);
+                }
+                Event::WindowEvent {
+                    event: WindowEvent::Touch(Touch { phase, location, id, force, .. }), ..
+                } => {
+                    // Touch handling: every finger is forwarded to the
+                    // multi-touch aggregator so gestures can work; the
+                    // FIRST finger is *additionally* mapped to the mouse
+                    // emulation so widgets that only understand mouse
+                    // input (most of the widget tree) still respond to
+                    // single-finger taps / drags.
+                    let tx       = location.x;
+                    let ty       = location.y;
+                    let touch_id = agg_gui::TouchId(id);
+                    let device   = agg_gui::TouchDeviceId(0);
+                    let f = force.map(|force| match force {
+                        winit::event::Force::Calibrated { force, max_possible_force, .. } =>
+                            (force / max_possible_force) as f32,
+                        winit::event::Force::Normalized(v) => v as f32,
+                    });
+                    match phase {
+                        TouchPhase::Started => {
+                            app.on_touch_start(device, touch_id, tx, ty, f);
+                            if primary_touch_id.is_none() {
+                                primary_touch_id = Some(id);
+                                cursor_x = tx;
+                                cursor_y = ty;
+                                app.on_mouse_move(cursor_x, cursor_y);
+                                app.on_mouse_down(
+                                    cursor_x, cursor_y,
+                                    agg_gui::MouseButton::Left,
+                                    current_mods,
+                                );
+                                mouse_buttons_down =
+                                    mouse_buttons_down.saturating_add(1);
+                            }
+                        }
+                        TouchPhase::Moved => {
+                            app.on_touch_move(device, touch_id, tx, ty, f);
+                            if primary_touch_id == Some(id) {
+                                cursor_x = tx;
+                                cursor_y = ty;
+                                app.on_mouse_move(cursor_x, cursor_y);
+                            }
+                        }
+                        TouchPhase::Ended => {
+                            app.on_touch_end(device, touch_id);
+                            if primary_touch_id == Some(id) {
+                                cursor_x = tx;
+                                cursor_y = ty;
+                                app.on_mouse_up(
+                                    cursor_x, cursor_y,
+                                    agg_gui::MouseButton::Left,
+                                    current_mods,
+                                );
+                                app.on_mouse_leave();
+                                mouse_buttons_down =
+                                    mouse_buttons_down.saturating_sub(1);
+                                primary_touch_id = None;
+                            }
+                        }
+                        TouchPhase::Cancelled => {
+                            app.on_touch_cancel(device, touch_id);
+                            if primary_touch_id == Some(id) {
+                                cursor_x = tx;
+                                cursor_y = ty;
+                                app.on_mouse_up(
+                                    cursor_x, cursor_y,
+                                    agg_gui::MouseButton::Left,
+                                    current_mods,
+                                );
+                                app.on_mouse_leave();
+                                mouse_buttons_down =
+                                    mouse_buttons_down.saturating_sub(1);
+                                primary_touch_id = None;
+                            }
+                        }
+                    }
                 }
                 Event::AboutToWait => {
                     // Decide whether anything has actually changed since the

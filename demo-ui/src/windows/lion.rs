@@ -246,6 +246,19 @@ impl Widget for LionView {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        // Fold in this frame's multi-touch gesture BEFORE reading state
+        // into locals.  When two or more fingers are active we consume
+        // zoom / rotation / pan from `MultiTouchInfo` instead of the
+        // single-finger grip math, and invalidate the grip so the
+        // mouse-up path doesn't re-anchor to a stale snapshot.
+        if let Some(mt) = agg_gui::current_multi_touch() {
+            self.mouse_scale = (self.mouse_scale * mt.zoom_delta as f64)
+                .clamp(0.05, 50.0);
+            self.angle += mt.rotation_delta as f64;
+            self.rotate_grip = None;
+            agg_gui::animation::request_tick();
+        }
+
         let w = self.bounds.width;
         let h = self.bounds.height;
         if w < 4.0 || h < 4.0 { return; }
@@ -315,8 +328,16 @@ impl Widget for LionView {
                 EventResult::Consumed
             }
             Event::MouseMove { pos } => {
+                // Suppress single-finger rotate while a multi-touch
+                // gesture is in flight: the first finger still fires
+                // MouseMove events (we emulate it as the mouse cursor),
+                // but the real zoom/rotation is driven by the gesture
+                // aggregate.  The skew branch has no multi-touch
+                // analogue, so it stays active.
                 match self.drag {
-                    Drag::Rotate => { self.apply_rotate(*pos); }
+                    Drag::Rotate if agg_gui::current_multi_touch().is_none() =>
+                        self.apply_rotate(*pos),
+                    Drag::Rotate => {}
                     Drag::Skew   => { self.apply_skew(*pos); }
                     Drag::None   => return EventResult::Ignored,
                 }
@@ -369,9 +390,9 @@ pub fn lion_demo(font: Arc<Font>) -> Box<dyn Widget> {
 
     let alp_label = Label::new("Alpha", Arc::clone(&font)).with_font_size(12.0);
     let note = Label::new(
-        "Left-drag: rotate + scale (relative to click).  Wheel: zoom.  \
-         Right-drag: skew.  MSAA is off; smooth silhouette = halo-AA edges; \
-         fresh tess2 every frame.",
+        "Left-drag: rotate + scale (relative to click).  Wheel / pinch: \
+         zoom.  Two-finger twist: rotate.  Right-drag: skew.  MSAA is off; \
+         smooth silhouette = halo-AA edges; fresh tess2 every frame.",
         Arc::clone(&font)
     ).with_font_size(11.0);
 

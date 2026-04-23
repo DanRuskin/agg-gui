@@ -595,6 +595,70 @@ pub fn on_mouse_leave() {
     });
 }
 
+// ── Multi-touch entry points ───────────────────────────────────────────────
+//
+// Each active touch is forwarded here by the JS harness.  The Rust side
+// maintains the gesture-recogniser (`App::touch_state`) and publishes the
+// frame-aggregated `MultiTouchInfo` to a thread-local that widgets read.
+// Single-finger touches continue to flow through `on_mouse_*` so
+// existing widgets work unchanged.
+
+#[wasm_bindgen]
+pub fn on_touch_start(id: u32, x: f64, y: f64, force: f64) {
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            let f = if force > 0.0 { Some(force as f32) } else { None };
+            app.on_touch_start(
+                agg_gui::TouchDeviceId(0),
+                agg_gui::TouchId(id as u64),
+                x, y, f,
+            );
+        }
+    });
+    mark_dirty();
+}
+
+#[wasm_bindgen]
+pub fn on_touch_move(id: u32, x: f64, y: f64, force: f64) {
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            let f = if force > 0.0 { Some(force as f32) } else { None };
+            app.on_touch_move(
+                agg_gui::TouchDeviceId(0),
+                agg_gui::TouchId(id as u64),
+                x, y, f,
+            );
+        }
+    });
+    mark_dirty();
+}
+
+#[wasm_bindgen]
+pub fn on_touch_end(id: u32) {
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_touch_end(
+                agg_gui::TouchDeviceId(0),
+                agg_gui::TouchId(id as u64),
+            );
+        }
+    });
+    mark_dirty();
+}
+
+#[wasm_bindgen]
+pub fn on_touch_cancel(id: u32) {
+    DEMO_APP.with(|cell| {
+        if let Some(app) = cell.borrow_mut().as_mut() {
+            app.on_touch_cancel(
+                agg_gui::TouchDeviceId(0),
+                agg_gui::TouchId(id as u64),
+            );
+        }
+    });
+    mark_dirty();
+}
+
 #[wasm_bindgen]
 pub fn on_key_down(key_str: &str, shift: bool, ctrl: bool, alt: bool, meta: bool) {
     if let Some(key) = parse_js_key(key_str) {
