@@ -38,7 +38,6 @@ pub struct Slider {
     /// Fixed decimals for the value label — overrides the step-based
     /// auto-format when `Some`.  Matches `DragValue::with_decimals`.
     decimals: Option<usize>,
-    font: Arc<Font>,
     font_size: f64,
     dragging: bool,
     focused: bool,
@@ -79,7 +78,6 @@ impl Slider {
             step: (max - min) / 100.0,
             show_value: true,
             decimals: None,
-            font,
             font_size,
             dragging: false,
             focused: false,
@@ -289,7 +287,6 @@ impl Widget for Slider {
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let v = ctx.visuals();
-        let w = self.bounds.width;
         let h = self.bounds.height;
         let cy = h * 0.5;
 

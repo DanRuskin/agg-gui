@@ -1,0 +1,98 @@
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use agg_gui::{InspectorNode, Rect};
+
+use crate::backend_panel::FrameHistory;
+use crate::state::StateAccessor;
+
+// ── Platform hook ─────────────────────────────────────────────────────────────
+
+/// Which host shell is running the demo.  Consumed by the System window's
+/// Render tab so platform-specific controls (MSAA as a five-value segmented
+/// selector on native vs. a boolean on the web, "Relaunch" vs "Refresh"
+/// button label) stay inside demo-ui — demo-native and demo-wasm only
+/// declare which variant they are and hand in the hook closure that
+/// actually performs the platform-specific restart.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PlatformKind {
+    Native,
+    Web,
+}
+
+/// Platform-specific hooks that demo-ui calls from the Render tab.
+#[derive(Clone)]
+pub struct PlatformHooks {
+    pub kind: PlatformKind,
+    /// MSAA sample count actually in effect on the currently-running GL
+    /// surface.  Native hosts pass `gl_config.num_samples()`; web hosts
+    /// pass `4` when `antialias: true` was honoured at canvas creation,
+    /// `0` otherwise.  The Render tab compares this to the pending
+    /// `msaa_samples` cell so the Relaunch / Refresh button only
+    /// activates when the user has actually changed something.
+    pub running_msaa: u8,
+    /// Invoked when the user clicks the Render tab's Relaunch / Refresh
+    /// button.  Expected behaviour:
+    ///   - **Native**: flush any pending save, spawn a fresh copy of the
+    ///     process, exit the current one so the new GL surface picks up
+    ///     the saved MSAA request.
+    ///   - **Web**: call `window.location.reload()` so the browser
+    ///     re-creates the canvas with the saved `antialias` flag.
+    pub on_reload: Rc<dyn Fn()>,
+}
+
+impl PlatformHooks {
+    pub fn native(running_msaa: u8, on_reload: impl Fn() + 'static) -> Self {
+        Self {
+            kind: PlatformKind::Native,
+            running_msaa,
+            on_reload: Rc::new(on_reload),
+        }
+    }
+    pub fn web(running_msaa: u8, on_reload: impl Fn() + 'static) -> Self {
+        Self {
+            kind: PlatformKind::Web,
+            running_msaa,
+            on_reload: Rc::new(on_reload),
+        }
+    }
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
+/// Handles returned by `build_demo_ui` — shared cells used by the platform harness.
+pub struct DemoHandles {
+    pub show_inspector: Rc<Cell<bool>>,
+    pub inspector_nodes: Rc<RefCell<Vec<InspectorNode>>>,
+    pub hovered_bounds: Rc<RefCell<Option<Rect>>>,
+    pub cube_visible: Rc<Cell<bool>>,
+    pub screen_size: Rc<Cell<(u32, u32)>>,
+    pub frame_history: Rc<RefCell<FrameHistory>>,
+    /// Fullscreen state of the OS window.  The platform harness sets this
+    /// cell whenever the window transitions.
+    pub window_fullscreen: Rc<Cell<bool>>,
+    /// Maximized (not fullscreen) state of the OS window.
+    pub window_maximized: Rc<Cell<bool>>,
+    /// When set to `true`, the platform harness captures the frame buffer on
+    /// the NEXT fully-rendered frame, writes the RGBA8 data + dimensions into
+    /// `screenshot_image`, then resets this flag.  Set to `true` from any
+    /// widget (e.g. the Screenshot demo button) to request a capture.
+    pub screenshot_request: Rc<Cell<bool>>,
+    /// Latest captured frame.  `None` until at least one capture completes.
+    /// Top-down RGBA8; first `width * 4` bytes are the TOP row.
+    ///
+    /// Wrapped in `Arc<Vec<u8>>` so the GL texture cache can key on the
+    /// Arc's pointer identity (via `draw_image_rgba_arc`).  Using a bare
+    /// `Vec<u8>` triggered false cache hits — the allocator reused
+    /// addresses across consecutive captures and the content-hash key
+    /// (first/last 8 bytes) collided on screenshots whose corners were
+    /// stable, causing stale frames to be bound.
+    pub screenshot_image: Rc<RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>>,
+    /// Transient flag set by the harness during the FIRST render pass of a
+    /// capture frame.  Read by the screenshot demo's preview pane so it
+    /// paints an empty frame (not the stale previous capture) — this keeps
+    /// the captured pixels free of the screenshot-of-a-screenshot recursion.
+    pub screenshot_capturing: Rc<Cell<bool>>,
+    pub state: StateAccessor,
+}

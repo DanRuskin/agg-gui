@@ -1,0 +1,359 @@
+use super::*;
+
+/// ColorPicker: clicking the swatch opens the panel; dragging the hue
+/// slider writes a new colour into the bound cell.
+#[test]
+fn test_color_picker_opens_and_updates_on_drag() {
+    use crate::text::Font;
+    use crate::ColorPicker;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+    // Non-gray start colour so hue changes actually shift the RGB values
+    // (gray has saturation=0 → hue rotation is a no-op).
+    let start = Color::rgba(1.0, 0.0, 0.0, 1.0);
+    let cell = Rc::new(Cell::new(start));
+    let picker = ColorPicker::new(Rc::clone(&cell), Arc::clone(&font));
+
+    let mut app = App::new(Box::new(picker));
+    const VP_H: f64 = 400.0;
+    app.layout(Size::new(300.0, VP_H));
+
+    // When closed the widget is 22 px tall in Y-up coords (y ∈ [0, 22]).
+    // Screen → Y-up: y_up = VP_H − screen_y.  A screen click at
+    // y = VP_H − 10 maps to y_up = 10 (inside the swatch).
+    let swatch_screen_y = VP_H - 10.0;
+    app.on_mouse_down(
+        50.0,
+        swatch_screen_y,
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    app.on_mouse_up(
+        50.0,
+        swatch_screen_y,
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    // Re-layout so the expanded panel dimensions take effect.
+    app.layout(Size::new(300.0, VP_H));
+
+    // With the panel open, the hue strip lives near the TOP of the widget
+    // in Y-up: its bottom edge is at
+    //   y_up = panel_h − SWATCH_H − PAD − HUE_H  ≈  panel_h − 46
+    // The panel_h when open is 22 + 258 = 280 for allow_none=false,
+    // or 22 + 284 = 306 for true.  Default allow_none=false → panel_h ≈ 280.
+    // Hue strip centre in Y-up ≈ 280 − 22 − 8 − 8 = 242.
+    // Screen y = VP_H − 242 = 158.
+    let hue_screen_y = VP_H - 242.0;
+    // Click near right end of hue strip (high hue).
+    app.on_mouse_down(220.0, hue_screen_y, MouseButton::Left, Modifiers::default());
+    app.on_mouse_move(210.0, hue_screen_y);
+    app.on_mouse_up(210.0, hue_screen_y, MouseButton::Left, Modifiers::default());
+
+    let final_color = cell.get();
+    assert_ne!(
+        (start.r, start.g, start.b),
+        (final_color.r, final_color.g, final_color.b),
+        "hue drag must have mutated the bound colour cell (got {:?})",
+        final_color,
+    );
+}
+
+/// A click outside widget bounds must not trigger the callback.
+#[test]
+fn test_click_outside_bounds_ignored() {
+    use crate::text::Font;
+    use std::sync::Arc;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+    let clicked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let clicked2 = std::sync::Arc::clone(&clicked);
+
+    let button = Button::new("X", font)
+        .with_font_size(14.0)
+        .on_click(move || {
+            clicked2.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+
+    let mut app = App::new(Box::new(button));
+    app.layout(Size::new(200.0, 100.0));
+
+    // Click way outside: screen y=200 → Y-up y = -100 (below viewport).
+    app.on_mouse_down(100.0, 200.0, MouseButton::Left, Modifiers::default());
+    app.on_mouse_up(100.0, 200.0, MouseButton::Left, Modifiers::default());
+
+    assert!(
+        !clicked.load(std::sync::atomic::Ordering::Relaxed),
+        "click outside button bounds must not fire callback"
+    );
+}
+
+/// Tab key advances focus through focusable widgets.
+#[test]
+fn test_tab_focus_advance() {
+    use crate::text::Font;
+    use std::sync::Arc;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+
+    let mut root = Container::new().with_padding(4.0);
+    root.children_mut().push(Box::new(
+        TextField::new(Arc::clone(&font)).with_font_size(14.0),
+    ));
+    root.children_mut().push(Box::new(
+        TextField::new(Arc::clone(&font)).with_font_size(14.0),
+    ));
+
+    let mut app = App::new(Box::new(root));
+    app.layout(Size::new(200.0, 200.0));
+
+    // No focus initially — Tab should focus the first focusable widget.
+    app.on_key_down(Key::Tab, Modifiers::default());
+    // A second Tab should move to the second field.
+    app.on_key_down(Key::Tab, Modifiers::default());
+    // A third Tab wraps back to the first.
+    app.on_key_down(Key::Tab, Modifiers::default());
+
+    // We can't easily inspect focus from outside, but we can verify it
+    // doesn't panic and the test passes if no assertion fires.
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — layout widgets
+// ---------------------------------------------------------------------------
+
+/// FlexColumn stacks children top-to-bottom in Y-up: first child has the
+/// highest Y coordinate (visually at the top of the screen).
+#[test]
+fn test_flex_column_first_child_highest_y() {
+    let mut col = FlexColumn::new()
+        .with_gap(0.0)
+        .with_padding(0.0)
+        .add(Box::new(SizedBox::new().with_height(40.0))) // first = top
+        .add(Box::new(SizedBox::new().with_height(60.0))); // second = below
+
+    col.layout(Size::new(200.0, 200.0));
+
+    let y0 = col.children()[0].bounds().y;
+    let y1 = col.children()[1].bounds().y;
+    assert!(
+        y0 > y1,
+        "first child (top) should have higher Y in Y-up; got y0={y0}, y1={y1}",
+    );
+    assert_eq!(col.children()[0].bounds().height, 40.0);
+    assert_eq!(col.children()[1].bounds().height, 60.0);
+}
+
+/// FlexRow distributes flex space left-to-right, first child leftmost.
+#[test]
+fn test_flex_row_distributes_space() {
+    let mut row = FlexRow::new()
+        .with_gap(0.0)
+        .with_padding(0.0)
+        .add_flex(Box::new(SizedBox::new()), 1.0) // left half
+        .add_flex(Box::new(SizedBox::new()), 1.0); // right half
+
+    row.layout(Size::new(200.0, 40.0));
+
+    let x0 = row.children()[0].bounds().x;
+    let x1 = row.children()[1].bounds().x;
+    assert_eq!(x0, 0.0, "first flex child should start at x=0");
+    assert!(x1 > x0, "second flex child should be to the right of first");
+    assert!(
+        (x1 - 100.0).abs() < 1.0,
+        "second child should start at x≈100; got {x1}"
+    );
+}
+
+/// ScrollView returns the available size from layout and positions its child
+/// with a negative y when content is taller than the viewport.
+#[test]
+fn test_scroll_view_tall_content_child_y() {
+    let content = SizedBox::new().with_height(500.0);
+    let mut scroll = ScrollView::new(Box::new(content));
+
+    let result = scroll.layout(Size::new(200.0, 200.0));
+
+    assert_eq!(result.width, 200.0);
+    assert_eq!(result.height, 200.0);
+
+    // With scroll_offset=0 and content_height=500, viewport_height=200:
+    // child_y = 200 - 500 + 0 = -300  (content sticks up beyond viewport top)
+    let child_y = scroll.children()[0].bounds().y;
+    assert!(
+        child_y < 0.0,
+        "tall content with offset=0 should have negative child_y; got {child_y}",
+    );
+}
+
+#[test]
+fn test_scroll_view_middle_drag_pans_both_axes() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let v_offset = Rc::new(Cell::new(80.0));
+    let h_offset = Rc::new(Cell::new(80.0));
+    let content = SizedBox::new().with_width(500.0).with_height(500.0);
+    let mut scroll = ScrollView::new(Box::new(content))
+        .horizontal(true)
+        .with_offset_cell(Rc::clone(&v_offset))
+        .with_h_offset_cell(Rc::clone(&h_offset));
+    scroll.layout(Size::new(200.0, 200.0));
+
+    let mods = Modifiers::default();
+    scroll.on_event(&crate::Event::MouseDown {
+        pos: crate::Point::new(100.0, 100.0),
+        button: MouseButton::Middle,
+        modifiers: mods,
+    });
+    scroll.on_event(&crate::Event::MouseMove {
+        pos: crate::Point::new(80.0, 120.0),
+    });
+    scroll.on_event(&crate::Event::MouseUp {
+        pos: crate::Point::new(80.0, 120.0),
+        button: MouseButton::Middle,
+        modifiers: mods,
+    });
+
+    assert_eq!(h_offset.get(), 100.0);
+    assert_eq!(v_offset.get(), 100.0);
+}
+
+/// Default scroll details mirror egui's floating ScrollStyle defaults.
+#[test]
+fn test_scroll_bar_style_defaults_match_egui() {
+    let style = ScrollBarStyle::default();
+
+    assert_eq!(style.kind, ScrollBarKind::Floating);
+    assert_eq!(style.color, ScrollBarColor::Foreground);
+    assert_eq!(style.bar_width, 10.0);
+    assert_eq!(style.floating_width, 2.0);
+    assert_eq!(style.handle_min_length, 12.0);
+    assert_eq!(style.outer_margin, 0.0);
+    assert_eq!(style.inner_margin, 4.0);
+    assert_eq!(style.content_margin, 0.0);
+    assert_eq!(style.fade_strength, 0.5);
+    assert_eq!(style.fade_size, 20.0);
+}
+
+/// Splitter updates its ratio when dragged across the divider.
+#[test]
+fn test_splitter_drag_updates_ratio() {
+    let mut splitter = Splitter::new(Box::new(SizedBox::new()), Box::new(SizedBox::new()));
+    splitter.layout(Size::new(400.0, 200.0));
+    splitter.set_bounds(crate::Rect::new(0.0, 0.0, 400.0, 200.0));
+
+    // Default ratio = 0.5; divider at x = (400 - 6) * 0.5 ≈ 197.
+    let div_x = (400.0_f64 - 6.0) * 0.5;
+
+    // Press on divider.
+    splitter.on_event(&crate::Event::MouseDown {
+        pos: crate::Point::new(div_x + 1.0, 100.0),
+        button: MouseButton::Left,
+        modifiers: Modifiers::default(),
+    });
+
+    // Drag to x=100 → ratio should become 100/400 = 0.25.
+    splitter.on_event(&crate::Event::MouseMove {
+        pos: crate::Point::new(100.0, 100.0),
+    });
+
+    assert!(
+        (splitter.ratio - 0.25).abs() < 0.01,
+        "ratio should be ≈0.25 after drag; got {}",
+        splitter.ratio,
+    );
+}
+
+/// TabView swaps its active child when the tab bar is clicked.
+#[test]
+fn test_tab_view_always_has_one_child() {
+    use crate::text::Font;
+    use std::sync::Arc;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+
+    let mut tv = TabView::new(Arc::clone(&font))
+        .add_tab("A", Box::new(SizedBox::new().with_height(100.0)))
+        .add_tab("B", Box::new(SizedBox::new().with_height(200.0)));
+
+    tv.layout(Size::new(400.0, 300.0));
+    tv.set_bounds(crate::Rect::new(0.0, 0.0, 400.0, 300.0));
+
+    assert_eq!(
+        tv.children().len(),
+        1,
+        "TabView should always have exactly 1 active child"
+    );
+
+    // Tab bar: content_height = 300 - 36 = 264; bar is y in [264, 300].
+    // Tab B is the second of two: x in [200, 400].
+    tv.on_event(&crate::Event::MouseDown {
+        pos: crate::Point::new(300.0, 270.0),
+        button: MouseButton::Left,
+        modifiers: Modifiers::default(),
+    });
+
+    assert_eq!(
+        tv.children().len(),
+        1,
+        "TabView should still have exactly 1 active child after switch"
+    );
+}
+
+/// Closing a Window (visible = false) must prevent its content from being painted.
+#[test]
+fn test_window_close_hides_content() {
+    use crate::text::Font;
+    use crate::widget::paint_subtree;
+    use crate::widgets::window::Window;
+    use std::sync::Arc;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+
+    // A window whose content is a Button — Button.paint() fills its bounds with
+    // a visible background, so a leak is detectable as non-black pixels.
+    let content = Button::new("Content", Arc::clone(&font)).with_font_size(14.0);
+    let mut win = Window::new("Test", Arc::clone(&font), Box::new(content))
+        .with_bounds(crate::Rect::new(0.0, 0.0, 200.0, 200.0));
+
+    // Run layout so child bounds are set.
+    win.layout(Size::new(200.0, 200.0));
+
+    // First paint with window visible — content area should have some pixel.
+    let mut fb_visible = Framebuffer::new(200, 200);
+    {
+        let mut ctx = GfxCtx::new(&mut fb_visible);
+        ctx.clear(Color::black());
+        paint_subtree(&mut win, &mut ctx);
+    }
+
+    // Hide the window, paint again — should revert to all-black.
+    win.hide();
+    let mut fb_hidden = Framebuffer::new(200, 200);
+    {
+        let mut ctx = GfxCtx::new(&mut fb_hidden);
+        ctx.clear(Color::black());
+        paint_subtree(&mut win, &mut ctx);
+    }
+
+    // The visible framebuffer should have non-black pixels (window chrome).
+    let visible_has_pixels = fb_visible
+        .pixels()
+        .chunks(4)
+        .any(|p| p[0] > 50 || p[1] > 50 || p[2] > 50);
+    assert!(visible_has_pixels, "visible window must paint something");
+
+    // The hidden framebuffer must be completely black.
+    let hidden_all_black = fb_hidden
+        .pixels()
+        .chunks(4)
+        .all(|p| p[0] < 10 && p[1] < 10 && p[2] < 10);
+    assert!(
+        hidden_all_black,
+        "hidden window must not paint anything; content child leaked"
+    );
+}
