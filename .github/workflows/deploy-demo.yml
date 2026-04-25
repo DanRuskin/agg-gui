@@ -20,6 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout SVG test fixtures
+        run: git submodule update --init tests/resvg-test-suite
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
