@@ -12,7 +12,9 @@ use agg_rust::trans_affine::TransAffine;
 use usvg::tiny_skia_path::PathSegment;
 
 use crate::color::Color;
-use crate::draw_ctx::{DrawCtx, FillRule, GradientSpread, GradientStop, LinearGradientPaint};
+use crate::draw_ctx::{
+    DrawCtx, FillRule, GradientSpread, GradientStop, LinearGradientPaint, RadialGradientPaint,
+};
 use crate::framebuffer::Framebuffer;
 use crate::gfx_ctx::GfxCtx;
 use crate::lcd_coverage::LcdBuffer;
@@ -406,7 +408,27 @@ fn apply_fill_paint(ctx: &mut dyn DrawCtx, paint: &usvg::Paint, opacity: f32) ->
             });
             true
         }
-        usvg::Paint::RadialGradient(_) | usvg::Paint::Pattern(_) => false,
+        usvg::Paint::RadialGradient(gradient) => {
+            if !ctx.supports_fill_radial_gradient() {
+                return false;
+            }
+            let stops = gradient_stops(gradient.stops(), opacity);
+            if stops.is_empty() {
+                return false;
+            }
+            ctx.set_fill_radial_gradient(RadialGradientPaint {
+                cx: gradient.cx() as f64,
+                cy: gradient.cy() as f64,
+                r: gradient.r().get() as f64,
+                fx: gradient.fx() as f64,
+                fy: gradient.fy() as f64,
+                transform: to_trans_affine(gradient.transform()),
+                spread: map_spread(gradient.spread_method()),
+                stops,
+            });
+            true
+        }
+        usvg::Paint::Pattern(_) => false,
     }
 }
 
@@ -493,6 +515,9 @@ fn map_fill_rule(rule: usvg::FillRule) -> FillRule {
         usvg::FillRule::EvenOdd => FillRule::EvenOdd,
     }
 }
+
+#[cfg(test)]
+mod gradient_tests;
 
 #[cfg(test)]
 mod tests {
@@ -658,65 +683,6 @@ mod tests {
         assert!(
             fb.pixels().chunks_exact(4).any(|px| px == [0, 255, 0, 255]),
             "embedded image should paint at least one green pixel"
-        );
-    }
-
-    #[test]
-    fn renders_linear_gradient_fill_via_rgba_target() {
-        let svg = br##"
-            <svg xmlns="http://www.w3.org/2000/svg" width="4" height="2">
-                <defs>
-                    <linearGradient id="g" gradientUnits="userSpaceOnUse"
-                                    x1="0" y1="0" x2="4" y2="0">
-                        <stop offset="0" stop-color="#ff0000"/>
-                        <stop offset="1" stop-color="#0000ff"/>
-                    </linearGradient>
-                </defs>
-                <rect width="4" height="2" fill="url(#g)"/>
-            </svg>
-        "##;
-
-        let fb = render_svg_to_framebuffer(svg).expect("SVG should render");
-        let left = ((fb.width() + 0) * 4) as usize;
-        let right = ((fb.width() + 3) * 4) as usize;
-
-        assert!(
-            fb.pixels()[left] > fb.pixels()[left + 2],
-            "left side should be more red than blue"
-        );
-        assert!(
-            fb.pixels()[right + 2] > fb.pixels()[right],
-            "right side should be more blue than red"
-        );
-    }
-
-    #[test]
-    fn renders_linear_gradient_fill_via_lcd_target() {
-        let svg = br##"
-            <svg xmlns="http://www.w3.org/2000/svg" width="4" height="2">
-                <defs>
-                    <linearGradient id="g" gradientUnits="userSpaceOnUse"
-                                    x1="0" y1="0" x2="4" y2="0">
-                        <stop offset="0" stop-color="#ff0000"/>
-                        <stop offset="1" stop-color="#0000ff"/>
-                    </linearGradient>
-                </defs>
-                <rect width="4" height="2" fill="url(#g)"/>
-            </svg>
-        "##;
-
-        let buffer = render_svg_to_lcd_buffer(svg).expect("SVG should render");
-        let row = buffer.width() as usize;
-        let left = (row + 0) * 3;
-        let right = (row + 3) * 3;
-
-        assert!(
-            buffer.color_plane()[left] > buffer.color_plane()[left + 2],
-            "left side should be more red than blue"
-        );
-        assert!(
-            buffer.color_plane()[right + 2] > buffer.color_plane()[right],
-            "right side should be more blue than red"
         );
     }
 

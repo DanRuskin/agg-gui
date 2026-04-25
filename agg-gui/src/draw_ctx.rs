@@ -91,19 +91,50 @@ impl LinearGradientPaint {
         };
         let t = apply_spread(t, self.spread);
 
-        if t <= self.stops[0].offset {
-            return self.stops[0].color;
+        sample_stops(&self.stops, t)
+    }
+}
+
+/// Radial/focal gradient fill paint expressed in local drawing coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RadialGradientPaint {
+    pub cx: f64,
+    pub cy: f64,
+    pub r: f64,
+    pub fx: f64,
+    pub fy: f64,
+    pub transform: TransAffine,
+    pub spread: GradientSpread,
+    pub stops: Vec<GradientStop>,
+}
+
+impl RadialGradientPaint {
+    pub fn sample(&self, mut x: f64, mut y: f64) -> Color {
+        if self.stops.is_empty() {
+            return Color::transparent();
         }
-        for pair in self.stops.windows(2) {
-            let a = pair[0];
-            let b = pair[1];
-            if t <= b.offset {
-                let span = (b.offset - a.offset).max(f64::EPSILON);
-                let u = ((t - a.offset) / span).clamp(0.0, 1.0) as f32;
-                return lerp_color(a.color, b.color, u);
+
+        self.transform.inverse_transform(&mut x, &mut y);
+
+        let dx = x - self.fx;
+        let dy = y - self.fy;
+        let fx = self.fx - self.cx;
+        let fy = self.fy - self.cy;
+        let a = dx * dx + dy * dy;
+        let t = if a <= f64::EPSILON || self.r <= f64::EPSILON {
+            0.0
+        } else {
+            let b = 2.0 * (fx * dx + fy * dy);
+            let c = fx * fx + fy * fy - self.r * self.r;
+            let disc = (b * b - 4.0 * a * c).max(0.0);
+            let k = (-b + disc.sqrt()) / (2.0 * a);
+            if k > f64::EPSILON {
+                1.0 / k
+            } else {
+                0.0
             }
-        }
-        self.stops[self.stops.len() - 1].color
+        };
+        sample_stops(&self.stops, apply_spread(t, self.spread))
     }
 }
 
@@ -120,6 +151,22 @@ fn apply_spread(t: f64, spread: GradientSpread) -> f64 {
             }
         }
     }
+}
+
+fn sample_stops(stops: &[GradientStop], t: f64) -> Color {
+    if t <= stops[0].offset {
+        return stops[0].color;
+    }
+    for pair in stops.windows(2) {
+        let a = pair[0];
+        let b = pair[1];
+        if t <= b.offset {
+            let span = (b.offset - a.offset).max(f64::EPSILON);
+            let u = ((t - a.offset) / span).clamp(0.0, 1.0) as f32;
+            return lerp_color(a.color, b.color, u);
+        }
+    }
+    stops[stops.len() - 1].color
 }
 
 fn lerp_color(a: Color, b: Color, t: f32) -> Color {
@@ -172,7 +219,11 @@ pub trait DrawCtx {
     fn set_fill_color(&mut self, color: Color);
     fn set_stroke_color(&mut self, color: Color);
     fn set_fill_linear_gradient(&mut self, _gradient: LinearGradientPaint) {}
+    fn set_fill_radial_gradient(&mut self, _gradient: RadialGradientPaint) {}
     fn supports_fill_linear_gradient(&self) -> bool {
+        false
+    }
+    fn supports_fill_radial_gradient(&self) -> bool {
         false
     }
     fn set_line_width(&mut self, w: f64);

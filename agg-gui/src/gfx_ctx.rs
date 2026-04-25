@@ -34,7 +34,7 @@ use agg_rust::scanline_u::ScanlineU8;
 use agg_rust::trans_affine::TransAffine;
 
 use crate::color::Color;
-use crate::draw_ctx::{FillRule, LinearGradientPaint};
+use crate::draw_ctx::{FillRule, LinearGradientPaint, RadialGradientPaint};
 use crate::framebuffer::Framebuffer;
 use crate::text::{measure_advance, shape_text, Font, TextMetrics};
 
@@ -66,6 +66,7 @@ struct GfxState {
     transform: TransAffine,
     fill_color: Color,
     fill_linear_gradient: Option<LinearGradientPaint>,
+    fill_radial_gradient: Option<RadialGradientPaint>,
     stroke_color: Color,
     fill_rule: FillRule,
     line_width: f64,
@@ -91,6 +92,7 @@ impl Default for GfxState {
             transform: TransAffine::new(),
             fill_color: Color::black(),
             fill_linear_gradient: None,
+            fill_radial_gradient: None,
             stroke_color: Color::black(),
             fill_rule: FillRule::NonZero,
             line_width: 1.0,
@@ -254,9 +256,15 @@ impl<'a> GfxCtx<'a> {
     pub fn set_fill_color(&mut self, color: Color) {
         self.state.fill_color = color;
         self.state.fill_linear_gradient = None;
+        self.state.fill_radial_gradient = None;
     }
     pub fn set_fill_linear_gradient(&mut self, gradient: LinearGradientPaint) {
         self.state.fill_linear_gradient = Some(gradient);
+        self.state.fill_radial_gradient = None;
+    }
+    pub fn set_fill_radial_gradient(&mut self, gradient: RadialGradientPaint) {
+        self.state.fill_linear_gradient = None;
+        self.state.fill_radial_gradient = Some(gradient);
     }
     pub fn set_stroke_color(&mut self, color: Color) {
         self.state.stroke_color = color;
@@ -472,6 +480,17 @@ impl<'a> GfxCtx<'a> {
         let fb = active_fb(&mut self.base_fb, &mut self.layer_stack);
         if let Some(gradient) = self.state.fill_linear_gradient.clone() {
             draw_impl::rasterize_linear_gradient_fill(
+                fb,
+                &mut self.path,
+                &gradient,
+                self.state.global_alpha as f32,
+                mode,
+                clip,
+                fill_rule,
+                &transform,
+            );
+        } else if let Some(gradient) = self.state.fill_radial_gradient.clone() {
+            draw_impl::rasterize_radial_gradient_fill(
                 fb,
                 &mut self.path,
                 &gradient,

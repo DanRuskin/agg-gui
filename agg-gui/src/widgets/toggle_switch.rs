@@ -73,6 +73,7 @@ pub struct ToggleSwitch {
     /// Interpolates between 0.0 (off) and 1.0 (on) for smooth colour/circle
     /// position transitions; driven by `animation::Tween`.
     anim: crate::animation::Tween,
+    pressed: bool,
     /// Interpolates 0.0 → 1.0 while the mouse is pressed (ring expand) and
     /// back to 0.0 on release (ring fade).  Mirrors MatterCAD's
     /// `RoundedToggleSwitch` ripple overlay.
@@ -94,6 +95,7 @@ impl ToggleSwitch {
             state_cell: None,
             hovered: false,
             anim: crate::animation::Tween::new(initial, ANIM_SECS),
+            pressed: false,
             press_anim: crate::animation::Tween::new(0.0, RING_ANIM_SECS),
             on_change: None,
         }
@@ -317,7 +319,8 @@ impl Widget for ToggleSwitch {
                 let was = self.hovered;
                 self.hovered = self.hit_test(*pos);
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -327,8 +330,9 @@ impl Widget for ToggleSwitch {
             } => {
                 // Consume on down so the widget "captures" the gesture, and
                 // start the press-ring expand animation.
+                self.pressed = true;
                 self.press_anim.set_target(1.0);
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseUp {
@@ -340,8 +344,9 @@ impl Widget for ToggleSwitch {
                     self.toggle();
                 }
                 // Ring fades back out whether or not the release landed on us.
+                self.pressed = false;
                 self.press_anim.set_target(0.0);
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             Event::KeyDown {
@@ -352,7 +357,7 @@ impl Widget for ToggleSwitch {
                 key: Key::Enter, ..
             } => {
                 self.toggle();
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             _ => EventResult::Ignored,

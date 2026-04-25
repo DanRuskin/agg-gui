@@ -509,7 +509,7 @@ impl Widget for SelectionButtons {
                 let was = self.hovered;
                 self.hovered = self.index_at(*pos);
                 if was != self.hovered {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -521,7 +521,7 @@ impl Widget for SelectionButtons {
                 if let Some(i) = self.index_at(*pos) {
                     if self.selected.get() != i {
                         self.selected.set(i);
-                        agg_gui::animation::request_tick();
+                        agg_gui::animation::request_draw();
                     }
                     EventResult::Consumed
                 } else {

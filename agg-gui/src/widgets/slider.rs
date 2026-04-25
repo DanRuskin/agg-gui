@@ -367,11 +367,12 @@ impl Widget for Slider {
                 if self.dragging {
                     self.value = self.value_from_x(pos.x);
                     self.fire();
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -383,7 +384,7 @@ impl Widget for Slider {
                 self.dragging = true;
                 self.value = self.value_from_x(pos.x);
                 self.fire();
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseUp {
@@ -393,7 +394,7 @@ impl Widget for Slider {
                 let was = self.dragging;
                 self.dragging = false;
                 if was {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Consumed
             }
@@ -419,22 +420,33 @@ impl Widget for Slider {
                 };
                 if changed {
                     self.fire();
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
                 }
             }
             Event::FocusGained => {
+                let was = self.focused;
                 self.focused = true;
-                crate::animation::request_tick();
-                EventResult::Ignored
+                if !was {
+                    crate::animation::request_draw();
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             Event::FocusLost => {
+                let was_focused = self.focused;
+                let was_dragging = self.dragging;
                 self.focused = false;
                 self.dragging = false;
-                crate::animation::request_tick();
-                EventResult::Ignored
+                if was_focused || was_dragging {
+                    crate::animation::request_draw();
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             _ => EventResult::Ignored,
         }

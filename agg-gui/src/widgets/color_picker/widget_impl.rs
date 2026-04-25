@@ -225,7 +225,7 @@ impl Widget for ColorPicker {
                         self.a = self.saved.a;
                         self.no_color = self.saved.a <= 0.0;
                         self.none_cell.set(self.no_color);
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                         return EventResult::Consumed;
                     }
                     return EventResult::Ignored;
@@ -233,20 +233,20 @@ impl Widget for ColorPicker {
                 if contains(&r.hue, *pos) {
                     self.drag = Drag::Hue;
                     self.h = ((pos.x - r.hue.x) / r.hue.width).clamp(0.0, 1.0) as f32;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if contains(&r.sv, *pos) {
                     self.drag = Drag::Sv;
                     self.s = ((pos.x - r.sv.x) / r.sv.width).clamp(0.0, 1.0) as f32;
                     self.v = ((pos.y - r.sv.y) / r.sv.height).clamp(0.0, 1.0) as f32;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if contains(&r.alpha, *pos) {
                     self.drag = Drag::Alpha;
                     self.a = ((pos.x - r.alpha.x) / r.alpha.width).clamp(0.0, 1.0) as f32;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -276,7 +276,7 @@ impl Widget for ColorPicker {
                     let c = self.sync_color_from_hsva();
                     self.color_cell.set(c);
                 }
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseUp {
@@ -317,7 +317,7 @@ impl ColorPicker {
                     let c = self.sync_color_from_hsva();
                     self.color_cell.set(c);
                 }
-                crate::animation::request_tick();
+                crate::animation::request_draw();
             }
         }
     }

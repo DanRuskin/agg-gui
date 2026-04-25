@@ -125,6 +125,10 @@ Current SVG Test rows are intentionally sparse and represent broad capability bo
 - `paint-servers/linearGradient/spreadMethod=reflect.svg` — reflected linear-gradient spread mode.
 - `paint-servers/linearGradient/spreadMethod=repeat.svg` — repeated linear-gradient spread mode.
 - `paint-servers/linearGradient/many-stops.svg` — multi-stop gradient interpolation.
+- `paint-servers/radialGradient/gradientUnits=userSpaceOnUse.svg` — basic user-space radial gradient fill.
+- `paint-servers/radialGradient/gradientTransform.svg` — radial gradient transform handling.
+- `paint-servers/radialGradient/focal-point-correction.svg` — focal radial-gradient handling.
+- `paint-servers/radialGradient/spreadMethod=repeat.svg` — repeated radial-gradient spread mode.
 
 ---
 
@@ -151,7 +155,7 @@ Keep covered by tests; do not add more demo rows unless they show a visually dis
 Tasks:
 
 1. **Linear gradients:** Initial filled-path support is in place for RGBA, LCD, and hardware via a bridge gradient paint. Remaining work: stroke gradients, object-bounding-box regression cases, and gradient transforms against the reference suite.
-2. **Radial gradients:** Map `usvg::RadialGradient` to a bridge radial/focal gradient paint. The RGBA and LCD backends can implement it with AGG `GradientRadial` / `GradientRadialFocus`; the hardware backend can use the matching shader path.
+2. **Radial gradients:** Initial filled-path support is in place for RGBA, LCD, and hardware via a bridge radial/focal gradient paint. Remaining work: stroke gradients and deeper reference-suite diff coverage.
 3. **Spread modes:** Pad / Reflect / Repeat — represent these at the bridge paint level and implement them per target.
 4. **Patterns:** Render the pattern's content tree into an offscreen target through the same bridge, then feed the resulting pattern source back through a bridge pattern primitive. Pattern transforms apply on top.
 

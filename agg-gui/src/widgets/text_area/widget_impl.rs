@@ -216,11 +216,12 @@ impl Widget for TextArea {
                 if self.selecting_drag {
                     let off = self.byte_offset_at(*pos);
                     self.move_cursor_to(off, /*with_selection=*/ true);
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -232,7 +233,7 @@ impl Widget for TextArea {
                 let off = self.byte_offset_at(*pos);
                 self.move_cursor_to(off, /*with_selection=*/ modifiers.shift);
                 self.selecting_drag = true;
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseUp {
@@ -245,13 +246,13 @@ impl Widget for TextArea {
             Event::FocusGained => {
                 self.focused = true;
                 self.focus_time = Some(Instant::now());
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Ignored
             }
             Event::FocusLost => {
                 self.focused = false;
                 self.selecting_drag = false;
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Ignored
             }
             Event::KeyDown { key, modifiers } => {
@@ -332,7 +333,7 @@ impl Widget for TextArea {
                     _ => return EventResult::Ignored,
                 }
                 self.focus_time = Some(Instant::now());
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             _ => EventResult::Ignored,
@@ -356,7 +357,7 @@ impl Widget for TextArea {
         ]
     }
 
-    fn needs_paint(&self) -> bool {
+    fn needs_draw(&self) -> bool {
         self.focused
     }
 }

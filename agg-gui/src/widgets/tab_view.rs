@@ -456,11 +456,11 @@ impl Widget for TabView {
                     // Resize: sidebar_w = window_width - cursor_x - divider
                     let new_w = self.bounds.width - pos.x;
                     self.sidebar_w = new_w.clamp(MIN_SIDEBAR_W, self.bounds.width * 0.8);
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if was_tab != self.hovered_tab || was_act != self.action_hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -474,7 +474,7 @@ impl Widget for TabView {
                     if let Some(ref cb) = self.on_action {
                         cb();
                     }
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 // Divider drag — only in the content area (y < content_h)
@@ -482,13 +482,13 @@ impl Widget for TabView {
                     let div_x = self.divider_x();
                     if pos.x >= div_x - 2.0 && pos.x <= div_x + DIVIDER_W + 2.0 {
                         self.sidebar_dragging = true;
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                         return EventResult::Consumed;
                     }
                 }
                 if let Some(i) = self.tab_index_at(*pos) {
                     self.switch_to(i);
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -499,7 +499,7 @@ impl Widget for TabView {
             } => {
                 if self.sidebar_dragging {
                     self.sidebar_dragging = false;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored

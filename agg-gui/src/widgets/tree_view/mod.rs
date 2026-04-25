@@ -559,7 +559,7 @@ impl Widget for TreeView {
             _ => EventResult::Ignored,
         };
         if result == EventResult::Consumed {
-            crate::animation::request_tick();
+            crate::animation::request_draw();
         }
         result
     }

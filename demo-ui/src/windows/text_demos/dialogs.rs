@@ -335,7 +335,7 @@ impl Widget for ModalOverlay {
                 self.state
                     .save_progress
                     .set(Some((progress + 0.025).min(1.0)));
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
             }
         }
         ctx.restore();
@@ -350,7 +350,7 @@ impl Widget for ModalOverlay {
                 key: Key::Escape, ..
             } => {
                 self.close_top();
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseDown {
@@ -362,7 +362,7 @@ impl Widget for ModalOverlay {
                 let modal_rect = self.modal_rect(layer);
                 if !Self::point_in_rect(pos, modal_rect) {
                     self.close_top();
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 let local = Point::new(pos.x - modal_rect.x, pos.y - modal_rect.y);
@@ -378,7 +378,7 @@ impl Widget for ModalOverlay {
                             button: MouseButton::Left,
                             modifiers: Default::default(),
                         });
-                        agg_gui::animation::request_tick();
+                        agg_gui::animation::request_draw();
                         return if result == EventResult::Consumed {
                             EventResult::Consumed
                         } else {
@@ -402,7 +402,7 @@ impl Widget for ModalOverlay {
                             button: MouseButton::Left,
                             modifiers: Default::default(),
                         });
-                        agg_gui::animation::request_tick();
+                        agg_gui::animation::request_draw();
                         return EventResult::Consumed;
                     }
                 }
@@ -421,7 +421,7 @@ impl Widget for ModalOverlay {
                             (ModalLayer::Save, "No Thanks") => self.state.save_open.set(false),
                             _ => {}
                         }
-                        agg_gui::animation::request_tick();
+                        agg_gui::animation::request_draw();
                         return EventResult::Consumed;
                     }
                 }

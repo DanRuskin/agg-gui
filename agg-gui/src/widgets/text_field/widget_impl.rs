@@ -21,16 +21,16 @@ impl Widget for TextField {
     }
 
     /// While focused, the cursor blinks at 500 ms half-period.  The field
-    /// itself drives its own repaint cadence: [`needs_paint`] reports dirty
+    /// itself drives its own repaint cadence: [`needs_draw`] reports dirty
     /// whenever wall-clock time has crossed a flip boundary since the last
-    /// paint, and [`next_paint_deadline`] returns the exact wall-clock
+    /// paint, and [`next_draw_deadline`] returns the exact wall-clock
     /// instant of the next boundary so the host can `WaitUntil` it.
     ///
     /// Losing focus makes both return `None` / `false`, and the tree walk's
     /// visibility check drops the field entirely when its enclosing window
     /// is closed / collapsed / tab not selected — so an invisible focused
     /// field does NOT keep the loop awake.
-    fn needs_paint(&self) -> bool {
+    fn needs_draw(&self) -> bool {
         if !self.focused {
             return false;
         }
@@ -41,7 +41,7 @@ impl Widget for TextField {
         current_phase != self.blink_last_phase.get()
     }
 
-    fn next_paint_deadline(&self) -> Option<web_time::Instant> {
+    fn next_draw_deadline(&self) -> Option<web_time::Instant> {
         if !self.focused {
             return None;
         }
@@ -205,7 +205,7 @@ impl Widget for TextField {
     /// cached text shows.
     fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
         // Record the blink phase being drawn this frame.  The next tree
-        // walk's `needs_paint` will compare against this and report dirty
+        // walk's `needs_draw` will compare against this and report dirty
         // once wall-clock time crosses the next 500 ms boundary — no
         // host-side deadline bookkeeping, the widget drives itself.
         if self.focused {
@@ -283,10 +283,12 @@ impl Widget for TextField {
                     let text = self.edit.borrow().text.clone();
                     let new_cur = self.click_to_cursor(&text, tx);
                     self.edit.borrow_mut().cursor = new_cur;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -320,7 +322,7 @@ impl Widget for TextField {
                 }
                 // Reset blink phase on click so cursor is immediately visible.
                 self.focus_time = Some(Instant::now());
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
 
@@ -341,7 +343,7 @@ impl Widget for TextField {
                     self.edit.borrow_mut().anchor = 0;
                     self.edit.borrow_mut().cursor = len;
                 }
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Ignored
             }
 
@@ -355,7 +357,7 @@ impl Widget for TextField {
                     self.notify_edit_complete();
                 }
                 if was_focused {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -367,7 +369,7 @@ impl Widget for TextField {
                 // Any text-editing keystroke that reached the focused field
                 // visibly mutates the text / cursor / selection; repaint.
                 if result == EventResult::Consumed {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 result
             }

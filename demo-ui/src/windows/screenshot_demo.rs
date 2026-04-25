@@ -130,7 +130,7 @@ fn capture_row(
                 .with_v_anchor(VAnchor::CENTER)
                 .on_click(move || {
                     req_for_btn.set(true);
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }),
         ))
         .add(Box::new(
@@ -227,7 +227,7 @@ impl Widget for ContinuousCapture {
     fn paint(&mut self, _: &mut dyn DrawCtx) {
         if self.enabled.get() {
             self.request.set(true);
-            agg_gui::animation::request_tick();
+            agg_gui::animation::request_draw();
         }
     }
     fn on_event(&mut self, _: &Event) -> EventResult {

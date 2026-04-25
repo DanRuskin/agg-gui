@@ -178,7 +178,7 @@ pub struct SegRow<T: Clone + Copy + PartialEq + 'static> {
     state: Rc<Cell<T>>,
     hovered: Option<usize>,
     labels: Vec<Label>,
-    /// Optional callback fired when the selection changes (layout-driven).
+    /// Optional callback fired when the selection changes.
     on_change: Option<Rc<dyn Fn()>>,
     last: Cell<Option<T>>,
 }
@@ -319,7 +319,11 @@ impl<T: Clone + Copy + PartialEq + 'static> Widget for SegRow<T> {
     fn on_event(&mut self, event: &Event) -> EventResult {
         match event {
             Event::MouseMove { pos } => {
+                let was = self.hovered;
                 self.hovered = self.hit(*pos);
+                if was != self.hovered {
+                    agg_gui::animation::request_draw();
+                }
                 EventResult::Ignored
             }
             Event::MouseDown {
@@ -328,7 +332,15 @@ impl<T: Clone + Copy + PartialEq + 'static> Widget for SegRow<T> {
                 ..
             } => {
                 if let Some(i) = self.hit(*pos) {
-                    self.state.set(self.options[i].1);
+                    let next = self.options[i].1;
+                    if self.state.get() != next {
+                        self.state.set(next);
+                        self.last.set(Some(next));
+                        if let Some(cb) = &self.on_change {
+                            cb();
+                        }
+                    }
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored

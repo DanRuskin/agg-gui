@@ -122,9 +122,9 @@ impl Default for BackbufferSpec {
 
 /// A CPU bitmap owned by a widget that opts into backbuffer caching.
 ///
-/// Set `dirty = true` from the widget's setter methods whenever the widget's
-/// visual output could change (text, colour, bounds, hover/press state, …).
-/// The framework re-rasterises on the next paint and clears the flag.
+/// The framework re-rasterises when the cache's explicit dirty flag is set,
+/// when global styling epochs change, or when the draw invalidation epoch has
+/// advanced since this cache was last populated.
 pub struct BackbufferCache {
     /// In **Rgba** mode: top-row-first RGBA8 pixels, straight alpha.
     /// Blitted via [`DrawCtx::draw_image_rgba_arc`].
@@ -149,6 +149,8 @@ pub struct BackbufferCache {
     /// (`set_text`, `set_color`, focus/hover changes, etc.) and the
     /// framework clears it after a successful re-raster.
     pub dirty: bool,
+    /// Last global visual invalidation epoch included in this CPU cache.
+    pub last_invalidation_epoch: u64,
     /// Visuals epoch (see [`crate::theme::current_visuals_epoch`]) recorded
     /// the last time this cache was populated.  `paint_subtree_backbuffered`
     /// compares it against the live epoch and forces a re-raster on mismatch,
@@ -173,6 +175,7 @@ impl BackbufferCache {
             width: 0,
             height: 0,
             dirty: true,
+            last_invalidation_epoch: 0,
             theme_epoch: 0,
             typography_epoch: 0,
         }
@@ -197,6 +200,8 @@ pub struct BackbufferState {
     id: u64,
     pub cache: BackbufferCache,
     pub dirty: bool,
+    /// Last global visual invalidation epoch included in this retained layer.
+    pub last_invalidation_epoch: u64,
     pub width: u32,
     pub height: u32,
     pub spec_kind: BackbufferKind,
@@ -210,6 +215,7 @@ impl BackbufferState {
             id: NEXT_BACKBUFFER_ID.fetch_add(1, Ordering::Relaxed),
             cache: BackbufferCache::new(),
             dirty: true,
+            last_invalidation_epoch: 0,
             width: 0,
             height: 0,
             spec_kind: BackbufferKind::None,
@@ -614,47 +620,43 @@ pub trait Widget {
     }
 
     // -------------------------------------------------------------------------
-    // Visibility-gated repaint propagation
+    // Visibility-gated scheduled draw propagation
     // -------------------------------------------------------------------------
     //
     // The host render loop walks the widget tree from the root to decide
-    // whether a new frame is needed.  A widget with in-flight animation,
-    // pending hover transition, or scheduled cursor-blink reports `true` via
-    // [`needs_paint`] or a deadline via [`next_paint_deadline`].  Parents
-    // aggregate these over their **visible** children — invisible subtrees
+    // whether a visible subtree has a scheduled draw need such as cursor blink.
+    // Ordinary visual invalidation should call `animation::request_draw`, which
+    // also advances the retained-layer invalidation epoch.  `needs_draw` stays
+    // for visibility-gated future/ongoing draw needs: invisible subtrees
     // (collapsed Window, non-selected TabView tab, off-viewport content)
-    // must NOT contribute, so an animation inside a hidden part of the UI
-    // cannot cause the screen to redraw.  This is the tree-walk equivalent
-    // of a global "dirty" flag; going through the tree lets the framework
-    // honour the visibility contract without trusting every widget author
-    // to check it manually.
+    // must NOT keep the app in a continuous draw loop.
 
-    /// Return `true` if this widget, or any visible descendant, has state
-    /// that requires a repaint (hover change, tween in flight, etc.).
+    /// Return `true` if this widget, or any visible descendant, has an ongoing
+    /// draw need that should keep the host drawing.
     ///
     /// The default walks visible children.  Widgets with their own pending
     /// state OR that state with the default walk — see `WidgetBase` helpers.
-    fn needs_paint(&self) -> bool {
+    fn needs_draw(&self) -> bool {
         if !self.is_visible() {
             return false;
         }
-        self.children().iter().any(|c| c.needs_paint())
+        self.children().iter().any(|c| c.needs_draw())
     }
 
     /// Return the earliest wall-clock instant at which this widget (or any
-    /// visible descendant) wants the next paint.  `None` = no scheduled wake.
+    /// visible descendant) wants the next draw.  `None` = no scheduled wake.
     /// The host loop turns a `Some(t)` into `ControlFlow::WaitUntil(t)` so
     /// e.g. a cursor blink fires without continuous polling.
     ///
-    /// Same visibility contract as [`needs_paint`]: hidden subtrees return
+    /// Same visibility contract as [`needs_draw`]: hidden subtrees return
     /// `None` regardless of what the widget *would* ask for if shown.
-    fn next_paint_deadline(&self) -> Option<web_time::Instant> {
+    fn next_draw_deadline(&self) -> Option<web_time::Instant> {
         if !self.is_visible() {
             return None;
         }
         let mut best: Option<web_time::Instant> = None;
         for c in self.children() {
-            if let Some(t) = c.next_paint_deadline() {
+            if let Some(t) = c.next_draw_deadline() {
                 best = Some(match best {
                     Some(b) if b <= t => b,
                     _ => t,

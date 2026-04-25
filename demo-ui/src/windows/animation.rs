@@ -303,7 +303,7 @@ impl Widget for DancingStrings {
     /// visibility gate short-circuits at the enclosing Window when the
     /// Dancing Strings demo is closed, so this doesn't keep the loop
     /// running when the widget isn't on screen.
-    fn needs_paint(&self) -> bool {
+    fn needs_draw(&self) -> bool {
         true
     }
 

@@ -87,7 +87,7 @@ pub struct TextField {
     // Cursor blink: set to Some(Instant::now()) on FocusGained.
     focus_time: Option<Instant>,
     // Blink phase (floor(elapsed_ms / 500)) last drawn by `paint_overlay`.
-    // `needs_paint` compares the current phase against this and reports
+    // `needs_draw` compares the current phase against this and reports
     // dirty when they diverge — i.e. the host-observed time has crossed a
     // flip boundary since the last paint.  `Cell` so the check can happen
     // from a `&self` method.  Initialised far out of range so the first

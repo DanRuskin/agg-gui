@@ -118,7 +118,7 @@ impl Widget for GlCubeWidget {
     /// CollapsingHeader paints it) this keeps the host loop rendering;
     /// when it's hidden, the tree-walk visibility gate short-circuits
     /// before reaching here, so the loop goes idle.
-    fn needs_paint(&self) -> bool {
+    fn needs_draw(&self) -> bool {
         true
     }
 

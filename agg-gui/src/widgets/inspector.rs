@@ -606,7 +606,7 @@ impl Widget for InspectorPanel {
                         MIN_PROPS_H,
                         (self.list_area_h() - MIN_TREE_H).max(MIN_PROPS_H),
                     );
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if self.pos_in_tree_area(*pos) {
@@ -621,7 +621,7 @@ impl Widget for InspectorPanel {
             } => {
                 if self.split_dragging {
                     self.split_dragging = false;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if self.pos_in_tree_area(*pos) {

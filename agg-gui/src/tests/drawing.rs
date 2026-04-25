@@ -1,6 +1,210 @@
 use super::*;
 
 #[test]
+fn test_ignored_event_request_draw_advances_invalidation_epoch() {
+    use crate::widget::{dispatch_event, BackbufferState};
+    use crate::{DrawCtx, Event, EventResult, Point, Rect};
+
+    struct VisualChangeProbe {
+        bounds: Rect,
+        children: Vec<Box<dyn Widget>>,
+    }
+
+    impl Widget for VisualChangeProbe {
+        fn bounds(&self) -> Rect {
+            self.bounds
+        }
+
+        fn set_bounds(&mut self, bounds: Rect) {
+            self.bounds = bounds;
+        }
+
+        fn children(&self) -> &[Box<dyn Widget>] {
+            &self.children
+        }
+
+        fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+            &mut self.children
+        }
+
+        fn layout(&mut self, available: Size) -> Size {
+            self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
+            available
+        }
+
+        fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+
+        fn on_event(&mut self, _event: &Event) -> EventResult {
+            crate::animation::request_draw();
+            EventResult::Ignored
+        }
+    }
+
+    struct RetainedParent {
+        bounds: Rect,
+        children: Vec<Box<dyn Widget>>,
+        backbuffer: BackbufferState,
+    }
+
+    impl Widget for RetainedParent {
+        fn bounds(&self) -> Rect {
+            self.bounds
+        }
+
+        fn set_bounds(&mut self, bounds: Rect) {
+            self.bounds = bounds;
+        }
+
+        fn children(&self) -> &[Box<dyn Widget>] {
+            &self.children
+        }
+
+        fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+            &mut self.children
+        }
+
+        fn layout(&mut self, available: Size) -> Size {
+            self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
+            if let Some(child) = self.children.first_mut() {
+                let size = child.layout(available);
+                child.set_bounds(Rect::new(0.0, 0.0, size.width, size.height));
+            }
+            available
+        }
+
+        fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+
+        fn on_event(&mut self, _event: &Event) -> EventResult {
+            EventResult::Ignored
+        }
+
+        fn backbuffer_state_mut(&mut self) -> Option<&mut BackbufferState> {
+            Some(&mut self.backbuffer)
+        }
+    }
+
+    let child = VisualChangeProbe {
+        bounds: Rect::default(),
+        children: Vec::new(),
+    };
+    let mut root: Box<dyn Widget> = Box::new(RetainedParent {
+        bounds: Rect::default(),
+        children: vec![Box::new(child)],
+        backbuffer: BackbufferState::new(),
+    });
+    root.layout(Size::new(120.0, 40.0));
+    root.backbuffer_state_mut().unwrap().dirty = false;
+    let before = crate::animation::invalidation_epoch();
+
+    let event = Event::MouseMove {
+        pos: Point::new(10.0, 10.0),
+    };
+    assert_eq!(
+        dispatch_event(&mut root, &[0], &event, Point::new(10.0, 10.0)),
+        EventResult::Ignored
+    );
+    assert!(!root.backbuffer_state_mut().unwrap().dirty);
+    assert!(
+        crate::animation::invalidation_epoch() != before,
+        "request_draw should invalidate retained drawing even when the event bubbles as ignored"
+    );
+}
+
+#[test]
+fn test_tween_tick_requests_draw_via_invalidation_epoch() {
+    let mut tween = crate::animation::Tween::new(0.0, 1.0);
+    tween.set_target(1.0);
+    let before = crate::animation::invalidation_epoch();
+    let _ = tween.tick();
+    assert!(
+        crate::animation::invalidation_epoch() != before,
+        "in-flight tweens should request a draw through the central invalidation path"
+    );
+}
+
+#[test]
+fn test_request_draw_invalidates_software_backbuffer_cache() {
+    use crate::widget::{paint_subtree, BackbufferCache};
+    use crate::{DrawCtx, Event, EventResult, Rect};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct CachedProbe {
+        bounds: Rect,
+        children: Vec<Box<dyn Widget>>,
+        cache: BackbufferCache,
+        paints: Rc<Cell<usize>>,
+    }
+
+    impl Widget for CachedProbe {
+        fn bounds(&self) -> Rect {
+            self.bounds
+        }
+
+        fn set_bounds(&mut self, bounds: Rect) {
+            self.bounds = bounds;
+        }
+
+        fn children(&self) -> &[Box<dyn Widget>] {
+            &self.children
+        }
+
+        fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+            &mut self.children
+        }
+
+        fn layout(&mut self, available: Size) -> Size {
+            self.bounds = Rect::new(0.0, 0.0, available.width, available.height);
+            available
+        }
+
+        fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+            self.paints.set(self.paints.get() + 1);
+            ctx.set_fill_color(Color::white());
+            ctx.begin_path();
+            ctx.rect(0.0, 0.0, self.bounds.width, self.bounds.height);
+            ctx.fill();
+        }
+
+        fn on_event(&mut self, _event: &Event) -> EventResult {
+            EventResult::Ignored
+        }
+
+        fn backbuffer_cache_mut(&mut self) -> Option<&mut BackbufferCache> {
+            Some(&mut self.cache)
+        }
+    }
+
+    let paints = Rc::new(Cell::new(0));
+    let mut widget = CachedProbe {
+        bounds: Rect::default(),
+        children: Vec::new(),
+        cache: BackbufferCache::new(),
+        paints: Rc::clone(&paints),
+    };
+    widget.layout(Size::new(20.0, 20.0));
+
+    let mut fb = Framebuffer::new(20, 20);
+    {
+        let mut ctx = GfxCtx::new(&mut fb);
+        paint_subtree(&mut widget, &mut ctx);
+        paint_subtree(&mut widget, &mut ctx);
+    }
+    assert_eq!(paints.get(), 1, "clean software cache should be reused");
+
+    crate::animation::request_draw();
+    {
+        let mut ctx = GfxCtx::new(&mut fb);
+        paint_subtree(&mut widget, &mut ctx);
+    }
+    assert_eq!(
+        paints.get(),
+        2,
+        "request_draw should invalidate software backbuffer caches via the epoch"
+    );
+}
+
+#[test]
 fn test_y_up_point_at_bottom() {
     let mut fb = Framebuffer::new(100, 100);
     let mut ctx = GfxCtx::new(&mut fb);

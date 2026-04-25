@@ -130,11 +130,11 @@ impl App {
     /// widget dimensions, font sizes, margins — is rendered at physical pixel
     /// density on HiDPI screens without any widget having to know about DPI.
     ///
-    /// Also clears the animation tick flag so widgets can re-request it during
-    /// this paint if they need another frame; hosts read [`wants_animation_tick`]
-    /// after `paint` returns to decide whether to schedule continuous redraws.
+    /// Also clears the immediate draw flag so widgets can re-request it during
+    /// this paint if they need another frame; hosts read [`wants_draw`]
+    /// after `paint` returns to decide whether to schedule continuous draws.
     pub fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        crate::animation::clear_tick();
+        crate::animation::clear_draw_request();
         let viewport = self.viewport_size;
         crate::widgets::combo_box::begin_combo_popup_frame(viewport);
         crate::widgets::tooltip::begin_tooltip_frame();
@@ -169,23 +169,21 @@ impl App {
     /// (e.g. an in-progress hover animation).  Hosts should use this to set
     /// their event-loop control flow to continuous polling while it's `true`.
     ///
-    /// Combines the **tree-walk** signal — [`Widget::needs_paint`], which is
-    /// visibility-gated: hidden subtrees cannot contribute — with the legacy
-    /// thread-local [`crate::animation::wants_tick`] flag, which is retained
-    /// as a transitional fallback for widgets that haven't yet moved their
-    /// pending-repaint state into their own struct.  Widgets should prefer
-    /// overriding `needs_paint` (visibility-safe) over calling the
-    /// thread-local `request_tick` (fires even from hidden subtrees).
-    pub fn wants_animation_tick(&self) -> bool {
-        self.root.needs_paint() || crate::animation::wants_tick()
+    /// Combines the visibility-gated tree-walk signal ([`Widget::needs_draw`])
+    /// with the immediate draw request flag ([`crate::animation::wants_draw`]).
+    /// Widgets call `request_draw` for ordinary visual invalidation; scheduled
+    /// draw needs such as cursor blink should use `needs_draw` /
+    /// `next_draw_deadline` so hidden subtrees do not keep the loop awake.
+    pub fn wants_draw(&self) -> bool {
+        self.root.needs_draw() || crate::animation::wants_draw()
     }
 
-    /// Earliest scheduled repaint deadline across the visible widget tree.
+    /// Earliest scheduled draw deadline across the visible widget tree.
     /// Hosts translate `Some(t)` into `ControlFlow::WaitUntil(t)` so that
     /// e.g. a text field's cursor blink wakes the loop exactly at the flip
     /// boundary.  Invisible subtrees contribute nothing.
-    pub fn next_paint_deadline(&self) -> Option<web_time::Instant> {
-        self.root.next_paint_deadline()
+    pub fn next_draw_deadline(&self) -> Option<web_time::Instant> {
+        self.root.next_draw_deadline()
     }
 
     // --- Platform event ingestion ---
@@ -254,11 +252,11 @@ impl App {
                 self.captured = Some(path);
             }
         }
-        // NO blanket request_tick.  Mouse-down on an inert area must not
+        // NO blanket request_draw.  Mouse-down on an inert area must not
         // cause a repaint.  Each widget that changes visual state in
         // response to a MouseDown (button press, window raise, focus
         // indicator on the focus-gained widget, etc.) is responsible for
-        // calling `crate::animation::request_tick` itself.
+        // calling `crate::animation::request_draw` itself.
     }
 
     /// Mouse button released. `screen_y` is Y-down.

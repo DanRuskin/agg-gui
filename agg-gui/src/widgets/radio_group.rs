@@ -288,7 +288,8 @@ impl Widget for RadioGroup {
                 let was = self.hovered;
                 self.hovered = self.row_for_y(pos.y);
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -302,7 +303,7 @@ impl Widget for RadioGroup {
                     self.selected = i;
                     self.fire();
                     if was != i {
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                     }
                     return EventResult::Consumed;
                 }
@@ -331,21 +332,31 @@ impl Widget for RadioGroup {
                 };
                 if changed {
                     self.fire();
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
                 }
             }
             Event::FocusGained => {
+                let was = self.focused;
                 self.focused = true;
-                crate::animation::request_tick();
-                EventResult::Ignored
+                if !was {
+                    crate::animation::request_draw();
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             Event::FocusLost => {
+                let was = self.focused;
                 self.focused = false;
-                crate::animation::request_tick();
-                EventResult::Ignored
+                if was {
+                    crate::animation::request_draw();
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             _ => EventResult::Ignored,
         }

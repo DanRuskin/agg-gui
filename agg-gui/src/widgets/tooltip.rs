@@ -223,7 +223,7 @@ impl Widget for Tooltip {
         if self.hovered {
             self.hover_frames = self.hover_frames.saturating_add(1);
             if !self.show_tip() {
-                crate::animation::request_tick();
+                crate::animation::request_draw();
             }
         }
 
@@ -262,7 +262,7 @@ impl Widget for Tooltip {
                     self.hover_frames = 0;
                 }
                 if self.hovered != was {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Ignored
             }

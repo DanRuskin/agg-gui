@@ -361,7 +361,11 @@ impl Widget for RunModeRow {
         };
         match event {
             Event::MouseMove { pos } => {
+                let was = self.hovered;
                 self.hovered = hit(*pos);
+                if was != self.hovered {
+                    agg_gui::animation::request_draw();
+                }
                 EventResult::Ignored
             }
             Event::MouseDown {
@@ -370,8 +374,11 @@ impl Widget for RunModeRow {
                 ..
             } => {
                 if let Some(i) = hit(*pos) {
-                    self.run_mode
-                        .set([RunMode::Reactive, RunMode::Continuous][i]);
+                    let next = [RunMode::Reactive, RunMode::Continuous][i];
+                    if self.run_mode.get() != next {
+                        self.run_mode.set(next);
+                        agg_gui::animation::request_draw();
+                    }
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -486,7 +493,7 @@ impl Widget for TogglePill {
                 let was = self.hovered;
                 self.hovered = hit(*pos);
                 if was != self.hovered {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -497,7 +504,7 @@ impl Widget for TogglePill {
             } => {
                 if hit(*pos) {
                     self.show.set(!self.show.get());
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -629,7 +636,11 @@ impl Widget for MsaaRow {
         };
         match event {
             Event::MouseMove { pos } => {
+                let was = self.hovered;
                 self.hovered = hit(*pos);
+                if was != self.hovered {
+                    agg_gui::animation::request_draw();
+                }
                 EventResult::Ignored
             }
             Event::MouseDown {
@@ -638,7 +649,10 @@ impl Widget for MsaaRow {
                 ..
             } => {
                 if let Some(i) = hit(*pos) {
-                    self.samples.set(Self::VALS[i]);
+                    if self.samples.get() != Self::VALS[i] {
+                        self.samples.set(Self::VALS[i]);
+                        agg_gui::animation::request_draw();
+                    }
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored

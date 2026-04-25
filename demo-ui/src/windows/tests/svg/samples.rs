@@ -84,4 +84,40 @@ pub(super) const SVG_SAMPLES: &[SvgSample] = &[
             "../../../../../tests/resvg-test-suite/tests/paint-servers/linearGradient/many-stops.png"
         ),
     },
+    SvgSample {
+        name: "paint-servers/radialGradient/gradientUnits=userSpaceOnUse.svg",
+        svg: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/gradientUnits=userSpaceOnUse.svg"
+        ),
+        reference_png: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/gradientUnits=userSpaceOnUse.png"
+        ),
+    },
+    SvgSample {
+        name: "paint-servers/radialGradient/gradientTransform.svg",
+        svg: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/gradientTransform.svg"
+        ),
+        reference_png: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/gradientTransform.png"
+        ),
+    },
+    SvgSample {
+        name: "paint-servers/radialGradient/focal-point-correction.svg",
+        svg: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/focal-point-correction.svg"
+        ),
+        reference_png: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/focal-point-correction.png"
+        ),
+    },
+    SvgSample {
+        name: "paint-servers/radialGradient/spreadMethod=repeat.svg",
+        svg: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/spreadMethod=repeat.svg"
+        ),
+        reference_png: include_bytes!(
+            "../../../../../tests/resvg-test-suite/tests/paint-servers/radialGradient/spreadMethod=repeat.png"
+        ),
+    },
 ];

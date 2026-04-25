@@ -354,7 +354,7 @@ impl Widget for SvgZoomButton {
                 let hovered = self.contains(*pos);
                 if self.hovered != hovered {
                     self.hovered = hovered;
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -364,7 +364,7 @@ impl Widget for SvgZoomButton {
                 ..
             } if self.contains(*pos) => {
                 self.pressed = true;
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseUp {
@@ -386,11 +386,11 @@ impl Widget for SvgZoomButton {
                             target_zoom,
                         );
                     } else {
-                        agg_gui::animation::request_tick();
+                        agg_gui::animation::request_draw();
                     }
                     EventResult::Consumed
                 } else if was_pressed {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -748,5 +748,5 @@ fn zoom_svg_around_content_point(
     v_max.set(new_v_max);
     h_offset.set((scaled_anchor_x - screen_x).clamp(0.0, new_h_max));
     v_offset.set((scaled_anchor_top_y - screen_top_y).clamp(0.0, new_v_max));
-    agg_gui::animation::request_tick();
+    agg_gui::animation::request_draw();
 }

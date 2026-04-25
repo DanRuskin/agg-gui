@@ -475,12 +475,12 @@ impl Window {
         self.visible = true;
         self.fade_out_active.set(false);
         self.visibility_anim.set_target(1.0);
-        crate::animation::request_tick();
+        crate::animation::request_draw();
     }
     pub fn hide(&mut self) {
         self.visible = false;
         self.visibility_anim.set_target(0.0);
-        crate::animation::request_tick();
+        crate::animation::request_draw();
     }
     pub fn toggle(&mut self) {
         if self.visible {

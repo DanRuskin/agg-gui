@@ -459,7 +459,7 @@ impl Widget for DragValue {
                     }
                     _ => {}
                 }
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
 
@@ -477,12 +477,13 @@ impl Widget for DragValue {
                     }
                     if self.dragging {
                         self.update_from_drag(pos.x);
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                         return EventResult::Consumed;
                     }
                 }
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -510,9 +511,9 @@ impl Widget for DragValue {
                 self.mouse_pressed = false;
                 if was_pressed && !was_drag && !self.editing {
                     self.enter_edit_mode();
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 } else if was_drag {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Consumed
             }
@@ -520,7 +521,7 @@ impl Widget for DragValue {
             // ── Focus ─────────────────────────────────────────────────────
             Event::FocusGained => {
                 self.focused = true;
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Ignored
             }
             Event::FocusLost => {
@@ -533,7 +534,7 @@ impl Widget for DragValue {
                 self.dragging = false;
                 self.mouse_pressed = false;
                 if was_focused || was_editing {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Ignored
             }

@@ -307,7 +307,8 @@ impl Widget for Checkbox {
                 let was = self.hovered;
                 self.hovered = self.hit_test(*pos);
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -322,7 +323,7 @@ impl Widget for Checkbox {
             } => {
                 if self.hit_test(*pos) {
                     self.toggle();
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Consumed
             }
@@ -331,18 +332,28 @@ impl Widget for Checkbox {
                 ..
             } => {
                 self.toggle();
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             Event::FocusGained => {
+                let was = self.focused;
                 self.focused = true;
-                crate::animation::request_tick();
-                EventResult::Ignored
+                if !was {
+                    crate::animation::request_draw();
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             Event::FocusLost => {
+                let was = self.focused;
                 self.focused = false;
-                crate::animation::request_tick();
-                EventResult::Ignored
+                if was {
+                    crate::animation::request_draw();
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             _ => EventResult::Ignored,
         }

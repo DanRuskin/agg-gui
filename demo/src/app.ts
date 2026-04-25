@@ -66,14 +66,14 @@ function render() {
 // --- Animation loop (reactive) ---
 //
 // The loop runs every rAF tick but only calls into the WASM render when the
-// module reports that a repaint is actually needed — an event arrived, the
+// module reports that a draw is actually needed — an event arrived, the
 // cube is animating, a text field is focused, or a screenshot was requested.
 // Matches the native harness's Wait / WaitUntil behaviour so idle windows
 // don't burn CPU / GPU for no reason.
 
 function animationLoop() {
   if (wasmModule) {
-    const needs = (wasmModule["needs_repaint"] as (() => boolean) | undefined);
+    const needs = (wasmModule["needs_draw"] as (() => boolean) | undefined);
     if (!needs || needs()) {
       render();
     }
@@ -270,7 +270,7 @@ const ro = new ResizeObserver(() => {
   // Resize changes the layout — force a render on the next rAF tick.
   if (wasmModule) {
     // on_mouse_move with an out-of-bounds position marks the frame dirty
-    // via the shared NEEDS_REPAINT flag without side-effects on focus.
+    // via the shared NEEDS_DRAW flag without side-effects on focus.
     (wasmModule["on_mouse_move"] as MouseXYFn)(-1, -1);
   }
 });

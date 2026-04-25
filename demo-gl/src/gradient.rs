@@ -15,10 +15,13 @@ pub(crate) struct GradientPipeline {
     res_loc: Option<glow::UniformLocation>,
     ramp_loc: Option<glow::UniformLocation>,
     line_loc: Option<glow::UniformLocation>,
+    radial_loc: Option<glow::UniformLocation>,
+    focal_loc: Option<glow::UniformLocation>,
     screen_inv_a_loc: Option<glow::UniformLocation>,
     screen_inv_b_loc: Option<glow::UniformLocation>,
     gradient_inv_a_loc: Option<glow::UniformLocation>,
     gradient_inv_b_loc: Option<glow::UniformLocation>,
+    kind_loc: Option<glow::UniformLocation>,
     spread_loc: Option<glow::UniformLocation>,
     global_alpha_loc: Option<glow::UniformLocation>,
 }
@@ -36,10 +39,13 @@ impl GradientPipeline {
             res_loc: gl.get_uniform_location(prog, "u_resolution"),
             ramp_loc: gl.get_uniform_location(prog, "u_ramp"),
             line_loc: gl.get_uniform_location(prog, "u_line"),
+            radial_loc: gl.get_uniform_location(prog, "u_radial"),
+            focal_loc: gl.get_uniform_location(prog, "u_focal"),
             screen_inv_a_loc: gl.get_uniform_location(prog, "u_screen_inv_a"),
             screen_inv_b_loc: gl.get_uniform_location(prog, "u_screen_inv_b"),
             gradient_inv_a_loc: gl.get_uniform_location(prog, "u_gradient_inv_a"),
             gradient_inv_b_loc: gl.get_uniform_location(prog, "u_gradient_inv_b"),
+            kind_loc: gl.get_uniform_location(prog, "u_kind"),
             spread_loc: gl.get_uniform_location(prog, "u_spread"),
             global_alpha_loc: gl.get_uniform_location(prog, "u_global_alpha"),
         }
@@ -54,12 +60,75 @@ impl GlGfxCtx {
         gradient: &LinearGradientPaint,
         screen_from_local: &TransAffine,
     ) {
-        if verts.is_empty() || indices.is_empty() || gradient.stops.is_empty() {
+        self.submit_gradient_triangles(
+            verts,
+            indices,
+            &gradient.stops,
+            gradient.spread,
+            gradient.transform,
+            screen_from_local,
+            |gl, pipeline| {
+                gl.uniform_1_i32(pipeline.kind_loc.as_ref(), 0);
+                gl.uniform_4_f32(
+                    pipeline.line_loc.as_ref(),
+                    gradient.x1 as f32,
+                    gradient.y1 as f32,
+                    gradient.x2 as f32,
+                    gradient.y2 as f32,
+                );
+            },
+        );
+    }
+
+    pub(crate) unsafe fn submit_radial_gradient_triangles(
+        &self,
+        verts: &[[f32; 3]],
+        indices: &[u32],
+        gradient: &RadialGradientPaint,
+        screen_from_local: &TransAffine,
+    ) {
+        self.submit_gradient_triangles(
+            verts,
+            indices,
+            &gradient.stops,
+            gradient.spread,
+            gradient.transform,
+            screen_from_local,
+            |gl, pipeline| {
+                gl.uniform_1_i32(pipeline.kind_loc.as_ref(), 1);
+                gl.uniform_4_f32(
+                    pipeline.radial_loc.as_ref(),
+                    gradient.cx as f32,
+                    gradient.cy as f32,
+                    gradient.r as f32,
+                    0.0,
+                );
+                gl.uniform_2_f32(
+                    pipeline.focal_loc.as_ref(),
+                    gradient.fx as f32,
+                    gradient.fy as f32,
+                );
+            },
+        );
+    }
+
+    unsafe fn submit_gradient_triangles<F>(
+        &self,
+        verts: &[[f32; 3]],
+        indices: &[u32],
+        stops: &[agg_gui::draw_ctx::GradientStop],
+        spread: GradientSpread,
+        gradient_transform: TransAffine,
+        screen_from_local: &TransAffine,
+        set_kind_uniforms: F,
+    ) where
+        F: FnOnce(&glow::Context, &GradientPipeline),
+    {
+        if verts.is_empty() || indices.is_empty() || stops.is_empty() {
             return;
         }
-
         let gl = &*self.gl;
-        let ramp = gradient_ramp(gradient);
+        let ramp = gradient_ramp(stops);
         let tex = gl.create_texture().expect("create gradient ramp texture");
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(tex));
@@ -98,20 +167,14 @@ impl GlGfxCtx {
 
         let mut screen_to_local = *screen_from_local;
         screen_to_local.invert();
-        let mut gradient_inverse = gradient.transform;
+        let mut gradient_inverse = gradient_transform;
         gradient_inverse.invert();
 
         let pipeline = &self.gradient;
         gl.use_program(Some(pipeline.prog));
         gl.uniform_2_f32(pipeline.res_loc.as_ref(), self.viewport.0, self.viewport.1);
         gl.uniform_1_i32(pipeline.ramp_loc.as_ref(), 0);
-        gl.uniform_4_f32(
-            pipeline.line_loc.as_ref(),
-            gradient.x1 as f32,
-            gradient.y1 as f32,
-            gradient.x2 as f32,
-            gradient.y2 as f32,
-        );
+        set_kind_uniforms(gl, pipeline);
         set_affine_uniforms(
             gl,
             &screen_to_local,
@@ -126,7 +189,7 @@ impl GlGfxCtx {
         );
         gl.uniform_1_i32(
             pipeline.spread_loc.as_ref(),
-            match gradient.spread {
+            match spread {
                 GradientSpread::Pad => 0,
                 GradientSpread::Reflect => 1,
                 GradientSpread::Repeat => 2,
@@ -165,11 +228,11 @@ fn set_affine_uniforms(
     }
 }
 
-fn gradient_ramp(gradient: &LinearGradientPaint) -> Vec<u8> {
+fn gradient_ramp(stops: &[agg_gui::draw_ctx::GradientStop]) -> Vec<u8> {
     let mut ramp = vec![0u8; RAMP_W * 4];
     for x in 0..RAMP_W {
         let t = x as f64 / (RAMP_W - 1) as f64;
-        let color = sample_stops(&gradient.stops, t);
+        let color = sample_stops(stops, t);
         let i = x * 4;
         ramp[i] = (color.r.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         ramp[i + 1] = (color.g.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;

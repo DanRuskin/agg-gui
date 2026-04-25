@@ -552,7 +552,7 @@ impl Widget for ComboBox {
                     if self.open {
                         self.ensure_selected_visible();
                     }
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if self.open {
@@ -570,13 +570,13 @@ impl Widget for ComboBox {
                         self.open = false;
                         self.hovered_item = None;
                         self.fire();
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                         return EventResult::Consumed;
                     }
                     // Click outside the dropdown — close it.
                     self.open = false;
                     self.hovered_item = None;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -595,7 +595,7 @@ impl Widget for ComboBox {
                     };
                     self.scroll_items(rows);
                     self.hovered_item = None;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -609,13 +609,13 @@ impl Widget for ComboBox {
                         if self.open {
                             self.ensure_selected_visible();
                         }
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                         EventResult::Consumed
                     }
                     Key::Escape => {
                         if self.open {
                             self.open = false;
-                            crate::animation::request_tick();
+                            crate::animation::request_draw();
                             EventResult::Consumed
                         } else {
                             EventResult::Ignored
@@ -626,7 +626,7 @@ impl Widget for ComboBox {
                             self.set_selected(self.selected + 1);
                             self.ensure_selected_visible();
                             self.fire();
-                            crate::animation::request_tick();
+                            crate::animation::request_draw();
                         }
                         EventResult::Consumed
                     }
@@ -635,7 +635,7 @@ impl Widget for ComboBox {
                             self.set_selected(self.selected - 1);
                             self.ensure_selected_visible();
                             self.fire();
-                            crate::animation::request_tick();
+                            crate::animation::request_draw();
                         }
                         EventResult::Consumed
                     }
@@ -647,7 +647,7 @@ impl Widget for ComboBox {
                 self.open = false;
                 self.hovered_item = None;
                 if was_open {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Ignored
             }

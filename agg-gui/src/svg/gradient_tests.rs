@@ -1,0 +1,124 @@
+//! SVG gradient renderer tests.
+//!
+//! These tests exercise the public SVG rendering helpers while keeping the
+//! implementation module below the project line-count limit.
+
+use super::*;
+
+#[test]
+fn renders_linear_gradient_fill_via_rgba_target() {
+    let svg = br##"
+        <svg xmlns="http://www.w3.org/2000/svg" width="4" height="2">
+            <defs>
+                <linearGradient id="g" gradientUnits="userSpaceOnUse"
+                                x1="0" y1="0" x2="4" y2="0">
+                    <stop offset="0" stop-color="#ff0000"/>
+                    <stop offset="1" stop-color="#0000ff"/>
+                </linearGradient>
+            </defs>
+            <rect width="4" height="2" fill="url(#g)"/>
+        </svg>
+    "##;
+
+    let fb = render_svg_to_framebuffer(svg).expect("SVG should render");
+    let left = ((fb.width() + 0) * 4) as usize;
+    let right = ((fb.width() + 3) * 4) as usize;
+
+    assert!(
+        fb.pixels()[left] > fb.pixels()[left + 2],
+        "left side should be more red than blue"
+    );
+    assert!(
+        fb.pixels()[right + 2] > fb.pixels()[right],
+        "right side should be more blue than red"
+    );
+}
+
+#[test]
+fn renders_linear_gradient_fill_via_lcd_target() {
+    let svg = br##"
+        <svg xmlns="http://www.w3.org/2000/svg" width="4" height="2">
+            <defs>
+                <linearGradient id="g" gradientUnits="userSpaceOnUse"
+                                x1="0" y1="0" x2="4" y2="0">
+                    <stop offset="0" stop-color="#ff0000"/>
+                    <stop offset="1" stop-color="#0000ff"/>
+                </linearGradient>
+            </defs>
+            <rect width="4" height="2" fill="url(#g)"/>
+        </svg>
+    "##;
+
+    let buffer = render_svg_to_lcd_buffer(svg).expect("SVG should render");
+    let row = buffer.width() as usize;
+    let left = (row + 0) * 3;
+    let right = (row + 3) * 3;
+
+    assert!(
+        buffer.color_plane()[left] > buffer.color_plane()[left + 2],
+        "left side should be more red than blue"
+    );
+    assert!(
+        buffer.color_plane()[right + 2] > buffer.color_plane()[right],
+        "right side should be more blue than red"
+    );
+}
+
+#[test]
+fn renders_radial_gradient_fill_via_rgba_target() {
+    let svg = br##"
+        <svg xmlns="http://www.w3.org/2000/svg" width="5" height="5">
+            <defs>
+                <radialGradient id="g" gradientUnits="userSpaceOnUse"
+                                cx="2.5" cy="2.5" r="2.5">
+                    <stop offset="0" stop-color="#ff0000"/>
+                    <stop offset="1" stop-color="#0000ff"/>
+                </radialGradient>
+            </defs>
+            <rect width="5" height="5" fill="url(#g)"/>
+        </svg>
+    "##;
+
+    let fb = render_svg_to_framebuffer(svg).expect("SVG should render");
+    let center = ((2 * fb.width() + 2) * 4) as usize;
+    let corner = ((4 * fb.width() + 0) * 4) as usize;
+
+    assert!(
+        fb.pixels()[center] > fb.pixels()[center + 2],
+        "center should be more red than blue"
+    );
+    assert!(
+        fb.pixels()[corner + 2] > fb.pixels()[corner],
+        "corner should be more blue than red"
+    );
+}
+
+#[test]
+fn renders_radial_gradient_fill_via_lcd_target() {
+    let svg = br##"
+        <svg xmlns="http://www.w3.org/2000/svg" width="5" height="5">
+            <defs>
+                <radialGradient id="g" gradientUnits="userSpaceOnUse"
+                                cx="2.5" cy="2.5" r="2.5">
+                    <stop offset="0" stop-color="#ff0000"/>
+                    <stop offset="1" stop-color="#0000ff"/>
+                </radialGradient>
+            </defs>
+            <rect width="5" height="5" fill="url(#g)"/>
+        </svg>
+    "##;
+
+    let buffer = render_svg_to_lcd_buffer(svg).expect("SVG should render");
+    let row = buffer.width() as usize;
+    let center = (2 * row + 2) * 3;
+    let corner = (4 * row + 0) * 3;
+
+    assert!(
+        buffer.color_plane()[center] > buffer.color_plane()[center + 2],
+        "center should be more red than blue"
+    );
+    assert!(
+        buffer.color_plane()[corner + 2] > buffer.color_plane()[corner],
+        "corner should be more blue than red"
+    );
+}

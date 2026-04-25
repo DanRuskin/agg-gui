@@ -170,7 +170,7 @@ impl Widget for PanelsLayout {
                 if let Some(drag) = self.drag {
                     self.resize_panel(drag, *pos);
                     self.layout_children();
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
 
@@ -183,7 +183,7 @@ impl Widget for PanelsLayout {
                 }
                 if self.hover != next {
                     self.hover = next;
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -205,7 +205,7 @@ impl Widget for PanelsLayout {
                 ..
             } => {
                 if self.drag.take().is_some() {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -616,7 +616,7 @@ impl Widget for InlinePopup {
         {
             if self.hit_test(*pos) {
                 self.open.set(false);
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
                 return EventResult::Consumed;
             }
         }

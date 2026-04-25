@@ -89,12 +89,12 @@ thread_local! {
     /// has actually changed.  See `agg_gui::persistence::AutoSave`.
     static AUTO_SAVE: RefCell<agg_gui::persistence::AutoSave> =
         RefCell::new(agg_gui::persistence::AutoSave::new());
-    /// Repaint dirty flag — set by any input handler, cleared by `render()`.
-    /// The JS animation loop calls `needs_repaint()` each rAF tick and skips
+    /// Draw dirty flag — set by any input handler, cleared by `render()`.
+    /// The JS animation loop calls `needs_draw()` each rAF tick and skips
     /// `render()` when nothing has changed, matching the native harness's
     /// Wait / WaitUntil behaviour.
-    static NEEDS_REPAINT: Cell<bool> = Cell::new(true);
-    /// Share the cube-visibility + focus flags so `needs_repaint()` can keep
+    static NEEDS_DRAW: Cell<bool> = Cell::new(true);
+    /// Share the cube-visibility + focus flags so `needs_draw()` can keep
     /// the loop running while animation or cursor blink is in progress.
     static CUBE_VISIBLE: RefCell<Option<Rc<Cell<bool>>>> = RefCell::new(None);
     /// Screenshot request flag — set by the demo button, cleared by render().
@@ -358,10 +358,10 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
         }
     });
 
-    // Frame successfully rendered — clear the dirty flag.  `needs_repaint()`
+    // Frame successfully rendered — clear the dirty flag.  `needs_draw()`
     // will return `true` again only if an event fires or an animation source
     // (cube / focus) still needs frames.
-    NEEDS_REPAINT.with(|c| c.set(false));
+    NEEDS_DRAW.with(|c| c.set(false));
 }
 
 // ---------------------------------------------------------------------------
@@ -547,10 +547,10 @@ pub fn set_device_pixel_ratio(dpr: f64) {
 
 // NO blanket `mark_dirty()` at the app-event boundary.  A mouse-move over
 // inert canvas, a key that no focused widget consumes, a mouse-up that
-// released over empty space — none of these should force a repaint on
+// released over empty space — none of these should force a draw on
 // their own.  Widgets that change visible state in response to these
-// events call `crate::animation::request_tick()` themselves; the tree-walk
-// `needs_paint` path in `needs_repaint()` picks it up.
+// events call `crate::animation::request_draw()` themselves; the tree-walk
+// `needs_draw` path in `needs_draw()` picks it up.
 #[wasm_bindgen]
 pub fn on_mouse_move(x: f64, y: f64) {
     DEMO_APP.with(|cell| {
@@ -713,8 +713,8 @@ pub fn on_key_down(key_str: &str, shift: bool, ctrl: bool, alt: bool, meta: bool
 /// continuously-animating widget (3-D cube) is visible, a text field has
 /// focus (cursor blink), or a screenshot has been requested.
 #[wasm_bindgen]
-pub fn needs_repaint() -> bool {
-    if NEEDS_REPAINT.with(|c| c.get()) {
+pub fn needs_draw() -> bool {
+    if NEEDS_DRAW.with(|c| c.get()) {
         return true;
     }
     // Pending capture (button click) — harness will consume on render.
@@ -728,13 +728,12 @@ pub fn needs_repaint() -> bool {
     // ONLY when it's actually visible on screen (hidden windows, closed
     // collapsing headers, non-selected tabs don't contribute).
     //
-    // Includes the legacy thread-local `wants_tick` as a transitional
-    // fallback for widgets that still call `crate::animation::request_tick`
-    // instead of overriding `Widget::needs_paint`.
+    // Includes immediate draw requests from visual invalidation, plus
+    // visibility-gated scheduled draw needs from the widget tree.
     let want = DEMO_APP.with(|c| {
         c.borrow()
             .as_ref()
-            .map(|a| a.wants_animation_tick())
+            .map(|a| a.wants_draw())
             .unwrap_or(false)
     });
     if want {
@@ -744,7 +743,7 @@ pub fn needs_repaint() -> bool {
 }
 
 fn mark_dirty() {
-    NEEDS_REPAINT.with(|c| c.set(true));
+    NEEDS_DRAW.with(|c| c.set(true));
 }
 
 // ---------------------------------------------------------------------------

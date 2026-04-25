@@ -370,7 +370,7 @@ impl Widget for DragAndDropWidget {
                     if self.drag_active {
                         self.drop_target = self.find_drop_target(*pos);
                     }
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
 
@@ -381,7 +381,7 @@ impl Widget for DragAndDropWidget {
                     set_cursor_icon(CursorIcon::Grab);
                 }
                 if self.hovered != prev {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -401,7 +401,7 @@ impl Widget for DragAndDropWidget {
                     self.drag_source = Some((c, r));
                     self.drop_target = Some((c, r));
                     set_cursor_icon(CursorIcon::Grabbing);
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -422,7 +422,7 @@ impl Widget for DragAndDropWidget {
                 self.drag_source = None;
                 self.drop_target = None;
                 if had_drag_state {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Consumed
             }

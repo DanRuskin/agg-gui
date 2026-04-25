@@ -185,11 +185,12 @@ impl Widget for Splitter {
                     if total > self.divider_width {
                         self.ratio = (pos.x / total).clamp(0.05, 0.95);
                     }
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     if was != self.hovered {
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
+                        return EventResult::Consumed;
                     }
                     EventResult::Ignored
                 }
@@ -216,7 +217,7 @@ impl Widget for Splitter {
                 let was_dragging = self.dragging;
                 self.dragging = false;
                 if was_dragging {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored

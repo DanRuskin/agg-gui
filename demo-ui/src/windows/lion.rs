@@ -295,7 +295,7 @@ impl Widget for LionView {
             self.mouse_scale = (self.mouse_scale * mt.zoom_delta as f64).clamp(0.05, 50.0);
             self.angle += mt.rotation_delta as f64;
             self.rotate_grip = None;
-            agg_gui::animation::request_tick();
+            agg_gui::animation::request_draw();
         }
 
         let w = self.bounds.width;
@@ -372,7 +372,7 @@ impl Widget for LionView {
                     }
                     _ => return EventResult::Ignored,
                 }
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseMove { pos } => {
@@ -392,7 +392,7 @@ impl Widget for LionView {
                     }
                     Drag::None => return EventResult::Ignored,
                 }
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseUp { .. } => {
@@ -425,7 +425,7 @@ impl Widget for LionView {
                     grip.grip_polar_angle = dy.atan2(dx);
                     grip.start_angle = self.angle;
                 }
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
                 EventResult::Consumed
             }
             _ => EventResult::Ignored,

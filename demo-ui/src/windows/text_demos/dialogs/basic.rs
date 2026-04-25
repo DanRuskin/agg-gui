@@ -76,7 +76,7 @@ pub fn undo_redo(font: Arc<Font>) -> Box<dyn Widget> {
                     .with_enabled_fn(move || undoer_for_enabled.borrow().can_undo())
                     .on_click(move || {
                         undoer_for_click.borrow_mut().undo();
-                        agg_gui::animation::request_tick();
+                        agg_gui::animation::request_draw();
                     }),
             ),
             0.0,
@@ -92,7 +92,7 @@ pub fn undo_redo(font: Arc<Font>) -> Box<dyn Widget> {
                     .with_enabled_fn(move || undoer_for_enabled.borrow().can_redo())
                     .on_click(move || {
                         undoer_for_click.borrow_mut().redo();
-                        agg_gui::animation::request_tick();
+                        agg_gui::animation::request_draw();
                     }),
             ),
             0.0,

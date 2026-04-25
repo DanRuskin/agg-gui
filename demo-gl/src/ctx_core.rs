@@ -150,6 +150,7 @@ impl GlGfxCtx {
             lcb_channel_loc,
             fill_color: Color::rgba(0.0, 0.0, 0.0, 1.0),
             fill_linear_gradient: None,
+            fill_radial_gradient: None,
             stroke_color: Color::rgba(0.0, 0.0, 0.0, 1.0),
             line_width: 1.0,
             line_join: LineJoin::Miter,
@@ -209,6 +210,7 @@ impl GlGfxCtx {
         self.current_fbo = None;
         self.fill_color = Color::rgba(0.0, 0.0, 0.0, 1.0);
         self.fill_linear_gradient = None;
+        self.fill_radial_gradient = None;
         self.stroke_color = Color::rgba(0.0, 0.0, 0.0, 1.0);
         self.line_width = 1.0;
         self.fill_rule = FillRule::NonZero;
@@ -242,6 +244,7 @@ impl GlGfxCtx {
             viewport: self.viewport,
             fill_color: self.fill_color,
             fill_linear_gradient: self.fill_linear_gradient.clone(),
+            fill_radial_gradient: self.fill_radial_gradient.clone(),
             stroke_color: self.stroke_color,
             line_width: self.line_width,
             line_join: self.line_join,
@@ -262,6 +265,7 @@ impl GlGfxCtx {
         self.viewport = saved.viewport;
         self.fill_color = saved.fill_color;
         self.fill_linear_gradient = saved.fill_linear_gradient;
+        self.fill_radial_gradient = saved.fill_radial_gradient;
         self.stroke_color = saved.stroke_color;
         self.line_width = saved.line_width;
         self.line_join = saved.line_join;
@@ -1158,6 +1162,8 @@ impl GlGfxCtx {
         if let Some((verts, idx)) = tess {
             if let Some(gradient) = self.fill_linear_gradient.clone() {
                 self.submit_linear_gradient_triangles(&verts, &idx, &gradient, &transform);
+            } else if let Some(gradient) = self.fill_radial_gradient.clone() {
+                self.submit_radial_gradient_triangles(&verts, &idx, &gradient, &transform);
             } else {
                 let color = self.fill_color;
                 self.submit_aa_triangles(&verts, &idx, color);

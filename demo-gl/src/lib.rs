@@ -62,7 +62,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
 use agg_gui::color::Color;
-use agg_gui::draw_ctx::{DrawCtx, FillRule, LinearGradientPaint};
+use agg_gui::draw_ctx::{DrawCtx, FillRule, LinearGradientPaint, RadialGradientPaint};
 use agg_gui::gl_renderer::GlyphCache;
 use agg_gui::text::{shape_glyphs, Font, TextMetrics};
 use agg_gui::CompOp;
@@ -108,6 +108,7 @@ struct SavedGlDrawState {
     viewport: (f32, f32),
     fill_color: Color,
     fill_linear_gradient: Option<LinearGradientPaint>,
+    fill_radial_gradient: Option<RadialGradientPaint>,
     stroke_color: Color,
     line_width: f64,
     line_join: LineJoin,
@@ -245,6 +246,7 @@ pub struct GlGfxCtx {
     // Drawing state
     fill_color: Color,
     fill_linear_gradient: Option<LinearGradientPaint>,
+    fill_radial_gradient: Option<RadialGradientPaint>,
     stroke_color: Color,
     line_width: f64,
     line_join: LineJoin,

@@ -289,7 +289,7 @@ impl Widget for ScrollView {
                     c.set(self.h.offset);
                 }
                 if consumed {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -312,7 +312,7 @@ impl Widget for ScrollView {
                     let (_, vh) = self.viewport();
                     self.was_at_bottom = (self.v.max_scroll(vh) - self.v.offset).abs() < 0.5;
                     self.publish_offsets();
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
 
@@ -332,7 +332,7 @@ impl Widget for ScrollView {
                     || was_hb != self.h.hovered_bar
                     || was_ht != self.h.hovered_thumb
                 {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
 
                 if self.v.dragging {
@@ -348,7 +348,7 @@ impl Widget for ScrollView {
                             c.set(self.v.offset);
                         }
                     }
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if self.h.dragging {
@@ -363,7 +363,7 @@ impl Widget for ScrollView {
                             c.set(self.h.offset);
                         }
                     }
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -381,7 +381,7 @@ impl Widget for ScrollView {
                 {
                     self.middle_dragging = true;
                     self.middle_last_pos = *pos;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -419,7 +419,7 @@ impl Widget for ScrollView {
                             c.set(self.v.offset);
                         }
                         // Offset changed — visible scroll.
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                     }
                     return EventResult::Consumed;
                 }
@@ -440,7 +440,7 @@ impl Widget for ScrollView {
                         if let Some(c) = &self.h_offset_cell {
                             c.set(self.h.offset);
                         }
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                     }
                     return EventResult::Consumed;
                 }
@@ -458,7 +458,7 @@ impl Widget for ScrollView {
                     self.middle_dragging = false;
                 }
                 if was {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored

@@ -297,7 +297,7 @@ impl Widget for Resize {
                         c.set(new_sz);
                     }
                     set_cursor_icon(CursorIcon::ResizeNwSe);
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 let was = self.hover_handle;
@@ -306,7 +306,8 @@ impl Widget for Resize {
                     set_cursor_icon(CursorIcon::ResizeNwSe);
                 }
                 if was != self.hover_handle {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -325,12 +326,12 @@ impl Widget for Resize {
                     .unwrap_or_else(|| Point::new(pos.x + self.bounds.x, pos.y + self.bounds.y));
                 self.drag_start_size = Size::new(self.bounds.width, self.bounds.height);
                 set_cursor_icon(CursorIcon::ResizeNwSe);
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             Event::MouseUp { .. } if self.dragging => {
                 self.dragging = false;
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 EventResult::Consumed
             }
             _ => EventResult::Ignored,

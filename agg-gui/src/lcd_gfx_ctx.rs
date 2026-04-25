@@ -49,7 +49,7 @@ use agg_rust::rounded_rect::RoundedRect;
 use agg_rust::trans_affine::TransAffine;
 
 use crate::color::Color;
-use crate::draw_ctx::{DrawCtx, FillRule, LinearGradientPaint};
+use crate::draw_ctx::{DrawCtx, FillRule, LinearGradientPaint, RadialGradientPaint};
 use crate::lcd_coverage::{rasterize_text_lcd_cached, LcdBuffer, LcdMask};
 use crate::text::{measure_text_metrics, Font, TextMetrics};
 
@@ -68,6 +68,7 @@ struct LcdState {
     transform: TransAffine,
     fill_color: Color,
     fill_linear_gradient: Option<LinearGradientPaint>,
+    fill_radial_gradient: Option<RadialGradientPaint>,
     stroke_color: Color,
     fill_rule: FillRule,
     line_width: f64,
@@ -92,6 +93,7 @@ impl Default for LcdState {
             transform: TransAffine::new(),
             fill_color: Color::black(),
             fill_linear_gradient: None,
+            fill_radial_gradient: None,
             stroke_color: Color::black(),
             fill_rule: FillRule::NonZero,
             line_width: 1.0,
@@ -194,11 +196,20 @@ impl<'a> DrawCtx for LcdGfxCtx<'a> {
     fn set_fill_color(&mut self, color: Color) {
         self.state.fill_color = color;
         self.state.fill_linear_gradient = None;
+        self.state.fill_radial_gradient = None;
     }
     fn set_fill_linear_gradient(&mut self, gradient: LinearGradientPaint) {
         self.state.fill_linear_gradient = Some(gradient);
+        self.state.fill_radial_gradient = None;
     }
     fn supports_fill_linear_gradient(&self) -> bool {
+        true
+    }
+    fn set_fill_radial_gradient(&mut self, gradient: RadialGradientPaint) {
+        self.state.fill_linear_gradient = None;
+        self.state.fill_radial_gradient = Some(gradient);
+    }
+    fn supports_fill_radial_gradient(&self) -> bool {
         true
     }
     fn set_stroke_color(&mut self, color: Color) {
@@ -348,6 +359,17 @@ impl<'a> DrawCtx for LcdGfxCtx<'a> {
         if let Some(gradient) = self.state.fill_linear_gradient.clone() {
             let global_alpha = self.state.global_alpha as f32;
             gradient::fill_linear_gradient(
+                self.active_buffer(),
+                &mut path,
+                &gradient,
+                global_alpha,
+                &xform,
+                clip,
+                rule,
+            );
+        } else if let Some(gradient) = self.state.fill_radial_gradient.clone() {
+            let global_alpha = self.state.global_alpha as f32;
+            gradient::fill_radial_gradient(
                 self.active_buffer(),
                 &mut path,
                 &gradient,

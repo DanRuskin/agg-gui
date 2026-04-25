@@ -164,7 +164,7 @@ impl Widget for MultiTouchView {
             self.slowly_reset(now, dt)
         };
         if had_gesture {
-            agg_gui::animation::request_tick();
+            agg_gui::animation::request_draw();
         }
 
         // ── Canvas background ────────────────────────────────────────────
@@ -250,7 +250,7 @@ impl Widget for MultiTouchView {
                 }
                 self.last_touch_time = Some(web_time::Instant::now());
                 RELATIVE_POINTER_GESTURE.with(|flag| flag.set(true));
-                agg_gui::animation::request_tick();
+                agg_gui::animation::request_draw();
                 agg_gui::EventResult::Consumed
             }
             agg_gui::Event::MouseDown { .. }
@@ -260,7 +260,7 @@ impl Widget for MultiTouchView {
         }
     }
 
-    fn needs_paint(&self) -> bool {
+    fn needs_draw(&self) -> bool {
         true
     }
 }
@@ -317,7 +317,7 @@ pub fn multi_touch(font: Arc<Font>) -> Box<dyn Widget> {
         fn on_event(&mut self, _e: &agg_gui::Event) -> agg_gui::EventResult {
             agg_gui::EventResult::Ignored
         }
-        fn needs_paint(&self) -> bool {
+        fn needs_draw(&self) -> bool {
             true
         }
     }

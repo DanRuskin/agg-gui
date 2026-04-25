@@ -19,20 +19,20 @@ impl Widget for Window {
     /// the default trait impl.  Without these overrides a cursor blink or
     /// hover tween inside a collapsed/closed window would keep the host
     /// loop awake despite being invisible.
-    fn needs_paint(&self) -> bool {
+    fn needs_draw(&self) -> bool {
         if !self.is_visible() || self.collapsed {
             return false;
         }
-        self.children().iter().any(|c| c.needs_paint())
+        self.children().iter().any(|c| c.needs_draw())
     }
 
-    fn next_paint_deadline(&self) -> Option<web_time::Instant> {
+    fn next_draw_deadline(&self) -> Option<web_time::Instant> {
         if !self.is_visible() || self.collapsed {
             return None;
         }
         let mut best: Option<web_time::Instant> = None;
         for c in self.children() {
-            if let Some(t) = c.next_paint_deadline() {
+            if let Some(t) = c.next_draw_deadline() {
                 best = Some(match best {
                     Some(b) if b <= t => b,
                     _ => t,
@@ -562,14 +562,14 @@ impl Widget for Window {
                         self.clamp_to_canvas();
                         self.hover_dir = None;
                         set_cursor_icon(CursorIcon::Grabbing);
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                         return EventResult::Consumed;
                     }
                     DragMode::Resize(dir) => {
                         let world = Point::new(pos.x + self.bounds.x, pos.y + self.bounds.y);
                         self.apply_resize(world);
                         set_cursor_icon(resize_cursor(dir));
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                         return EventResult::Consumed;
                     }
                     DragMode::None => {
@@ -585,7 +585,7 @@ impl Widget for Window {
                     || was_max != self.maximize_hovered
                     || was_dir != self.hover_dir
                 {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -605,7 +605,7 @@ impl Widget for Window {
                 // delay is invisible in practice.
                 self.raise_request.set(true);
                 // Z-order changes are visible; repaint.
-                crate::animation::request_tick();
+                crate::animation::request_draw();
                 if let Some(cb) = self.on_raised.as_mut() {
                     cb(&self.title);
                 }
@@ -620,14 +620,14 @@ impl Widget for Window {
                     if let Some(cb) = self.on_close.as_mut() {
                         cb();
                     }
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
 
                 // Maximize / Restore button.
                 if self.in_maximize_button(*pos) {
                     self.toggle_maximize();
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
 
@@ -638,7 +638,7 @@ impl Widget for Window {
                     // chevron then quickly clicking the bar doesn't
                     // trigger a maximize toggle.
                     self.last_title_click = None;
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     return EventResult::Consumed;
                 }
 
@@ -668,7 +668,7 @@ impl Widget for Window {
                         // chevron button to the left.
                         self.toggle_maximize();
                         self.last_title_click = None;
-                        crate::animation::request_tick();
+                        crate::animation::request_draw();
                     } else {
                         self.last_title_click = Some(now);
                         let world = Point::new(pos.x + self.bounds.x, pos.y + self.bounds.y);
@@ -694,7 +694,7 @@ impl Widget for Window {
                 let was_dragging = self.drag_mode != DragMode::None;
                 self.drag_mode = DragMode::None;
                 if was_dragging {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored

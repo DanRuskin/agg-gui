@@ -265,7 +265,7 @@ fn main() {
     let inspector_nodes = Rc::clone(&handles.inspector_nodes);
     let hovered_bounds = Rc::clone(&handles.hovered_bounds);
     // `cube_visible` used to drive the ControlFlow decision; now the 3-D
-    // cube's `Widget::needs_paint` returns true whenever it's visited by
+    // cube's `Widget::needs_draw` returns true whenever it's visited by
     // the tree walk, which automatically skips when its Window is closed.
     let _cube_visible = Rc::clone(&handles.cube_visible);
     let screen_size = Rc::clone(&handles.screen_size);
@@ -602,13 +602,13 @@ fn main() {
                     //   - A widget set the thread-local tick flag from its
                     //     event handler (hover change, press, drag, etc.).
                     //   - The visible widget tree reports pending work via
-                    //     `needs_paint` — widgets like TextField (cursor
+                    //     `needs_draw` — widgets like TextField (cursor
                     //     blink) compare their current phase to the one
                     //     last painted and report dirty when they diverge.
                     //   - A screenshot was requested (button / startup flag).
                     //
                     // Scheduled wakes (ControlFlow::WaitUntil below) just
-                    // bring the loop back so `needs_paint` can be queried
+                    // bring the loop back so `needs_draw` can be queried
                     // again; there is no host-side deadline bookkeeping.
                     if auto_screenshot_at.is_none()
                         && save_next_screenshot.is_none()
@@ -625,7 +625,7 @@ fn main() {
                             screenshot_request.set(true);
                         }
                     }
-                    let want_render = app.wants_animation_tick() || screenshot_request.get();
+                    let want_render = app.wants_draw() || screenshot_request.get();
 
                     if want_render {
                         let t0 = std::time::Instant::now();
@@ -687,19 +687,19 @@ fn main() {
                     }
 
                     // Visibility-gated ControlFlow for the NEXT wake-up.
-                    // `wants_animation_tick` folds the tree walk (visible
-                    // widgets only) with the legacy thread-local flag.
+                    // `wants_draw` folds visible-tree scheduled draws with
+                    // immediate draw requests from visual invalidation.
                     // Scheduled wakes come from the tree walk — a text
                     // field's cursor blink contributes a deadline ONLY when
                     // its enclosing window/tab/header is actually showing
                     // it.  With nothing dirty and no deadline, `Wait` means
                     // the loop idles until the next OS input event.
-                    let want_next = app.wants_animation_tick() || screenshot_request.get();
+                    let want_next = app.wants_draw() || screenshot_request.get();
                     elwt.set_control_flow(if want_next {
                         ControlFlow::Poll
                     } else if let Some(deadline) = auto_screenshot_at {
                         ControlFlow::WaitUntil(deadline)
-                    } else if let Some(t) = app.next_paint_deadline() {
+                    } else if let Some(t) = app.next_draw_deadline() {
                         ControlFlow::WaitUntil(t)
                     } else {
                         ControlFlow::Wait

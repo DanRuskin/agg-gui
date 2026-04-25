@@ -11,11 +11,20 @@ impl DrawCtx for GlGfxCtx {
     fn set_fill_color(&mut self, c: Color) {
         self.fill_color = c;
         self.fill_linear_gradient = None;
+        self.fill_radial_gradient = None;
     }
     fn set_fill_linear_gradient(&mut self, gradient: LinearGradientPaint) {
         self.fill_linear_gradient = Some(gradient);
+        self.fill_radial_gradient = None;
     }
     fn supports_fill_linear_gradient(&self) -> bool {
+        true
+    }
+    fn set_fill_radial_gradient(&mut self, gradient: RadialGradientPaint) {
+        self.fill_linear_gradient = None;
+        self.fill_radial_gradient = Some(gradient);
+    }
+    fn supports_fill_radial_gradient(&self) -> bool {
         true
     }
     fn set_stroke_color(&mut self, c: Color) {

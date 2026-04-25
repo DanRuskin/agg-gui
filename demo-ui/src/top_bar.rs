@@ -179,7 +179,7 @@ impl Widget for ThemeToggle {
                 let was = self.hovered;
                 self.hovered = self.hit_idx(*pos);
                 if was != self.hovered {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -197,7 +197,7 @@ impl Widget for ThemeToggle {
                         ThemePreference::System => apply_system_visuals(),
                     }
                     // Theme change is global — every widget needs to re-paint.
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -311,7 +311,7 @@ impl Widget for BackendButton {
                 let was = self.hovered;
                 self.hovered = in_btn(*pos);
                 if was != self.hovered {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
             }
@@ -324,7 +324,7 @@ impl Widget for BackendButton {
                     // Toggles backend-panel visibility — consumers read
                     // `show` at layout/paint time, so request a frame.
                     self.show.set(!self.show.get());
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored

@@ -1,73 +1,82 @@
-//! Thread-local repaint-request signals.
+//! Thread-local draw-request and invalidation signals.
 //!
 //! Two independent channels feed the host's event loop:
 //!
-//! 1. **Immediate** — [`request_tick`] / [`wants_tick`].  Any widget whose
-//!    state just changed calls `request_tick()`; the next iteration of the
-//!    host loop paints a frame and clears the flag.  This is the "mark
-//!    dirty" path: input handlers, hover transitions, tweens mid-animation,
-//!    drag movement, continuous capture widgets.
+//! 1. **Immediate invalidation** — [`request_draw`] / [`wants_draw`].  Any
+//!    widget whose visual output just changed calls `request_draw()`; the next
+//!    iteration of the host loop draws a frame and clears the flag.  The same
+//!    call advances [`invalidation_epoch`], so retained layers can tell that
+//!    their cached pixels predate a visual state change somewhere below them.
 //!
-//! 2. **Scheduled** — [`request_repaint_after`] / [`next_repaint_at`].  A
-//!    widget that needs a redraw *at a future time* (text-cursor blink,
-//!    tooltip delay) calls `request_repaint_after(Duration)`; the host's
+//! 2. **Scheduled draw** — [`request_draw_after`] /
+//!    [`take_next_draw_deadline`].  A
+//!    widget that needs a draw *at a future time* (text-cursor blink,
+//!    tooltip delay) calls `request_draw_after(Duration)`; the host's
 //!    loop goes to sleep with `ControlFlow::WaitUntil(that_instant)` and
-//!    paints when the deadline fires.  Successive calls keep the EARLIEST
+//!    draws when the deadline fires.  Successive calls keep the EARLIEST
 //!    deadline.
 //!
-//! The host loop paints iff `wants_tick() || now >= next_repaint_at()`.
-//! Between paints it idles; no frames are drawn while nothing has changed.
+//! The host loop draws iff `wants_draw() || now >= take_next_draw_deadline()`.
+//! Between draws it idles; no frames are drawn while nothing has changed.
 
 use std::cell::Cell;
 use std::time::Duration;
 use web_time::Instant;
 
 std::thread_local! {
-    static NEEDS_TICK:      Cell<bool>            = Cell::new(false);
-    static NEXT_REPAINT_AT: Cell<Option<Instant>> = Cell::new(None);
+    static NEEDS_DRAW:        Cell<bool>            = Cell::new(false);
+    static NEXT_DRAW_AT:      Cell<Option<Instant>> = Cell::new(None);
+    static INVALIDATION_EPOCH: Cell<u64>             = Cell::new(0);
 }
 
-/// Request that the host schedule another paint as soon as possible.  Safe to
-/// call any number of times in a frame.  Typically called from `Widget::paint`
-/// while a time-based animation is in progress, from input handlers whose
-/// widget state changed, or from anywhere that mutates visual state.
-pub fn request_tick() {
-    NEEDS_TICK.with(|c| c.set(true));
+/// Request that the host schedule another draw as soon as possible.
+///
+/// This is also the canonical visual invalidation hook: retained backbuffers
+/// compare their recorded epoch against [`invalidation_epoch`] to decide
+/// whether cached pixels are stale.
+pub fn request_draw() {
+    NEEDS_DRAW.with(|c| c.set(true));
+    INVALIDATION_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
 }
 
-/// Non-destructive read.  Hosts call this after painting to decide control-flow
+/// Non-destructive read.  Hosts call this after drawing to decide control-flow
 /// for the next loop iteration.
-pub fn wants_tick() -> bool {
-    NEEDS_TICK.with(|c| c.get())
+pub fn wants_draw() -> bool {
+    NEEDS_DRAW.with(|c| c.get())
 }
 
-/// Reset the per-frame repaint flags.  The `App::paint` entry point calls
+/// Current visual invalidation epoch for retained drawing.
+pub fn invalidation_epoch() -> u64 {
+    INVALIDATION_EPOCH.with(|c| c.get())
+}
+
+/// Reset the per-frame draw flags.  The `App::paint` entry point calls
 /// this before delegating to the root widget so each frame starts fresh —
-/// widgets that still need a redraw (animation in flight, focus blink, etc.)
-/// must re-arm during their paint, otherwise the loop goes idle.
-pub fn clear_tick() {
-    NEEDS_TICK.with(|c| c.set(false));
-    NEXT_REPAINT_AT.with(|c| c.set(None));
+/// widgets that still need a draw (animation in flight, focus blink, etc.)
+/// must re-arm during their draw, otherwise the loop goes idle.
+pub fn clear_draw_request() {
+    NEEDS_DRAW.with(|c| c.set(false));
+    NEXT_DRAW_AT.with(|c| c.set(None));
 }
 
-/// Schedule a future paint.  Keeps the EARLIEST pending deadline, so multiple
+/// Schedule a future draw.  Keeps the EARLIEST pending deadline, so multiple
 /// widgets asking for different delays will all be served by the soonest one
-/// (each widget re-arms its own deadline on the next paint anyway).
-pub fn request_repaint_after(delay: Duration) {
+/// (each widget re-arms its own deadline on the next draw anyway).
+pub fn request_draw_after(delay: Duration) {
     let when = Instant::now() + delay;
-    NEXT_REPAINT_AT.with(|c| match c.get() {
+    NEXT_DRAW_AT.with(|c| match c.get() {
         Some(existing) if existing <= when => {}
         _ => c.set(Some(when)),
     });
 }
 
-/// Read-and-clear the scheduled repaint deadline.  The host reads this after
-/// painting so the next frame's scheduled wake is determined entirely by what
-/// the fresh paint registered (e.g. a text field re-arms the 500 ms blink
+/// Read-and-clear the scheduled draw deadline.  The host reads this after
+/// drawing so the next frame's scheduled wake is determined entirely by what
+/// the fresh draw registered (e.g. a text field re-arms the 500 ms blink
 /// each frame while it remains focused; losing focus means no re-arm and the
 /// loop goes idle).
-pub fn take_next_repaint() -> Option<Instant> {
-    NEXT_REPAINT_AT.with(|c| c.replace(None))
+pub fn take_next_draw_deadline() -> Option<Instant> {
+    NEXT_DRAW_AT.with(|c| c.replace(None))
 }
 
 // ── Tween ────────────────────────────────────────────────────────────────────
@@ -75,7 +84,7 @@ pub fn take_next_repaint() -> Option<Instant> {
 // Small reusable time-based interpolator for widgets that want a smooth
 // transition between two scalar states (hover ↔ dormant, off ↔ on, etc.).
 // Ease-out cubic; reversal preserves the current value so rapid toggles
-// don't snap.  Requests an animation tick automatically while in flight.
+// don't snap.  Requests a draw automatically while in flight.
 
 /// Smooth scalar tween between `0.0` and `1.0` (or any pair of values the
 /// caller interprets).  Drives animations such as the scroll-bar hover
@@ -114,7 +123,7 @@ impl Tween {
 
     /// Advance the animation based on elapsed wall time and return the new
     /// interpolated value.  Ease-out cubic.  While in flight this also calls
-    /// [`request_tick`] so the host keeps painting frames until completion.
+    /// [`request_draw`] so the host keeps drawing frames until completion.
     pub fn tick(&mut self) -> f64 {
         if let Some(start) = self.start_time {
             let elapsed = start.elapsed().as_secs_f64();
@@ -125,7 +134,7 @@ impl Tween {
                 self.current = self.target;
                 self.start_time = None;
             } else {
-                request_tick();
+                request_draw();
             }
         }
         self.current

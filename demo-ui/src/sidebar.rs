@@ -199,7 +199,7 @@ impl Widget for ToggleButton {
                     self.pressed = false;
                 }
                 if was_hover != self.hovered || was_pressed != self.pressed {
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -216,7 +216,7 @@ impl Widget for ToggleButton {
                     && pos.y <= self.bounds.height;
                 if inside {
                     self.pressed = true;
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -240,12 +240,12 @@ impl Widget for ToggleButton {
                     // repaint — otherwise the show/hide only takes effect
                     // the next time something else triggers a frame.
                     self.state.set(!self.state.get());
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 if was_pressed {
                     // Lost the press (released outside) — visible state change.
-                    agg_gui::animation::request_tick();
+                    agg_gui::animation::request_draw();
                 }
                 EventResult::Ignored
             }

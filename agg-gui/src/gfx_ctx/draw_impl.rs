@@ -126,6 +126,52 @@ pub(crate) fn rasterize_linear_gradient_fill(
     fill_rule: FillRule,
     transform: &TransAffine,
 ) {
+    rasterize_sampled_gradient_fill(
+        fb,
+        path,
+        |x, y| gradient.sample(x, y),
+        global_alpha,
+        _mode,
+        clip,
+        fill_rule,
+        transform,
+    );
+}
+
+pub(crate) fn rasterize_radial_gradient_fill(
+    fb: &mut Framebuffer,
+    path: &mut PathStorage,
+    gradient: &RadialGradientPaint,
+    global_alpha: f32,
+    _mode: CompOp,
+    clip: Option<(f64, f64, f64, f64)>,
+    fill_rule: FillRule,
+    transform: &TransAffine,
+) {
+    rasterize_sampled_gradient_fill(
+        fb,
+        path,
+        |x, y| gradient.sample(x, y),
+        global_alpha,
+        _mode,
+        clip,
+        fill_rule,
+        transform,
+    );
+}
+
+fn rasterize_sampled_gradient_fill<F>(
+    fb: &mut Framebuffer,
+    path: &mut PathStorage,
+    mut sample: F,
+    global_alpha: f32,
+    _mode: CompOp,
+    clip: Option<(f64, f64, f64, f64)>,
+    fill_rule: FillRule,
+    transform: &TransAffine,
+) where
+    F: FnMut(f64, f64) -> Color,
+{
     let mut mask_fb = Framebuffer::new(fb.width(), fb.height());
     let white = Color::white().to_rgba8();
     rasterize_fill(
@@ -154,7 +200,7 @@ pub(crate) fn rasterize_linear_gradient_fill(
             let mut lx = x as f64 + 0.5;
             let mut ly = y as f64 + 0.5;
             transform.inverse_transform(&mut lx, &mut ly);
-            let mut src = gradient.sample(lx, ly);
+            let mut src = sample(lx, ly);
             src.a *= coverage * global_alpha;
 
             let sa = src.a.clamp(0.0, 1.0);
@@ -288,7 +334,13 @@ impl crate::draw_ctx::DrawCtx for GfxCtx<'_> {
     fn set_fill_linear_gradient(&mut self, gradient: crate::draw_ctx::LinearGradientPaint) {
         self.set_fill_linear_gradient(gradient)
     }
+    fn set_fill_radial_gradient(&mut self, gradient: crate::draw_ctx::RadialGradientPaint) {
+        self.set_fill_radial_gradient(gradient)
+    }
     fn supports_fill_linear_gradient(&self) -> bool {
+        true
+    }
+    fn supports_fill_radial_gradient(&self) -> bool {
         true
     }
     fn set_stroke_color(&mut self, c: crate::color::Color) {

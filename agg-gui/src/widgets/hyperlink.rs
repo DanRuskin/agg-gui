@@ -177,7 +177,8 @@ impl Widget for Hyperlink {
                 let was = self.hovered;
                 self.hovered = self.hit_test(*pos);
                 if was != self.hovered {
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
+                    return EventResult::Consumed;
                 }
                 EventResult::Ignored
             }
@@ -195,7 +196,7 @@ impl Widget for Hyperlink {
                         cb();
                     }
                     // Click handler typically mutates app state.
-                    crate::animation::request_tick();
+                    crate::animation::request_draw();
                 }
                 EventResult::Consumed
             }

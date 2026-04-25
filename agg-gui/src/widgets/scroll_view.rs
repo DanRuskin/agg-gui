@@ -295,6 +295,7 @@ impl AxisState {
     fn interact(&self) -> bool {
         self.hovered_bar || self.hovered_thumb || self.dragging
     }
+
 }
 
 pub struct ScrollView {

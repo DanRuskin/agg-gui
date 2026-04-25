@@ -772,7 +772,11 @@ impl Widget for MsaaBoolRow {
         };
         match event {
             agg_gui::Event::MouseMove { pos } => {
+                let was = self.hovered;
                 self.hovered = hit(*pos);
+                if was != self.hovered {
+                    agg_gui::animation::request_draw();
+                }
                 agg_gui::EventResult::Ignored
             }
             agg_gui::Event::MouseDown {
@@ -781,7 +785,10 @@ impl Widget for MsaaBoolRow {
                 ..
             } => {
                 if let Some(i) = hit(*pos) {
-                    self.samples.set(Self::VALS[i]);
+                    if self.samples.get() != Self::VALS[i] {
+                        self.samples.set(Self::VALS[i]);
+                        agg_gui::animation::request_draw();
+                    }
                     return agg_gui::EventResult::Consumed;
                 }
                 agg_gui::EventResult::Ignored

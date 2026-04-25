@@ -74,7 +74,7 @@ fn svg_zoom_buttons_change_to_their_own_targets() {
 }
 
 #[test]
-fn svg_test_includes_current_linear_gradient_capability_rows() {
+fn svg_test_includes_current_paint_server_capability_rows() {
     let names: Vec<&str> = super::SVG_SAMPLES
         .iter()
         .map(|sample| sample.name)
@@ -85,6 +85,10 @@ fn svg_test_includes_current_linear_gradient_capability_rows() {
         "paint-servers/linearGradient/spreadMethod=reflect.svg",
         "paint-servers/linearGradient/spreadMethod=repeat.svg",
         "paint-servers/linearGradient/many-stops.svg",
+        "paint-servers/radialGradient/gradientUnits=userSpaceOnUse.svg",
+        "paint-servers/radialGradient/gradientTransform.svg",
+        "paint-servers/radialGradient/focal-point-correction.svg",
+        "paint-servers/radialGradient/spreadMethod=repeat.svg",
     ] {
         assert!(
             names.contains(&expected),
