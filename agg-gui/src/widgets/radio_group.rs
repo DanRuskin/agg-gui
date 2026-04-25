@@ -15,9 +15,9 @@ use crate::text::Font;
 use crate::widget::{paint_subtree, Widget};
 use crate::widgets::label::Label;
 
-const DOT_R: f64 = 8.0; // outer circle radius
+const DOT_R: f64 = 7.0; // outer circle radius
 const GAP: f64 = 8.0;
-const ROW_H: f64 = 28.0;
+const ROW_H: f64 = 22.0;
 
 /// A group of mutually-exclusive radio options.
 ///

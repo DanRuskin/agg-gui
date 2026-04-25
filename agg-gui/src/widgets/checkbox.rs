@@ -25,6 +25,7 @@ use crate::widget::{paint_subtree, Widget};
 use crate::widgets::label::Label;
 
 const BOX_SIZE: f64 = 16.0;
+const FOCUS_PAD: f64 = 2.0;
 const GAP: f64 = 8.0;
 const BOX_STROKE_WIDTH: f64 = 1.5;
 
@@ -200,19 +201,27 @@ impl Widget for Checkbox {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        let h = BOX_SIZE.max(self.font_size * 1.5);
-        self.bounds = Rect::new(0.0, 0.0, available.width, h);
+        let box_slot_w = BOX_SIZE + FOCUS_PAD * 2.0;
+        let h = (BOX_SIZE + FOCUS_PAD * 2.0).max(self.font_size * 1.25);
         // Layout the label within the remaining width after the box + gap.
-        let label_avail_w = (available.width - BOX_SIZE - GAP).max(0.0);
+        let label_avail_w = (available.width - box_slot_w - GAP).max(0.0);
         let s = self.label_widget.layout(Size::new(label_avail_w, h));
         self.label_widget
             .set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
-        Size::new(available.width, h)
+        let natural_w = if self.label_widget.text_str().is_empty() {
+            box_slot_w
+        } else {
+            box_slot_w + GAP + s.width
+        };
+        let w = natural_w.min(available.width);
+        self.bounds = Rect::new(0.0, 0.0, w, h);
+        Size::new(w, h)
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let v = ctx.visuals();
         let h = self.bounds.height;
+        let box_x = FOCUS_PAD;
         let box_y = (h - BOX_SIZE) * 0.5;
 
         // Focus ring
@@ -220,7 +229,13 @@ impl Widget for Checkbox {
             ctx.set_stroke_color(v.accent_focus);
             ctx.set_line_width(2.0);
             ctx.begin_path();
-            ctx.rounded_rect(-1.5, box_y - 1.5, BOX_SIZE + 3.0, BOX_SIZE + 3.0, 4.0);
+            ctx.rounded_rect(
+                box_x - 1.5,
+                box_y - 1.5,
+                BOX_SIZE + 3.0,
+                BOX_SIZE + 3.0,
+                4.0,
+            );
             ctx.stroke();
         }
 
@@ -231,7 +246,7 @@ impl Widget for Checkbox {
         let bg = if checked { v.accent } else { unchecked_bg };
         ctx.set_fill_color(bg);
         ctx.begin_path();
-        ctx.rounded_rect(0.0, box_y, BOX_SIZE, BOX_SIZE, 3.0);
+        ctx.rounded_rect(box_x, box_y, BOX_SIZE, BOX_SIZE, 3.0);
         ctx.fill();
 
         // Box border
@@ -245,7 +260,7 @@ impl Widget for Checkbox {
         ctx.begin_path();
         let stroke_inset = BOX_STROKE_WIDTH * 0.5;
         ctx.rounded_rect(
-            stroke_inset,
+            box_x + stroke_inset,
             box_y + stroke_inset,
             BOX_SIZE - BOX_STROKE_WIDTH,
             BOX_SIZE - BOX_STROKE_WIDTH,
@@ -258,7 +273,7 @@ impl Widget for Checkbox {
             ctx.set_stroke_color(Color::white());
             ctx.set_line_width(2.0);
             ctx.begin_path();
-            let bx = 0.0;
+            let bx = box_x;
             let by = box_y;
             ctx.move_to(bx + 3.0, by + BOX_SIZE * 0.55);
             ctx.line_to(bx + BOX_SIZE * 0.42, by + BOX_SIZE * 0.28);
@@ -272,7 +287,11 @@ impl Widget for Checkbox {
 
         let lw = self.label_widget.bounds().width;
         let lh = self.label_widget.bounds().height;
-        let lx = BOX_SIZE + GAP;
+        let lx = if self.label_widget.text_str().is_empty() {
+            BOX_SIZE + FOCUS_PAD * 2.0
+        } else {
+            BOX_SIZE + FOCUS_PAD * 2.0 + GAP
+        };
         let ly = (h - lh) * 0.5;
         self.label_widget.set_bounds(Rect::new(lx, ly, lw, lh));
 

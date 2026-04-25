@@ -30,7 +30,7 @@ fn format_value(value: f64, decimals: usize) -> String {
 
 // ── Geometry constants ─────────────────────────────────────────────────────
 
-const WIDGET_H: f64 = 28.0;
+const WIDGET_H: f64 = 24.0;
 /// Half-width of the left/right arrow indicator text.
 const ARROW_MARGIN: f64 = 8.0;
 /// Horizontal drag distance (logical px) before a press is treated as a drag.

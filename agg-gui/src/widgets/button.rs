@@ -230,7 +230,7 @@ impl Widget for Button {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        let height = (self.font_size * 2.4).max(28.0);
+        let height = (self.font_size * 1.7).max(24.0);
         // Measure the label first so we can report a "fit" width — label
         // width plus horizontal padding — instead of stretching to the whole
         // available width.  This makes Buttons share horizontal space
@@ -238,7 +238,7 @@ impl Widget for Button {
         // Parents that want a full-width button should wrap in a `SizedBox`
         // with an explicit width, or set `HAnchor::FILL` — handled by the
         // flex layout before this method is called.
-        let pad_h = self.font_size * 1.4;
+        let pad_h = self.font_size * 1.2;
         let label_size = self.children[0].layout(Size::new(available.width, height));
         let natural_w = (label_size.width + pad_h).max(48.0);
         let width = natural_w.min(available.width);

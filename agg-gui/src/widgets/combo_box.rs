@@ -1,9 +1,8 @@
 //! `ComboBox` — a single-selection dropdown widget.
 //!
-//! When closed the widget occupies `CLOSED_H` pixels vertically.  When open
-//! it expands downward in the layout (returning `CLOSED_H + n_items × ITEM_H`
-//! from `layout()`), so sibling widgets are pushed down.  This works naturally
-//! inside a `ScrollView` (the scroll area absorbs the extra height).
+//! The widget always occupies its compact closed height.  When open, options
+//! are painted as a floating panel in `paint_overlay()` so sibling widgets are
+//! not pushed down by the dropdown.
 //!
 //! Text for the selected value and dropdown items is rendered through
 //! backbuffered [`Label`] children maintained in `selected_label` and
@@ -23,8 +22,8 @@ use crate::text::Font;
 use crate::widget::{paint_subtree, Widget};
 use crate::widgets::label::Label;
 
-const CLOSED_H: f64 = 28.0;
-const ITEM_H: f64 = 24.0;
+const CLOSED_H: f64 = 24.0;
+const ITEM_H: f64 = 22.0;
 const PAD_X: f64 = 8.0;
 const ARROW_W: f64 = 20.0;
 const CORNER_R: f64 = 4.0;
@@ -258,31 +257,14 @@ impl ComboBox {
         }
     }
 
-    /// Height returned by `layout()` — varies with open/closed state.
-    fn total_h(&self) -> f64 {
-        if self.open {
-            CLOSED_H + self.options.len() as f64 * ITEM_H
-        } else {
-            CLOSED_H
-        }
-    }
-
-    /// Local Y coordinate of the TOP of item `i` (Y-up: larger = higher on screen).
-    ///
-    /// Items are drawn below the closed button area (y < 0 from the button
-    /// bottom), but since layout expands downward in Y-up coordinates, item 0
-    /// starts just below the button, which is at `total_h - CLOSED_H`.
-    fn item_top_y(&self, i: usize) -> f64 {
-        // In local Y-up space the button occupies [total_h-CLOSED_H .. total_h].
-        // Items occupy [0 .. total_h-CLOSED_H], item 0 highest.
-        let dropdown_h = self.total_h() - CLOSED_H;
-        dropdown_h - (i as f64 * ITEM_H)
+    fn popup_h(&self) -> f64 {
+        self.options.len() as f64 * ITEM_H
     }
 
     fn item_rect(&self, i: usize) -> Rect {
         let w = self.bounds.width;
-        let ty = self.item_top_y(i);
-        Rect::new(0.0, ty - ITEM_H, w, ITEM_H)
+        let popup_top = CLOSED_H + self.popup_h();
+        Rect::new(0.0, popup_top - (i as f64 + 1.0) * ITEM_H, w, ITEM_H)
     }
 
     /// Which dropdown item (if any) contains local point `p`.
@@ -299,10 +281,8 @@ impl ComboBox {
         None
     }
 
-    /// Whether `p` is inside the closed button area (top 28px of the widget).
     fn in_button(&self, p: Point) -> bool {
-        let button_y = self.total_h() - CLOSED_H;
-        p.x >= 0.0 && p.x <= self.bounds.width && p.y >= button_y && p.y <= self.total_h()
+        p.x >= 0.0 && p.x <= self.bounds.width && p.y >= 0.0 && p.y <= CLOSED_H
     }
 }
 
@@ -325,6 +305,15 @@ impl Widget for ComboBox {
 
     fn is_focusable(&self) -> bool {
         true
+    }
+
+    fn hit_test(&self, local_pos: Point) -> bool {
+        self.in_button(local_pos)
+            || (self.open
+                && local_pos.x >= 0.0
+                && local_pos.x <= self.bounds.width
+                && local_pos.y >= CLOSED_H
+                && local_pos.y <= CLOSED_H + self.popup_h())
     }
 
     fn margin(&self) -> Insets {
@@ -362,50 +351,45 @@ impl Widget for ComboBox {
             }
         }
 
-        let h = self.total_h();
-        self.bounds = Rect::new(0.0, 0.0, available.width, h);
+        self.bounds = Rect::new(0.0, 0.0, available.width, CLOSED_H);
         let inner_w = (available.width - PAD_X * 2.0 - ARROW_W).max(0.0);
 
         // Layout selected label.
         let sl = self.selected_label.layout(Size::new(inner_w, CLOSED_H));
-        let sl_y = (self.total_h() - CLOSED_H) + (CLOSED_H - sl.height) * 0.5;
+        let sl_y = (CLOSED_H - sl.height) * 0.5;
         self.selected_label
             .set_bounds(Rect::new(PAD_X, sl_y, sl.width, sl.height));
 
-        // Layout item labels — compute ty before borrowing item_labels.
-        let dropdown_h = self.total_h() - CLOSED_H;
+        // Layout item labels in the floating panel above the closed button.
         for i in 0..self.item_labels.len() {
             let s = self.item_labels[i].layout(Size::new(inner_w, ITEM_H));
-            let ty = dropdown_h - (i as f64 * ITEM_H);
-            let ly = ty - ITEM_H + (ITEM_H - s.height) * 0.5;
+            let ir = self.item_rect(i);
+            let ly = ir.y + (ITEM_H - s.height) * 0.5;
             self.item_labels[i].set_bounds(Rect::new(PAD_X, ly, s.width, s.height));
         }
 
-        Size::new(available.width, h)
+        Size::new(available.width, CLOSED_H)
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let v = ctx.visuals();
         let w = self.bounds.width;
-        let h = self.total_h();
-        // Button area (top section, Y-up).
-        let btn_y = h - CLOSED_H;
 
         // ── Button background ─────────────────────────────────────────────────
         ctx.set_fill_color(v.widget_bg);
         ctx.begin_path();
-        ctx.rounded_rect(0.0, btn_y, w, CLOSED_H, CORNER_R);
+        ctx.rounded_rect(0.0, 0.0, w, CLOSED_H, CORNER_R);
         ctx.fill();
 
         ctx.set_stroke_color(v.widget_stroke);
         ctx.set_line_width(1.0);
         ctx.begin_path();
-        ctx.rounded_rect(0.0, btn_y, w, CLOSED_H, CORNER_R);
+        ctx.rounded_rect(0.0, 0.0, w, CLOSED_H, CORNER_R);
         ctx.stroke();
 
         // ── Dropdown arrow (▼) ────────────────────────────────────────────────
         let arrow_x = w - ARROW_W * 0.5;
-        let arrow_cy = btn_y + CLOSED_H * 0.5;
+        let arrow_cy = CLOSED_H * 0.5;
         let arrow_sz = 4.0;
         ctx.set_fill_color(v.text_dim);
         ctx.begin_path();
@@ -424,21 +408,24 @@ impl Widget for ComboBox {
         ctx.translate(sl_bounds.x, sl_bounds.y);
         paint_subtree(&mut self.selected_label, ctx);
         ctx.restore();
+    }
 
-        // ── Open dropdown ─────────────────────────────────────────────────────
+    fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
         if self.open {
-            let dropdown_h = h - CLOSED_H;
+            let v = ctx.visuals();
+            let w = self.bounds.width;
+            let popup_h = self.popup_h();
 
             // Dropdown panel background.
             ctx.set_fill_color(v.widget_bg);
             ctx.begin_path();
-            ctx.rounded_rect(0.0, 0.0, w, dropdown_h, CORNER_R);
+            ctx.rounded_rect(0.0, CLOSED_H, w, popup_h, CORNER_R);
             ctx.fill();
 
             ctx.set_stroke_color(v.widget_stroke);
             ctx.set_line_width(1.0);
             ctx.begin_path();
-            ctx.rounded_rect(0.0, 0.0, w, dropdown_h, CORNER_R);
+            ctx.rounded_rect(0.0, CLOSED_H, w, popup_h, CORNER_R);
             ctx.stroke();
 
             // Items.
@@ -539,9 +526,7 @@ impl Widget for ComboBox {
                     }
                     Key::ArrowDown => {
                         if self.selected + 1 < n {
-                            self.selected += 1;
-                            self.selected_label
-                                .set_text(self.options[self.selected].as_str());
+                            self.set_selected(self.selected + 1);
                             self.fire();
                             crate::animation::request_tick();
                         }
@@ -549,9 +534,7 @@ impl Widget for ComboBox {
                     }
                     Key::ArrowUp => {
                         if self.selected > 0 {
-                            self.selected -= 1;
-                            self.selected_label
-                                .set_text(self.options[self.selected].as_str());
+                            self.set_selected(self.selected - 1);
                             self.fire();
                             crate::animation::request_tick();
                         }
