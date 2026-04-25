@@ -41,7 +41,7 @@ use crate::event::{Event, EventResult, MouseButton};
 use crate::geometry::{Point, Rect, Size};
 use crate::layout_props::{HAnchor, Insets, VAnchor, WidgetBase};
 use crate::text::Font;
-use crate::widget::{paint_subtree, CompositingLayer, Widget};
+use crate::widget::{paint_subtree, BackbufferKind, BackbufferSpec, BackbufferState, Widget};
 use crate::widgets::window_title_bar::{TitleBarView, WindowTitleBar};
 
 /// Round all four components of a Rect to the nearest integer so widgets
@@ -108,6 +108,8 @@ pub struct Window {
     visible_cell: Option<Rc<Cell<bool>>>,
     visibility_anim: crate::animation::Tween,
     fade_out_active: Cell<bool>,
+    backbuffer: BackbufferState,
+    use_gl_backbuffer: bool,
     reset_to: Option<Rc<Cell<Option<Rect>>>>,
     position_cell: Option<Rc<Cell<Rect>>>,
 
@@ -225,6 +227,8 @@ impl Window {
             visible_cell: None,
             visibility_anim: crate::animation::Tween::new(1.0, VISIBILITY_FADE_SECS),
             fade_out_active: Cell::new(false),
+            backbuffer: BackbufferState::new(),
+            use_gl_backbuffer: true,
             reset_to: None,
             position_cell: None,
             // Seed `last_visible` to `true` (matches `visible` above) so a
@@ -335,6 +339,14 @@ impl Window {
 
     pub fn with_constrain(mut self, constrain: bool) -> Self {
         self.constrain = constrain;
+        self
+    }
+
+    /// Opt this window in/out of the generic retained GL-FBO backbuffer.
+    /// Disabling renders directly into the inherited parent target.
+    pub fn with_gl_backbuffer(mut self, enabled: bool) -> Self {
+        self.use_gl_backbuffer = enabled;
+        self.backbuffer.invalidate();
         self
     }
 

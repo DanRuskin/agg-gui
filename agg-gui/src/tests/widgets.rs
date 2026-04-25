@@ -692,9 +692,9 @@ fn test_collapsed_window_title_bar_rounds_bottom_corners() {
 }
 
 #[test]
-fn test_window_compositing_layer_covers_shadow_and_fade_out() {
+fn test_window_backbuffer_spec_covers_shadow_and_fade_out() {
     use crate::text::Font;
-    use crate::widget::Widget;
+    use crate::widget::{BackbufferKind, Widget};
     use crate::widgets::window::Window;
     use std::sync::Arc;
 
@@ -703,26 +703,94 @@ fn test_window_compositing_layer_covers_shadow_and_fade_out() {
     let mut win = Window::new("Layered", Arc::clone(&font), Box::new(content))
         .with_bounds(crate::Rect::new(0.0, 0.0, 200.0, 120.0));
 
-    let visible_layer = win
-        .compositing_layer()
-        .expect("visible windows should request a compositing layer");
-    assert!(visible_layer.alpha > 0.99);
-    assert!(visible_layer.outset_left > 0.0);
-    assert!(visible_layer.outset_bottom > 0.0);
-    assert!(visible_layer.outset_right > 0.0);
-    assert!(visible_layer.outset_top > 0.0);
+    let visible_spec = win.backbuffer_spec();
+    assert_eq!(visible_spec.kind, BackbufferKind::GlFbo);
+    assert!(visible_spec.cached);
+    assert!(visible_spec.alpha > 0.99);
+    assert!(visible_spec.outsets.left > 0.0);
+    assert!(visible_spec.outsets.bottom > 0.0);
+    assert!(visible_spec.outsets.right > 0.0);
+    assert!(visible_spec.outsets.top > 0.0);
 
     win.hide();
     assert!(
         !win.is_visible(),
         "non-layer renderers should still see hide() as immediate"
     );
-    let fading_layer = win
-        .compositing_layer()
-        .expect("GL layer traversal should still get a fade-out layer");
+    let fading_layer = win.backbuffer_spec();
     assert!(
         fading_layer.alpha > 0.001 && fading_layer.alpha <= 1.0,
         "fade-out layer alpha should be visible and bounded, got {}",
         fading_layer.alpha
     );
+}
+
+#[test]
+fn test_window_can_opt_out_of_gl_backbuffer() {
+    use crate::text::Font;
+    use crate::widget::{BackbufferKind, Widget};
+    use crate::widgets::window::Window;
+    use std::sync::Arc;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+    let content = Button::new("Content", Arc::clone(&font)).with_font_size(14.0);
+    let mut win =
+        Window::new("Direct", Arc::clone(&font), Box::new(content)).with_gl_backbuffer(false);
+
+    assert_eq!(win.backbuffer_spec().kind, BackbufferKind::None);
+}
+
+#[test]
+fn test_consumed_event_marks_widget_backbuffer_dirty() {
+    use crate::widget::{dispatch_event, BackbufferState, Widget};
+    use crate::{DrawCtx, Event, EventResult, Modifiers, MouseButton, Point, Rect, Size};
+
+    struct DirtyProbe {
+        bounds: Rect,
+        children: Vec<Box<dyn Widget>>,
+        backbuffer: BackbufferState,
+    }
+
+    impl Widget for DirtyProbe {
+        fn bounds(&self) -> Rect {
+            self.bounds
+        }
+        fn set_bounds(&mut self, bounds: Rect) {
+            self.bounds = bounds;
+        }
+        fn children(&self) -> &[Box<dyn Widget>] {
+            &self.children
+        }
+        fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+            &mut self.children
+        }
+        fn layout(&mut self, available: Size) -> Size {
+            available
+        }
+        fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
+        fn on_event(&mut self, _event: &Event) -> EventResult {
+            EventResult::Consumed
+        }
+        fn backbuffer_state_mut(&mut self) -> Option<&mut BackbufferState> {
+            Some(&mut self.backbuffer)
+        }
+    }
+
+    let mut root: Box<dyn Widget> = Box::new(DirtyProbe {
+        bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+        children: Vec::new(),
+        backbuffer: BackbufferState::new(),
+    });
+    root.backbuffer_state_mut().unwrap().dirty = false;
+    let event = Event::MouseDown {
+        pos: Point::new(1.0, 1.0),
+        button: MouseButton::Left,
+        modifiers: Modifiers::default(),
+    };
+
+    assert_eq!(
+        dispatch_event(&mut root, &[], &event, Point::new(1.0, 1.0)),
+        EventResult::Consumed
+    );
+    assert!(root.backbuffer_state_mut().unwrap().dirty);
 }

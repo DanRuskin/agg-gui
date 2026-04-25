@@ -62,6 +62,32 @@ impl Widget for Window {
         self.base.max_size
     }
 
+    fn properties(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "backbuffer_kind",
+                if self.use_gl_backbuffer {
+                    "GlFbo".to_string()
+                } else {
+                    "None".to_string()
+                },
+            ),
+            ("backbuffer_dirty", self.backbuffer.dirty.to_string()),
+            (
+                "backbuffer_repaints",
+                self.backbuffer.repaint_count.to_string(),
+            ),
+            (
+                "backbuffer_composites",
+                self.backbuffer.composite_count.to_string(),
+            ),
+            (
+                "backbuffer_size",
+                format!("{}x{}", self.backbuffer.width, self.backbuffer.height),
+            ),
+        ]
+    }
+
     /// Pop this window to the top of the parent `Stack` when the
     /// false→true visibility edge fires (see `layout`).
     fn take_raise_request(&mut self) -> bool {
@@ -93,11 +119,14 @@ impl Widget for Window {
         &mut self.children
     }
 
-    fn compositing_layer(&mut self) -> Option<CompositingLayer> {
+    fn backbuffer_spec(&mut self) -> BackbufferSpec {
+        if !self.use_gl_backbuffer {
+            return BackbufferSpec::none();
+        }
         if !self.is_visible() {
             let alpha = self.visibility_anim.value();
             if self.requested_visible() || alpha <= 0.001 {
-                return None;
+                return BackbufferSpec::none();
             }
         }
 
@@ -113,13 +142,22 @@ impl Widget for Window {
         }
 
         let (outset_left, outset_bottom, outset_right, outset_top) = Self::layer_outsets();
-        Some(CompositingLayer::new(
-            outset_left,
-            outset_bottom,
-            outset_right,
-            outset_top,
+        BackbufferSpec {
+            kind: BackbufferKind::GlFbo,
+            cached: true,
             alpha,
-        ))
+            outsets: Insets {
+                left: outset_left,
+                right: outset_right,
+                top: outset_top,
+                bottom: outset_bottom,
+            },
+            rounded_clip: Some(CORNER_R),
+        }
+    }
+
+    fn backbuffer_state_mut(&mut self) -> Option<&mut BackbufferState> {
+        Some(&mut self.backbuffer)
     }
 
     /// Clip child painting to the content area (below the title bar).

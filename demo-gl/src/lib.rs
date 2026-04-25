@@ -132,6 +132,15 @@ struct GlLayerEntry {
     alpha: f64,
     parent_fbo: Option<glow::Framebuffer>,
     saved: SavedGlDrawState,
+    retained_key: Option<u64>,
+}
+
+struct RetainedGlLayer {
+    fbo: glow::Framebuffer,
+    texture: glow::Texture,
+    stencil: glow::Renderbuffer,
+    width: i32,
+    height: i32,
 }
 
 /// A [`DrawCtx`] that renders via `glow` (WebGL2 or native GL).
@@ -224,6 +233,7 @@ pub struct GlGfxCtx {
 
     // Transient FBO layer stack used for windows and other whole-subtree effects.
     layer_stack: Vec<GlLayerEntry>,
+    retained_layers: std::collections::HashMap<u64, RetainedGlLayer>,
     current_fbo: Option<glow::Framebuffer>,
 
     // Drawing state

@@ -248,6 +248,24 @@ pub trait DrawCtx {
     /// cannot write into rounded transparent corners.
     fn set_layer_rounded_clip(&mut self, _x: f64, _y: f64, _w: f64, _h: f64, _r: f64) {}
 
+    /// Composite a previously retained backend layer. Returns `true` when
+    /// the backend had a retained surface for `key` and drew it.
+    fn composite_retained_layer(
+        &mut self,
+        _key: u64,
+        _width: f64,
+        _height: f64,
+        _alpha: f64,
+    ) -> bool {
+        false
+    }
+
+    /// Begin rendering into a retained backend layer identified by `key`.
+    /// Backends that do not retain layers may fall back to a transient layer.
+    fn push_retained_layer_with_alpha(&mut self, _key: u64, width: f64, height: f64, alpha: f64) {
+        self.push_layer_with_alpha(width, height, alpha);
+    }
+
     /// Composite the current layer back into the previous render target using
     /// SrcOver alpha blending, then discard the layer.
     ///

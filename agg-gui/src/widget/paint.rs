@@ -16,6 +16,9 @@ use super::*;
 /// existing bitmap — identical fast path to MatterCAD's `DoubleBuffer`.
 pub fn paint_subtree(widget: &mut dyn Widget, ctx: &mut dyn DrawCtx) {
     if !widget.is_visible() {
+        if paint_subtree_unified_backbuffer(widget, ctx, true) {
+            return;
+        }
         if ctx.supports_compositing_layers() {
             if let Some(layer) = widget.compositing_layer() {
                 paint_subtree_layer(widget, ctx, true, layer);
@@ -28,10 +31,101 @@ pub fn paint_subtree(widget: &mut dyn Widget, ctx: &mut dyn DrawCtx) {
     // below inside `paint_subtree_direct` for the full rationale.  The
     // backbuffer path bypasses this because the bitmap is already at
     // integer texel positions by construction.
-    if widget.backbuffer_cache_mut().is_some() {
+    if paint_subtree_unified_backbuffer(widget, ctx, true) {
+        return;
+    } else if widget.backbuffer_cache_mut().is_some() {
         paint_subtree_backbuffered(widget, ctx);
     } else {
         paint_subtree_direct(widget, ctx);
+    }
+}
+
+fn paint_subtree_unified_backbuffer(
+    widget: &mut dyn Widget,
+    ctx: &mut dyn DrawCtx,
+    include_overlay: bool,
+) -> bool {
+    let spec = widget.backbuffer_spec();
+    if spec.kind == BackbufferKind::None {
+        return false;
+    }
+
+    match spec.kind {
+        BackbufferKind::GlFbo if ctx.supports_compositing_layers() => {
+            paint_subtree_gl_backbuffer(widget, ctx, include_overlay, spec);
+            true
+        }
+        BackbufferKind::SoftwareRgba | BackbufferKind::SoftwareLcd => {
+            // Existing CPU widgets still use `backbuffer_cache_mut`; the
+            // unified spec provides the migration point without changing their
+            // current behavior.
+            if widget.backbuffer_cache_mut().is_some() {
+                paint_subtree_backbuffered(widget, ctx);
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn paint_subtree_gl_backbuffer(
+    widget: &mut dyn Widget,
+    ctx: &mut dyn DrawCtx,
+    include_overlay: bool,
+    spec: BackbufferSpec,
+) {
+    let b = widget.bounds();
+    let layer_w = (b.width + spec.outsets.left + spec.outsets.right).max(1.0);
+    let layer_h = (b.height + spec.outsets.bottom + spec.outsets.top).max(1.0);
+    let subtree_needs_paint = widget.needs_paint();
+    let (key, needs_repaint) = {
+        let Some(state) = widget.backbuffer_state_mut() else {
+            paint_subtree_direct(widget, ctx);
+            return;
+        };
+        let w = layer_w.ceil().max(1.0) as u32;
+        let h = layer_h.ceil().max(1.0) as u32;
+        let changed = state.width != w || state.height != h || state.spec_kind != spec.kind;
+        let needs = !spec.cached || state.dirty || changed || subtree_needs_paint;
+        if changed {
+            state.width = w;
+            state.height = h;
+            state.spec_kind = spec.kind;
+        }
+        (state.id(), needs)
+    };
+
+    if spec.cached && !needs_repaint {
+        ctx.save();
+        ctx.translate(-spec.outsets.left, -spec.outsets.bottom);
+        let composited = ctx.composite_retained_layer(key, layer_w, layer_h, spec.alpha);
+        ctx.restore();
+        if composited {
+            if let Some(state) = widget.backbuffer_state_mut() {
+                state.composite_count = state.composite_count.saturating_add(1);
+            }
+            return;
+        }
+    }
+
+    ctx.save();
+    ctx.translate(-spec.outsets.left, -spec.outsets.bottom);
+    if spec.cached {
+        ctx.push_retained_layer_with_alpha(key, layer_w, layer_h, spec.alpha);
+    } else {
+        ctx.push_layer_with_alpha(layer_w, layer_h, spec.alpha);
+    }
+    ctx.translate(spec.outsets.left, spec.outsets.bottom);
+    paint_subtree_direct_inner(widget, ctx, include_overlay, false);
+    ctx.pop_layer();
+    ctx.restore();
+
+    if let Some(state) = widget.backbuffer_state_mut() {
+        state.dirty = false;
+        state.repaint_count = state.repaint_count.saturating_add(1);
+        state.composite_count = state.composite_count.saturating_add(1);
     }
 }
 

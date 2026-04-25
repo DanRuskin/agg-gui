@@ -731,6 +731,16 @@ impl DrawCtx for GlGfxCtx {
         }
     }
 
+    fn composite_retained_layer(&mut self, key: u64, width: f64, height: f64, alpha: f64) -> bool {
+        unsafe { self.composite_retained_gl_layer(key, width, height, alpha) }
+    }
+
+    fn push_retained_layer_with_alpha(&mut self, key: u64, width: f64, height: f64, alpha: f64) {
+        unsafe {
+            self.push_retained_gl_layer(key, width, height, alpha);
+        }
+    }
+
     fn set_layer_rounded_clip(&mut self, x: f64, y: f64, w: f64, h: f64, r: f64) {
         unsafe {
             self.set_rounded_layer_clip(x, y, w, h, r);

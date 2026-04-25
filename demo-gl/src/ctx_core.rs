@@ -137,6 +137,7 @@ impl GlGfxCtx {
             texture_cache_order: std::collections::VecDeque::new(),
             arc_texture_cache: std::collections::HashMap::new(),
             layer_stack: Vec::new(),
+            retained_layers: std::collections::HashMap::new(),
             current_fbo: None,
             lcd_arc_texture_cache: std::collections::HashMap::new(),
             lcb_prog,
@@ -352,6 +353,7 @@ impl GlGfxCtx {
             alpha: alpha.clamp(0.0, 1.0),
             parent_fbo,
             saved,
+            retained_key: None,
         });
         self.current_fbo = Some(fbo);
         self.viewport = (width as f32, height as f32);
@@ -394,9 +396,191 @@ impl GlGfxCtx {
         self.apply_scissor();
         self.composite_layer_texture(&layer);
         self.apply_scissor();
-        self.gl.delete_renderbuffer(layer.stencil);
-        self.gl.delete_framebuffer(layer.fbo);
-        self.gl.delete_texture(layer.texture);
+        if layer.retained_key.is_none() {
+            self.gl.delete_renderbuffer(layer.stencil);
+            self.gl.delete_framebuffer(layer.fbo);
+            self.gl.delete_texture(layer.texture);
+        }
+    }
+
+    pub(crate) unsafe fn push_retained_gl_layer(
+        &mut self,
+        key: u64,
+        width: f64,
+        height: f64,
+        alpha: f64,
+    ) {
+        let width = width.ceil().max(1.0) as i32;
+        let height = height.ceil().max(1.0) as i32;
+        self.ensure_retained_layer(key, width, height);
+
+        let retained = self
+            .retained_layers
+            .get(&key)
+            .expect("retained layer exists");
+        let fbo = retained.fbo;
+        let texture = retained.texture;
+        let stencil = retained.stencil;
+        let saved = self.capture_draw_state();
+        let origin_x = self.ctm().tx;
+        let origin_y = self.ctm().ty;
+        let parent_fbo = self.current_fbo;
+
+        self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        self.layer_stack.push(GlLayerEntry {
+            fbo,
+            texture,
+            stencil,
+            width,
+            height,
+            origin_x,
+            origin_y,
+            alpha: alpha.clamp(0.0, 1.0),
+            parent_fbo,
+            saved,
+            retained_key: Some(key),
+        });
+        self.current_fbo = Some(fbo);
+        self.viewport = (width as f32, height as f32);
+        self.state_stack = vec![(TransAffine::new(), None)];
+        self.path = PathStorage::new();
+
+        self.gl.viewport(0, 0, width, height);
+        self.gl.disable(glow::SCISSOR_TEST);
+        self.gl.disable(glow::STENCIL_TEST);
+        self.gl.stencil_mask(0xFF);
+        self.gl.color_mask(true, true, true, true);
+        self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
+        self.gl.clear_stencil(0);
+        self.gl.clear_depth_f32(1.0);
+        self.gl
+            .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+        self.gl.enable(glow::BLEND);
+        self.gl.blend_func_separate(
+            glow::SRC_ALPHA,
+            glow::ONE_MINUS_SRC_ALPHA,
+            glow::ONE,
+            glow::ONE_MINUS_SRC_ALPHA,
+        );
+    }
+
+    pub(crate) unsafe fn composite_retained_gl_layer(
+        &self,
+        key: u64,
+        width: f64,
+        height: f64,
+        alpha: f64,
+    ) -> bool {
+        let Some(retained) = self.retained_layers.get(&key) else {
+            return false;
+        };
+        if retained.width != width.ceil().max(1.0) as i32
+            || retained.height != height.ceil().max(1.0) as i32
+        {
+            return false;
+        }
+        let layer = GlLayerEntry {
+            fbo: retained.fbo,
+            texture: retained.texture,
+            stencil: retained.stencil,
+            width: retained.width,
+            height: retained.height,
+            origin_x: self.ctm().tx,
+            origin_y: self.ctm().ty,
+            alpha: alpha.clamp(0.0, 1.0),
+            parent_fbo: self.current_fbo,
+            saved: self.capture_draw_state(),
+            retained_key: Some(key),
+        };
+        self.composite_layer_texture(&layer);
+        true
+    }
+
+    unsafe fn ensure_retained_layer(&mut self, key: u64, width: i32, height: i32) {
+        let needs_new = self
+            .retained_layers
+            .get(&key)
+            .map(|l| l.width != width || l.height != height)
+            .unwrap_or(true);
+        if !needs_new {
+            return;
+        }
+        if let Some(old) = self.retained_layers.remove(&key) {
+            self.gl.delete_renderbuffer(old.stencil);
+            self.gl.delete_framebuffer(old.fbo);
+            self.gl.delete_texture(old.texture);
+        }
+
+        let gl = &*self.gl;
+        let texture = gl.create_texture().expect("create retained layer texture");
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_S,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_T,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA as i32,
+            width,
+            height,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            None,
+        );
+        let fbo = gl.create_framebuffer().expect("create retained layer fbo");
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(texture),
+            0,
+        );
+        let stencil = gl
+            .create_renderbuffer()
+            .expect("create retained depth-stencil");
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(stencil));
+        gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH24_STENCIL8, width, height);
+        gl.framebuffer_renderbuffer(
+            glow::FRAMEBUFFER,
+            glow::DEPTH_STENCIL_ATTACHMENT,
+            glow::RENDERBUFFER,
+            Some(stencil),
+        );
+        debug_assert_eq!(
+            gl.check_framebuffer_status(glow::FRAMEBUFFER),
+            glow::FRAMEBUFFER_COMPLETE
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, self.current_fbo);
+        self.retained_layers.insert(
+            key,
+            RetainedGlLayer {
+                fbo,
+                texture,
+                stencil,
+                width,
+                height,
+            },
+        );
     }
 
     pub(crate) unsafe fn set_rounded_layer_clip(&mut self, x: f64, y: f64, w: f64, h: f64, r: f64) {

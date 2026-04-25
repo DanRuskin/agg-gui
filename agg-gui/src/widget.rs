@@ -17,6 +17,7 @@
 //! Hit test: root → leaves (deepest child under cursor wins).
 //! Event dispatch: leaf → root (events bubble up; any widget can consume).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::draw_ctx::DrawCtx;
@@ -74,6 +75,49 @@ pub enum BackbufferMode {
     /// bg rect).  Uncovered pixels land as black on the parent because
     /// there is no alpha channel to carry "no paint here."
     LcdCoverage,
+}
+
+/// Unified backbuffer target kind requested by a widget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackbufferKind {
+    /// Paint directly into the parent render target.
+    None,
+    /// Retained software RGBA framebuffer.
+    SoftwareRgba,
+    /// Retained software LCD coverage framebuffer.
+    SoftwareLcd,
+    /// Retained GL framebuffer object.
+    GlFbo,
+}
+
+/// Widget-owned backbuffer request. Windows use this for retained GL FBOs,
+/// while existing label/text-field CPU caches map naturally to the software
+/// variants.
+#[derive(Clone, Copy, Debug)]
+pub struct BackbufferSpec {
+    pub kind: BackbufferKind,
+    pub cached: bool,
+    pub alpha: f64,
+    pub outsets: Insets,
+    pub rounded_clip: Option<f64>,
+}
+
+impl BackbufferSpec {
+    pub const fn none() -> Self {
+        Self {
+            kind: BackbufferKind::None,
+            cached: false,
+            alpha: 1.0,
+            outsets: Insets::ZERO,
+            rounded_clip: None,
+        }
+    }
+}
+
+impl Default for BackbufferSpec {
+    fn default() -> Self {
+        Self::none()
+    }
 }
 
 /// A CPU bitmap owned by a widget that opts into backbuffer caching.
@@ -141,6 +185,50 @@ impl BackbufferCache {
 }
 
 impl Default for BackbufferCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static NEXT_BACKBUFFER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Retained widget backbuffer state shared by software and GL implementations.
+pub struct BackbufferState {
+    id: u64,
+    pub cache: BackbufferCache,
+    pub dirty: bool,
+    pub width: u32,
+    pub height: u32,
+    pub spec_kind: BackbufferKind,
+    pub repaint_count: u64,
+    pub composite_count: u64,
+}
+
+impl BackbufferState {
+    pub fn new() -> Self {
+        Self {
+            id: NEXT_BACKBUFFER_ID.fetch_add(1, Ordering::Relaxed),
+            cache: BackbufferCache::new(),
+            dirty: true,
+            width: 0,
+            height: 0,
+            spec_kind: BackbufferKind::None,
+            repaint_count: 0,
+            composite_count: 0,
+        }
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn invalidate(&mut self) {
+        self.dirty = true;
+        self.cache.invalidate();
+    }
+}
+
+impl Default for BackbufferState {
     fn default() -> Self {
         Self::new()
     }
@@ -308,6 +396,38 @@ pub trait Widget {
     /// point where the traversal knows the layer will be painted.
     fn compositing_layer(&mut self) -> Option<CompositingLayer> {
         None
+    }
+
+    /// Unified widget-owned backbuffer request.
+    fn backbuffer_spec(&mut self) -> BackbufferSpec {
+        let mode = self.backbuffer_mode();
+        if self.backbuffer_cache_mut().is_some() {
+            BackbufferSpec {
+                kind: match mode {
+                    BackbufferMode::Rgba => BackbufferKind::SoftwareRgba,
+                    BackbufferMode::LcdCoverage => BackbufferKind::SoftwareLcd,
+                },
+                cached: true,
+                alpha: 1.0,
+                outsets: Insets::ZERO,
+                rounded_clip: None,
+            }
+        } else {
+            BackbufferSpec::none()
+        }
+    }
+
+    /// Mutable retained backbuffer state for widgets that request a
+    /// [`BackbufferSpec`] other than [`BackbufferKind::None`].
+    fn backbuffer_state_mut(&mut self) -> Option<&mut BackbufferState> {
+        None
+    }
+
+    /// Mark this widget's own retained surface dirty, if it owns one.
+    fn mark_dirty(&mut self) {
+        if let Some(state) = self.backbuffer_state_mut() {
+            state.invalidate();
+        }
     }
 
     /// Opt into per-widget CPU bitmap caching with a dirty flag.

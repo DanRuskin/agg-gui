@@ -63,7 +63,11 @@ pub fn dispatch_event(
     pos_in_root: Point,
 ) -> EventResult {
     if path.is_empty() {
-        return root.on_event(event);
+        let result = root.on_event(event);
+        if result == EventResult::Consumed {
+            root.mark_dirty();
+        }
+        return result;
     }
     let idx = path[0];
     // Path can become stale between when it was captured (hit-test or
@@ -87,10 +91,15 @@ pub fn dispatch_event(
         child_pos,
     );
     if child_result == EventResult::Consumed {
+        root.mark_dirty();
         return EventResult::Consumed;
     }
     // Bubble: deliver to this widget too (with original pos_in_root coords).
-    root.on_event(event)
+    let result = root.on_event(event);
+    if result == EventResult::Consumed {
+        root.mark_dirty();
+    }
+    result
 }
 
 /// Produce a version of `event` with mouse positions replaced by `new_pos`.
