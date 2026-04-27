@@ -86,7 +86,9 @@ pub use svg::{
     render_svg_tree_to_lcd_buffer_at_size, SvgRenderError,
 };
 pub use text::{measure_text_metrics, Font, TextMetrics};
-pub use theme::{current_visuals, current_visuals_epoch, set_visuals, ThemePreference, Visuals};
+pub use theme::{
+    current_visuals, current_visuals_epoch, set_visuals, AccentColor, ThemePreference, Visuals,
+};
 pub use touch_state::{current_multi_touch, MultiTouchInfo, TouchDeviceId, TouchId, TouchPhase};
 pub use undo::{DoUndoActions, UndoBuffer, UndoRedoCommand};
 pub use widget::{

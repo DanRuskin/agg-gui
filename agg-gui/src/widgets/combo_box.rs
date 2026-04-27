@@ -292,7 +292,6 @@ impl ComboBox {
             self.selected_label.set_text(self.options[idx].as_str());
         }
     }
-
 }
 
 mod geometry;

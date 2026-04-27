@@ -14,7 +14,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::widget::paint_subtree;
-use agg_gui::widgets::button::ButtonTheme;
 use agg_gui::{
     Button, Checkbox, CollapsingHeader, Color, ColorPicker, ComboBox, DragValue, DrawCtx, Event,
     EventResult, FlexColumn, FlexRow, Font, Hyperlink, ImageView, Label, ProgressBar, RadioGroup,
@@ -349,15 +348,6 @@ pub fn widget_gallery(font: Arc<Font>) -> Box<dyn Widget> {
                 SizedBox::new().with_height(28.0).with_child(Box::new(
                     Button::new("Image + text", Arc::clone(&font))
                         .with_font_size(13.0)
-                        .with_theme(ButtonTheme {
-                            background: Color::rgba(0.22, 0.45, 0.88, 0.12),
-                            background_hovered: Color::rgba(0.22, 0.45, 0.88, 0.22),
-                            background_pressed: Color::rgba(0.22, 0.45, 0.88, 0.35),
-                            label_color: Color::rgb(0.22, 0.45, 0.88),
-                            border_radius: 6.0,
-                            focus_ring_color: Color::rgba(0.22, 0.45, 0.88, 0.55),
-                            focus_ring_width: 2.5,
-                        })
                         .on_click({
                             let boolean = Rc::clone(&boolean);
                             move || boolean.set(!boolean.get())

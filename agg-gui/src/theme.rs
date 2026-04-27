@@ -33,6 +33,105 @@ pub enum ThemePreference {
     System,
 }
 
+impl ThemePreference {
+    pub fn key(self) -> &'static str {
+        match self {
+            ThemePreference::Dark => "dark",
+            ThemePreference::Light => "light",
+            ThemePreference::System => "system",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "dark" => Some(ThemePreference::Dark),
+            "light" => Some(ThemePreference::Light),
+            "system" => Some(ThemePreference::System),
+            _ => None,
+        }
+    }
+}
+
+/// Built-in accent swatches exposed by the demo and usable by hosts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum AccentColor {
+    #[default]
+    Blue,
+    Purple,
+    Pink,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Teal,
+}
+
+impl AccentColor {
+    pub const ALL: [AccentColor; 8] = [
+        AccentColor::Blue,
+        AccentColor::Purple,
+        AccentColor::Pink,
+        AccentColor::Red,
+        AccentColor::Orange,
+        AccentColor::Yellow,
+        AccentColor::Green,
+        AccentColor::Teal,
+    ];
+
+    pub fn color(self) -> Color {
+        match self {
+            AccentColor::Blue => Color::rgb(0.22, 0.45, 0.88),
+            AccentColor::Purple => Color::rgb(0.48, 0.36, 0.86),
+            AccentColor::Pink => Color::rgb(0.78, 0.28, 0.58),
+            AccentColor::Red => Color::rgb(0.82, 0.24, 0.24),
+            AccentColor::Orange => Color::rgb(0.90, 0.46, 0.18),
+            AccentColor::Yellow => Color::rgb(0.82, 0.62, 0.16),
+            AccentColor::Green => Color::rgb(0.20, 0.62, 0.34),
+            AccentColor::Teal => Color::rgb(0.14, 0.62, 0.66),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AccentColor::Blue => "Blue",
+            AccentColor::Purple => "Purple",
+            AccentColor::Pink => "Pink",
+            AccentColor::Red => "Red",
+            AccentColor::Orange => "Orange",
+            AccentColor::Yellow => "Yellow",
+            AccentColor::Green => "Green",
+            AccentColor::Teal => "Teal",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            AccentColor::Blue => "blue",
+            AccentColor::Purple => "purple",
+            AccentColor::Pink => "pink",
+            AccentColor::Red => "red",
+            AccentColor::Orange => "orange",
+            AccentColor::Yellow => "yellow",
+            AccentColor::Green => "green",
+            AccentColor::Teal => "teal",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "blue" => Some(AccentColor::Blue),
+            "purple" => Some(AccentColor::Purple),
+            "pink" => Some(AccentColor::Pink),
+            "red" => Some(AccentColor::Red),
+            "orange" => Some(AccentColor::Orange),
+            "yellow" => Some(AccentColor::Yellow),
+            "green" => Some(AccentColor::Green),
+            "teal" => Some(AccentColor::Teal),
+            _ => None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Visuals (complete colour palette)
 // ---------------------------------------------------------------------------
@@ -129,6 +228,46 @@ pub struct Visuals {
 }
 
 impl Visuals {
+    fn accent_hovered(accent: Color) -> Color {
+        if accent == AccentColor::Blue.color() {
+            return Color::rgb(0.30, 0.52, 0.92);
+        }
+        mix_color(accent, Color::white(), 0.18)
+    }
+
+    fn accent_pressed(accent: Color) -> Color {
+        if accent == AccentColor::Blue.color() {
+            return Color::rgb(0.16, 0.36, 0.72);
+        }
+        mix_color(accent, Color::black(), 0.18)
+    }
+
+    /// Return this palette with its primary accent replaced.
+    pub fn with_accent(mut self, accent: Color) -> Self {
+        let hovered = Self::accent_hovered(accent);
+        let pressed = Self::accent_pressed(accent);
+        let dark =
+            0.299 * self.bg_color.r + 0.587 * self.bg_color.g + 0.114 * self.bg_color.b < 0.5;
+        self.accent = accent;
+        self.accent_hovered = hovered;
+        self.accent_pressed = pressed;
+        self.accent_focus = accent.with_alpha(0.45);
+        self.text_link = if dark { hovered } else { pressed };
+        self.text_link_hovered = if dark {
+            mix_color(hovered, Color::white(), 0.12)
+        } else {
+            accent
+        };
+        self.widget_stroke_active = pressed;
+        self.selection_bg = accent.with_alpha(0.45);
+        self
+    }
+
+    /// Return this palette with one of the built-in accent swatches applied.
+    pub fn with_accent_color(self, accent: AccentColor) -> Self {
+        self.with_accent(accent.color())
+    }
+
     /// Dark-mode palette matching egui's approximate dark colour scheme.
     pub fn dark() -> Self {
         let accent = Color::rgb(0.22, 0.45, 0.88);
@@ -240,6 +379,16 @@ impl Visuals {
             _ => Self::dark(),
         }
     }
+}
+
+fn mix_color(a: Color, b: Color, t: f32) -> Color {
+    let u = t.clamp(0.0, 1.0);
+    Color::rgba(
+        a.r + (b.r - a.r) * u,
+        a.g + (b.g - a.g) * u,
+        a.b + (b.b - a.b) * u,
+        a.a + (b.a - a.a) * u,
+    )
 }
 
 // ---------------------------------------------------------------------------

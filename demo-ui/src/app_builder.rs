@@ -4,8 +4,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    App, FlexColumn, FlexRow, Font, InspectorNode, InspectorPanel, Key, Modifiers, Rect, Size,
-    Stack, ThemePreference, Widget, Window,
+    AccentColor, App, FlexColumn, FlexRow, Font, InspectorNode, InspectorPanel, Key, Modifiers,
+    Rect, Size, Stack, ThemePreference, Widget, Window,
 };
 
 use crate::api::{DemoHandles, PlatformHooks};
@@ -51,12 +51,17 @@ pub fn build_demo_ui(
     let screenshot_image: Rc<RefCell<Option<(Arc<Vec<u8>>, u32, u32)>>> =
         Rc::new(RefCell::new(None));
     let screenshot_capturing = Rc::new(Cell::new(false));
-    let initial_theme = top_bar::detect_system_theme();
-    match initial_theme {
-        ThemePreference::Light => agg_gui::set_visuals(agg_gui::Visuals::light()),
-        _ => agg_gui::set_visuals(agg_gui::Visuals::dark()),
-    }
+    let initial_theme = initial_state
+        .as_ref()
+        .map(|s| s.theme_pref)
+        .unwrap_or_else(top_bar::detect_system_theme);
+    let initial_accent = initial_state
+        .as_ref()
+        .map(|s| s.accent_color)
+        .unwrap_or(AccentColor::Blue);
+    top_bar::apply_theme_visuals(initial_theme, initial_accent);
     let theme_pref = Rc::new(Cell::new(initial_theme));
+    let accent_color = Rc::new(Cell::new(initial_accent));
     let backend_initially_open = initial_state
         .as_ref()
         .map(|st| st.backend_open)
@@ -583,6 +588,7 @@ pub fn build_demo_ui(
         Rc::clone(&show_backend),
         Rc::clone(&mobile_menu_open),
         Rc::clone(&theme_pref),
+        Rc::clone(&accent_color),
     );
     let root = FlexColumn::new()
         .with_gap(0.0)
@@ -633,6 +639,8 @@ pub fn build_demo_ui(
         about_open: Rc::clone(&about_open),
         about_pos: about_pos_cell,
         backend_open: Rc::clone(&show_backend),
+        theme_pref: Rc::clone(&theme_pref),
+        accent_color: Rc::clone(&accent_color),
         window_size: Rc::clone(&screen_size),
         window_fullscreen: Rc::clone(&window_fullscreen),
         window_maximized: Rc::clone(&window_maximized),

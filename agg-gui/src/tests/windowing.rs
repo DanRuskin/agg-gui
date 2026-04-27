@@ -77,7 +77,12 @@ fn test_window_middle_drag_title_moves_for_touch_scroll_bridge() {
     let start_x = 140.0;
     let start_y_up = 100.0 + 140.0 - 12.0;
     let start_y_down = viewport.height - start_y_up;
-    app.on_mouse_down(start_x, start_y_down, MouseButton::Middle, Modifiers::default());
+    app.on_mouse_down(
+        start_x,
+        start_y_down,
+        MouseButton::Middle,
+        Modifiers::default(),
+    );
     app.on_mouse_move(start_x + 30.0, start_y_down - 20.0);
     app.on_mouse_up(
         start_x + 30.0,
@@ -116,7 +121,12 @@ fn test_window_move_drag_requests_draw_without_invalidation() {
     let start_x = 140.0;
     let start_y_up = 100.0 + 140.0 - 12.0;
     let start_y_down = viewport.height - start_y_up;
-    app.on_mouse_down(start_x, start_y_down, MouseButton::Left, Modifiers::default());
+    app.on_mouse_down(
+        start_x,
+        start_y_down,
+        MouseButton::Left,
+        Modifiers::default(),
+    );
 
     crate::animation::clear_draw_request();
     let epoch = crate::animation::invalidation_epoch();

@@ -14,8 +14,8 @@ use std::sync::Arc;
 use agg_gui::widget::paint_subtree;
 use agg_gui::widgets::label::Label;
 use agg_gui::{
-    set_visuals, Color, DrawCtx, Event, EventResult, FlexRow, Font, Hyperlink, Rect, Size,
-    SizedBox, ThemePreference, VAnchor, Visuals, Widget,
+    set_visuals, AccentColor, Color, DrawCtx, Event, EventResult, FlexRow, Font, Hyperlink, Rect,
+    Size, SizedBox, ThemePreference, VAnchor, Visuals, Widget,
 };
 
 /// Detect OS colour scheme and return the matching `ThemePreference`.
@@ -26,13 +26,17 @@ pub fn detect_system_theme() -> ThemePreference {
     }
 }
 
-/// Apply visuals matching the current OS color scheme.
-fn apply_system_visuals() {
-    match detect_system_theme() {
-        ThemePreference::Light => set_visuals(Visuals::light()),
-        ThemePreference::Dark => set_visuals(Visuals::dark()),
-        ThemePreference::System => {} // won't happen
-    }
+/// Apply visuals matching the selected theme and accent swatch.
+pub fn apply_theme_visuals(pref: ThemePreference, accent: AccentColor) {
+    let base = match pref {
+        ThemePreference::Light => Visuals::light(),
+        ThemePreference::Dark => Visuals::dark(),
+        ThemePreference::System => match detect_system_theme() {
+            ThemePreference::Light => Visuals::light(),
+            _ => Visuals::dark(),
+        },
+    };
+    set_visuals(base.with_accent_color(accent));
 }
 
 // ── Theme toggle widget ────────────────────────────────────────────────────────
@@ -44,6 +48,7 @@ struct ThemeToggle {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>, // always empty — labels are stored separately
     pref: Rc<Cell<ThemePreference>>,
+    accent: Rc<Cell<AccentColor>>,
     hovered: Option<usize>,
     /// One Label per segment. Positioned and painted manually.
     labels: Vec<Label>,
@@ -60,7 +65,11 @@ impl ThemeToggle {
         ThemePreference::System,
     ];
 
-    fn new(font: Arc<Font>, pref: Rc<Cell<ThemePreference>>) -> Self {
+    fn new(
+        font: Arc<Font>,
+        pref: Rc<Cell<ThemePreference>>,
+        accent: Rc<Cell<AccentColor>>,
+    ) -> Self {
         let labels = Self::LABELS
             .iter()
             .map(|text| Label::new(*text, Arc::clone(&font)).with_font_size(11.0))
@@ -69,6 +78,7 @@ impl ThemeToggle {
             bounds: Rect::default(),
             children: Vec::new(),
             pref,
+            accent,
             hovered: None,
             labels,
         }
@@ -191,11 +201,7 @@ impl Widget for ThemeToggle {
                 if let Some(idx) = self.hit_idx(*pos) {
                     let pref = Self::PREFS[idx];
                     self.pref.set(pref);
-                    match pref {
-                        ThemePreference::Light => set_visuals(Visuals::light()),
-                        ThemePreference::Dark => set_visuals(Visuals::dark()),
-                        ThemePreference::System => apply_system_visuals(),
-                    }
+                    apply_theme_visuals(pref, self.accent.get());
                     // Theme change is global — every widget needs to re-paint.
                     agg_gui::animation::request_draw();
                     return EventResult::Consumed;
@@ -453,6 +459,227 @@ impl Widget for MenuButton {
     }
 }
 
+// ── Accent colour dropdown ────────────────────────────────────────────────────
+
+struct AccentDropdown {
+    bounds: Rect,
+    children: Vec<Box<dyn Widget>>,
+    pref: Rc<Cell<ThemePreference>>,
+    accent: Rc<Cell<AccentColor>>,
+    open: bool,
+    hovered_button: bool,
+    hovered_swatch: Option<usize>,
+    label: Label,
+}
+
+impl AccentDropdown {
+    const W: f64 = 86.0;
+    const H: f64 = 24.0;
+    const SWATCH: f64 = 18.0;
+    const GAP: f64 = 6.0;
+    const POPUP_PAD: f64 = 8.0;
+
+    fn new(
+        font: Arc<Font>,
+        pref: Rc<Cell<ThemePreference>>,
+        accent: Rc<Cell<AccentColor>>,
+    ) -> Self {
+        Self {
+            bounds: Rect::default(),
+            children: Vec::new(),
+            pref,
+            accent,
+            open: false,
+            hovered_button: false,
+            hovered_swatch: None,
+            label: Label::new("Color", font).with_font_size(11.0),
+        }
+    }
+
+    fn btn_rect(&self) -> Rect {
+        Rect::new(0.0, (self.bounds.height - Self::H) * 0.5, Self::W, Self::H)
+    }
+
+    fn popup_rect(&self) -> Rect {
+        let w = Self::POPUP_PAD * 2.0
+            + AccentColor::ALL.len() as f64 * Self::SWATCH
+            + (AccentColor::ALL.len() - 1) as f64 * Self::GAP;
+        let h = Self::POPUP_PAD * 2.0 + Self::SWATCH;
+        Rect::new(Self::W - w, -h - 4.0, w, h)
+    }
+
+    fn contains(r: Rect, p: agg_gui::Point) -> bool {
+        p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
+    }
+
+    fn swatch_rect(&self, idx: usize) -> Rect {
+        let p = self.popup_rect();
+        Rect::new(
+            p.x + Self::POPUP_PAD + idx as f64 * (Self::SWATCH + Self::GAP),
+            p.y + Self::POPUP_PAD,
+            Self::SWATCH,
+            Self::SWATCH,
+        )
+    }
+
+    fn hit_swatch(&self, pos: agg_gui::Point) -> Option<usize> {
+        AccentColor::ALL
+            .iter()
+            .enumerate()
+            .find_map(|(i, _)| Self::contains(self.swatch_rect(i), pos).then_some(i))
+    }
+}
+
+impl Widget for AccentDropdown {
+    fn type_name(&self) -> &'static str {
+        "AccentDropdown"
+    }
+    fn bounds(&self) -> Rect {
+        self.bounds
+    }
+    fn set_bounds(&mut self, b: Rect) {
+        self.bounds = b;
+    }
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &self.children
+    }
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+        &mut self.children
+    }
+    fn layout(&mut self, available: Size) -> Size {
+        self.bounds = Rect::new(0.0, 0.0, Self::W, available.height);
+        let s = self.label.layout(Size::new(Self::W, Self::H));
+        self.label
+            .set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        Size::new(Self::W, available.height)
+    }
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let v = ctx.visuals();
+        let r = self.btn_rect();
+        let fill = if self.open {
+            v.accent
+        } else if self.hovered_button {
+            v.widget_bg_hovered
+        } else {
+            v.widget_bg
+        };
+        ctx.set_fill_color(fill);
+        ctx.begin_path();
+        ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
+        ctx.fill();
+        ctx.set_stroke_color(v.widget_stroke);
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        ctx.rounded_rect(r.x + 0.5, r.y + 0.5, r.width - 1.0, r.height - 1.0, 4.0);
+        ctx.stroke();
+
+        let swatch = Rect::new(r.x + 7.0, r.y + 5.0, 14.0, 14.0);
+        ctx.set_fill_color(self.accent.get().color());
+        ctx.begin_path();
+        ctx.rounded_rect(swatch.x, swatch.y, swatch.width, swatch.height, 3.0);
+        ctx.fill();
+
+        self.label.set_color(if self.open {
+            Color::white()
+        } else {
+            v.text_color
+        });
+        let lx = r.x + 28.0;
+        let ly = r.y + (r.height - self.label.bounds().height) * 0.5;
+        self.label.set_bounds(Rect::new(
+            lx,
+            ly,
+            self.label.bounds().width,
+            self.label.bounds().height,
+        ));
+        ctx.save();
+        ctx.translate(lx, ly);
+        paint_subtree(&mut self.label, ctx);
+        ctx.restore();
+    }
+    fn hit_test_global_overlay(&self, local_pos: agg_gui::Point) -> bool {
+        self.open && Self::contains(self.popup_rect(), local_pos)
+    }
+    fn paint_global_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        if !self.open {
+            return;
+        }
+        let v = ctx.visuals();
+        let p = self.popup_rect();
+        ctx.set_fill_color(v.window_fill);
+        ctx.begin_path();
+        ctx.rounded_rect(p.x, p.y, p.width, p.height, 6.0);
+        ctx.fill();
+        ctx.set_stroke_color(v.window_stroke);
+        ctx.set_line_width(1.0);
+        ctx.begin_path();
+        ctx.rounded_rect(p.x + 0.5, p.y + 0.5, p.width - 1.0, p.height - 1.0, 6.0);
+        ctx.stroke();
+
+        for (i, accent) in AccentColor::ALL.iter().enumerate() {
+            let r = self.swatch_rect(i);
+            ctx.set_fill_color(accent.color());
+            ctx.begin_path();
+            ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
+            ctx.fill();
+            let selected = self.accent.get() == *accent;
+            let hovered = self.hovered_swatch == Some(i);
+            if selected || hovered {
+                ctx.set_stroke_color(if selected {
+                    v.text_color
+                } else {
+                    v.widget_stroke
+                });
+                ctx.set_line_width(if selected { 2.0 } else { 1.0 });
+                ctx.begin_path();
+                ctx.rounded_rect(r.x - 2.0, r.y - 2.0, r.width + 4.0, r.height + 4.0, 5.0);
+                ctx.stroke();
+            }
+        }
+    }
+    fn on_event(&mut self, event: &Event) -> EventResult {
+        match event {
+            Event::MouseMove { pos } => {
+                let was_button = self.hovered_button;
+                let was_swatch = self.hovered_swatch;
+                self.hovered_button = Self::contains(self.btn_rect(), *pos);
+                self.hovered_swatch = if self.open {
+                    self.hit_swatch(*pos)
+                } else {
+                    None
+                };
+                if was_button != self.hovered_button || was_swatch != self.hovered_swatch {
+                    agg_gui::animation::request_draw();
+                }
+                EventResult::Ignored
+            }
+            Event::MouseDown {
+                button: agg_gui::MouseButton::Left,
+                pos,
+                ..
+            } => {
+                if self.open {
+                    if let Some(idx) = self.hit_swatch(*pos) {
+                        self.accent.set(AccentColor::ALL[idx]);
+                        apply_theme_visuals(self.pref.get(), self.accent.get());
+                        self.open = false;
+                        self.hovered_swatch = None;
+                        agg_gui::animation::request_draw();
+                        return EventResult::Consumed;
+                    }
+                }
+                if Self::contains(self.btn_rect(), *pos) {
+                    self.open = !self.open;
+                    agg_gui::animation::request_draw();
+                    return EventResult::Consumed;
+                }
+                EventResult::Ignored
+            }
+            _ => EventResult::Ignored,
+        }
+    }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /// URL of the project on GitHub — opened by the "View on GitHub" link.
@@ -471,6 +698,7 @@ pub fn build_top_bar_inner(
     show_backend: Rc<Cell<bool>>,
     mobile_menu_open: Rc<Cell<bool>>,
     theme_pref: Rc<Cell<ThemePreference>>,
+    accent_color: Rc<Cell<AccentColor>>,
 ) -> Box<dyn Widget> {
     let github_link = Hyperlink::new("View on GitHub", Arc::clone(&font))
         .with_font_size(13.0)
@@ -511,6 +739,16 @@ pub fn build_top_bar_inner(
             .add_flex(Box::new(SizedBox::new()), 1.0)
             .add(github_widget)
             .add(Box::new(SizedBox::new().with_width(12.0)))
-            .add(Box::new(ThemeToggle::new(font, theme_pref))),
+            .add(Box::new(ThemeToggle::new(
+                Arc::clone(&font),
+                Rc::clone(&theme_pref),
+                Rc::clone(&accent_color),
+            )))
+            .add(Box::new(SizedBox::new().with_width(6.0)))
+            .add(Box::new(AccentDropdown::new(
+                font,
+                theme_pref,
+                accent_color,
+            ))),
     )
 }

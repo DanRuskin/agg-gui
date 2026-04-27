@@ -199,6 +199,14 @@ pub struct BackbufferState {
     pub width: u32,
     pub height: u32,
     pub spec_kind: BackbufferKind,
+    /// Visuals epoch recorded the last time this retained surface was repainted.
+    /// Retained backend layers compare it against the live theme epoch so a
+    /// dark/light flip rebuilds the window/layer in the shared paint path.
+    pub theme_epoch: u64,
+    /// Typography epoch recorded the last time this retained surface was
+    /// repainted. Without this, a clean parent FBO can keep compositing old
+    /// text after global font/LCD settings change.
+    pub typography_epoch: u64,
     pub repaint_count: u64,
     pub composite_count: u64,
 }
@@ -212,6 +220,8 @@ impl BackbufferState {
             width: 0,
             height: 0,
             spec_kind: BackbufferKind::None,
+            theme_epoch: 0,
+            typography_epoch: 0,
             repaint_count: 0,
             composite_count: 0,
         }

@@ -30,6 +30,7 @@ use crate::widget::Widget;
 use crate::widgets::label::{Label, LabelAlign};
 
 /// A theme for [`Button`] visual states.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ButtonTheme {
     pub background: Color,
     pub background_hovered: Color,
@@ -259,12 +260,19 @@ impl Widget for Button {
         let h = self.bounds.height;
         let r = self.theme.border_radius;
         let enabled = self.is_enabled();
+        let v = ctx.visuals();
+        let use_visuals = self.theme == ButtonTheme::default();
 
         // Focus ring (behind the button surface) — skipped when disabled
         // because the disabled button never actually holds focus.
         if enabled && self.focused {
             let ring = self.theme.focus_ring_width;
-            ctx.set_stroke_color(self.theme.focus_ring_color);
+            let focus_ring = if use_visuals {
+                v.accent_focus
+            } else {
+                self.theme.focus_ring_color
+            };
+            ctx.set_stroke_color(focus_ring);
             ctx.set_line_width(ring);
             ctx.begin_path();
             ctx.rounded_rect(-ring * 0.5, -ring * 0.5, w + ring, h + ring, r + ring * 0.5);
@@ -274,14 +282,19 @@ impl Widget for Button {
         // Background — color depends on interaction state. Disabled buttons
         // use neutral widget colors instead of a washed-out accent, so they
         // don't look like secondary active actions.
-        let base_bg = if self.pressed {
+        let base_bg = if use_visuals && self.pressed {
+            v.accent_pressed
+        } else if use_visuals && self.hovered {
+            v.accent_hovered
+        } else if use_visuals {
+            v.accent
+        } else if self.pressed {
             self.theme.background_pressed
         } else if self.hovered {
             self.theme.background_hovered
         } else {
             self.theme.background
         };
-        let v = ctx.visuals();
         let (disabled_bg, disabled_stroke, _) = Self::disabled_colors(&v);
         let bg = if enabled { base_bg } else { disabled_bg };
         ctx.set_fill_color(bg);

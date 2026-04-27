@@ -22,7 +22,7 @@ pub struct ProgressBar {
     show_text: bool,
     font: Arc<Font>,
     font_size: f64,
-    fill_color: Color,
+    fill_color: Option<Color>,
 }
 
 impl ProgressBar {
@@ -35,7 +35,7 @@ impl ProgressBar {
             show_text: true,
             font,
             font_size: 11.0,
-            fill_color: Color::rgb(0.22, 0.45, 0.88),
+            fill_color: None,
         }
     }
 
@@ -44,7 +44,7 @@ impl ProgressBar {
         self
     }
     pub fn with_fill_color(mut self, color: Color) -> Self {
-        self.fill_color = color;
+        self.fill_color = Some(color);
         self
     }
 
@@ -129,11 +129,7 @@ impl Widget for ProgressBar {
         ctx.fill();
 
         // Fill — use explicit fill_color if set, otherwise fall back to accent.
-        let fill_color = if self.fill_color != Color::rgb(0.22, 0.45, 0.88) {
-            self.fill_color
-        } else {
-            v.accent
-        };
+        let fill_color = self.fill_color.unwrap_or(v.accent);
         let fill_w = (w * self.value).max(0.0);
         if fill_w >= 1.0 {
             ctx.set_fill_color(fill_color);

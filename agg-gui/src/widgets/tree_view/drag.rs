@@ -131,12 +131,13 @@ pub fn apply_drop(nodes: &mut Vec<TreeNode>, drag_node_idx: usize, target: DropP
 
 /// Paint a horizontal drop-before/after indicator line.
 pub fn paint_drop_line(ctx: &mut dyn DrawCtx, x: f64, y: f64, width: f64) {
-    ctx.set_stroke_color(Color::rgb(0.22, 0.45, 0.88));
-    ctx.set_line_width(2.0);
+    let accent = ctx.visuals().accent;
+    ctx.set_fill_color(accent);
     ctx.begin_path();
     ctx.circle(x + 4.0, y, 3.0);
     ctx.fill();
-    ctx.set_fill_color(Color::rgb(0.22, 0.45, 0.88));
+    ctx.set_stroke_color(accent);
+    ctx.set_line_width(2.0);
     ctx.begin_path();
     ctx.move_to(x + 4.0, y);
     ctx.line_to(x + width, y);
@@ -145,7 +146,7 @@ pub fn paint_drop_line(ctx: &mut dyn DrawCtx, x: f64, y: f64, width: f64) {
 
 /// Paint a full-row "drop as child" highlight.
 pub fn paint_drop_child_highlight(ctx: &mut dyn DrawCtx, y_bottom: f64, width: f64, height: f64) {
-    ctx.set_stroke_color(Color::rgba(0.22, 0.45, 0.88, 0.7));
+    ctx.set_stroke_color(ctx.visuals().accent.with_alpha(0.7));
     ctx.set_line_width(1.5);
     ctx.begin_path();
     ctx.rounded_rect(2.0, y_bottom, width - 4.0, height, 3.0);

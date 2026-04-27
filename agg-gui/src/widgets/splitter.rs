@@ -2,7 +2,6 @@
 //!
 //! Phase 5: horizontal split only (left panel | right panel).
 
-use crate::color::Color;
 use crate::draw_ctx::DrawCtx;
 use crate::event::{Event, EventResult, MouseButton};
 use crate::geometry::{Point, Rect, Size};
@@ -138,15 +137,16 @@ impl Widget for Splitter {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        let v = ctx.visuals();
         let div_x = self.divider_x();
         let h = self.bounds.height;
 
         let color = if self.dragging {
-            Color::rgba(0.22, 0.45, 0.88, 0.6)
+            v.accent.with_alpha(0.6)
         } else if self.hovered {
-            Color::rgba(0.0, 0.0, 0.0, 0.15)
+            v.text_color.with_alpha(0.15)
         } else {
-            Color::rgba(0.0, 0.0, 0.0, 0.08)
+            v.text_color.with_alpha(0.08)
         };
         ctx.set_fill_color(color);
         ctx.begin_path();
@@ -156,9 +156,9 @@ impl Widget for Splitter {
         // Grip dots in the center of the divider
         if h > 30.0 {
             let grip_color = if self.hovered || self.dragging {
-                Color::rgba(0.22, 0.45, 0.88, 0.7)
+                v.accent.with_alpha(0.7)
             } else {
-                Color::rgba(0.0, 0.0, 0.0, 0.25)
+                v.text_color.with_alpha(0.25)
             };
             ctx.set_fill_color(grip_color);
             let cx = div_x + self.divider_width * 0.5;

@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use agg_gui::Rect;
+use agg_gui::{AccentColor, Rect, ThemePreference};
 
 // ── WindowState ───────────────────────────────────────────────────────────────
 
@@ -48,6 +48,10 @@ pub struct SavedState {
     pub about: WindowState,
     /// Whether the left-side Backend panel is open.
     pub backend_open: bool,
+    /// Top-bar theme selection.
+    pub theme_pref: ThemePreference,
+    /// Top-bar accent swatch selection.
+    pub accent_color: AccentColor,
     /// OS-window logical width (in pixels).  `None` leaves the host default.
     pub window_w: Option<u32>,
     /// OS-window logical height (in pixels).
@@ -143,6 +147,8 @@ impl SavedState {
             self.about.open as u8, self.about.x, self.about.y, self.about.w, self.about.h
         ));
         out.push_str(&format!("backend={}\n", self.backend_open as u8));
+        out.push_str(&format!("theme={}\n", self.theme_pref.key()));
+        out.push_str(&format!("accent={}\n", self.accent_color.key()));
         if let (Some(w), Some(h)) = (self.window_w, self.window_h) {
             out.push_str(&format!(
                 "window={},{},{},{}\n",
@@ -197,6 +203,8 @@ impl SavedState {
         let mut tests: Vec<Option<WindowState>> = Vec::new();
         let mut about = None::<WindowState>;
         let mut backend_open = false;
+        let mut theme_pref = ThemePreference::System;
+        let mut accent_color = AccentColor::default();
         let mut window_w: Option<u32> = None;
         let mut window_h: Option<u32> = None;
         let mut window_fullscreen = false;
@@ -244,6 +252,12 @@ impl SavedState {
                 "backend" => {
                     let v: u8 = val.parse().ok()?;
                     backend_open = v != 0;
+                }
+                "theme" => {
+                    theme_pref = ThemePreference::from_key(val).unwrap_or(ThemePreference::System);
+                }
+                "accent" => {
+                    accent_color = AccentColor::from_key(val).unwrap_or_default();
                 }
                 "window" => {
                     let mut it = val.splitn(4, ',');
@@ -349,6 +363,8 @@ impl SavedState {
             tests: tests.into_iter().collect::<Option<Vec<_>>>()?,
             about: about?,
             backend_open,
+            theme_pref,
+            accent_color,
             window_w,
             window_h,
             window_fullscreen,
@@ -401,6 +417,10 @@ pub struct StateAccessor {
     pub about_open: Rc<Cell<bool>>,
     pub about_pos: Rc<Cell<Rect>>,
     pub backend_open: Rc<Cell<bool>>,
+    /// Top-bar theme selection.
+    pub theme_pref: Rc<Cell<ThemePreference>>,
+    /// Top-bar accent swatch selection.
+    pub accent_color: Rc<Cell<AccentColor>>,
     /// Latest OS-window size, updated by the platform harness on Resized.
     pub window_size: Rc<Cell<(u32, u32)>>,
     /// Whether the OS window is currently borderless-fullscreen.
@@ -501,6 +521,8 @@ impl StateAccessor {
             tests,
             about,
             backend_open: self.backend_open.get(),
+            theme_pref: self.theme_pref.get(),
+            accent_color: self.accent_color.get(),
             window_w: if ww > 0 { Some(ww) } else { None },
             window_h: if wh > 0 { Some(wh) } else { None },
             window_fullscreen: self.window_fullscreen.get(),
@@ -600,6 +622,8 @@ mod tests {
                 h: 500.0,
             },
             backend_open: false,
+            theme_pref: ThemePreference::Dark,
+            accent_color: AccentColor::Purple,
             window_w: None,
             window_h: None,
             window_fullscreen: false,
@@ -622,6 +646,8 @@ mod tests {
 
         let text = saved.serialize();
         let back = SavedState::deserialize(&text).expect("round-trip must parse");
+        assert_eq!(back.theme_pref, ThemePreference::Dark);
+        assert_eq!(back.accent_color, AccentColor::Purple);
         assert!(
             back.demos[0].has_valid_bounds(),
             "opened demo must survive round-trip as valid"

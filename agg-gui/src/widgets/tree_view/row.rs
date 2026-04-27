@@ -117,7 +117,13 @@ impl Widget for ExpandToggle {
         let cx = w * 0.5;
         let cy = h * 0.5;
 
-        ctx.set_fill_color(Color::rgba(0.0, 0.0, 0.0, 0.45));
+        let v = ctx.visuals();
+        ctx.set_fill_color(Color::rgba(
+            v.text_color.r,
+            v.text_color.g,
+            v.text_color.b,
+            0.55,
+        ));
         ctx.begin_path();
         if self.is_expanded {
             // Down-pointing ▼

@@ -591,11 +591,9 @@ impl Widget for Window {
                 EventResult::Ignored
             }
 
-            Event::MouseDown {
-                button,
-                pos,
-                ..
-            } if matches!(*button, MouseButton::Left | MouseButton::Middle) => {
+            Event::MouseDown { button, pos, .. }
+                if matches!(*button, MouseButton::Left | MouseButton::Middle) =>
+            {
                 let is_left_click = *button == MouseButton::Left;
                 // Press-to-raise — any direct press that reaches this Window
                 // (hit-test routed it here in reverse paint order, so we
