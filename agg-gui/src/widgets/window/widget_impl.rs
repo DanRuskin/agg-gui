@@ -563,8 +563,8 @@ impl Widget for Window {
                         self.clamp_to_canvas();
                         self.hover_dir = None;
                         set_cursor_icon(CursorIcon::Grabbing);
-                        crate::animation::request_draw();
-                        return EventResult::Consumed;
+                        crate::animation::request_draw_without_invalidation();
+                        return EventResult::Ignored;
                     }
                     DragMode::Resize(dir) => {
                         let world = Point::new(pos.x + self.bounds.x, pos.y + self.bounds.y);

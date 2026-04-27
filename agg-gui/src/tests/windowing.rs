@@ -94,6 +94,50 @@ fn test_window_middle_drag_title_moves_for_touch_scroll_bridge() {
     assert_eq!(moved.y, 120.0);
 }
 
+#[test]
+fn test_window_move_drag_requests_draw_without_invalidation() {
+    use crate::text::Font;
+    use crate::widgets::{primitives::Stack, window::Window};
+    use crate::{App, Label, Modifiers, MouseButton};
+    use std::sync::Arc;
+
+    const FONT_BYTES: &[u8] = include_bytes!("../../../demo/assets/CascadiaCode.ttf");
+    let font = Arc::new(Font::from_slice(FONT_BYTES).expect("font"));
+    let win = Window::new(
+        "Retained Move",
+        Arc::clone(&font),
+        Box::new(Label::new("content", Arc::clone(&font))),
+    )
+    .with_bounds(crate::geometry::Rect::new(100.0, 100.0, 240.0, 140.0));
+    let mut app = App::new(Box::new(Stack::new().add(Box::new(win))));
+    let viewport = crate::geometry::Size::new(640.0, 480.0);
+    app.layout(viewport);
+
+    let start_x = 140.0;
+    let start_y_up = 100.0 + 140.0 - 12.0;
+    let start_y_down = viewport.height - start_y_up;
+    app.on_mouse_down(start_x, start_y_down, MouseButton::Left, Modifiers::default());
+
+    crate::animation::clear_draw_request();
+    let epoch = crate::animation::invalidation_epoch();
+    app.on_mouse_move(start_x + 30.0, start_y_down - 20.0);
+
+    assert_eq!(
+        crate::animation::invalidation_epoch(),
+        epoch,
+        "moving a retained window should translate its cached layer, not invalidate it"
+    );
+    assert!(
+        crate::animation::wants_draw(),
+        "moving a retained window still needs a frame at the new position"
+    );
+    let moved = crate::find_widget_by_id(app.root(), "Retained Move")
+        .expect("window remains in tree")
+        .bounds();
+    assert_eq!(moved.x, 130.0);
+    assert_eq!(moved.y, 120.0);
+}
+
 /// **End-to-end: sidebar-toggle raise actually reorders the Stack.**
 ///
 /// Not just "flags get drained" — asserts the child that was raised ends
