@@ -81,6 +81,7 @@ use glow::HasContext;
 mod ctx_core;
 mod draw_ctx_impl;
 mod gradient;
+mod image_blit;
 mod overlays;
 mod shaders;
 mod text_render;
