@@ -183,6 +183,7 @@ impl Widget for BezierCanvas {
             } => {
                 if let Some(idx) = self.nearest(*pos) {
                     self.dragging = Some(idx);
+                    agg_gui::animation::request_draw();
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -191,7 +192,11 @@ impl Widget for BezierCanvas {
                 if let Some(idx) = self.dragging {
                     let clamped_x = pos.x.clamp(0.0, self.bounds.width);
                     let clamped_y = pos.y.clamp(0.0, self.bounds.height);
-                    self.pts[idx] = (clamped_x, clamped_y);
+                    let next = (clamped_x, clamped_y);
+                    if self.pts[idx] != next {
+                        self.pts[idx] = next;
+                        agg_gui::animation::request_draw();
+                    }
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -203,6 +208,7 @@ impl Widget for BezierCanvas {
             } => {
                 if self.dragging.is_some() {
                     self.dragging = None;
+                    agg_gui::animation::request_draw();
                     EventResult::Consumed
                 } else {
                     EventResult::Ignored
@@ -217,6 +223,49 @@ impl Widget for BezierCanvas {
             && local_pos.x <= self.bounds.width
             && local_pos.y >= 0.0
             && local_pos.y <= self.bounds.height
+    }
+}
+
+#[cfg(test)]
+mod bezier_tests {
+    use super::*;
+
+    #[test]
+    fn dragging_control_point_requests_draw() {
+        let mut canvas = BezierCanvas::new();
+        canvas.layout(Size::new(360.0, 290.0));
+
+        agg_gui::animation::clear_draw_request();
+        assert_eq!(
+            canvas.on_event(&Event::MouseDown {
+                pos: Point::new(80.0, 90.0),
+                button: MouseButton::Left,
+                modifiers: Default::default(),
+            }),
+            EventResult::Consumed
+        );
+        assert!(agg_gui::animation::wants_draw());
+
+        agg_gui::animation::clear_draw_request();
+        assert_eq!(
+            canvas.on_event(&Event::MouseMove {
+                pos: Point::new(100.0, 110.0),
+            }),
+            EventResult::Consumed
+        );
+        assert_eq!(canvas.pts[0], (100.0, 110.0));
+        assert!(agg_gui::animation::wants_draw());
+
+        agg_gui::animation::clear_draw_request();
+        assert_eq!(
+            canvas.on_event(&Event::MouseUp {
+                pos: Point::new(100.0, 110.0),
+                button: MouseButton::Left,
+                modifiers: Default::default(),
+            }),
+            EventResult::Consumed
+        );
+        assert!(agg_gui::animation::wants_draw());
     }
 }
 
