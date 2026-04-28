@@ -7,7 +7,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use agg_rust::math_stroke::{LineCap, LineJoin};
 use agg_rust::trans_affine::TransAffine;
@@ -110,10 +110,56 @@ impl SvgParseOptions {
     }
 }
 
+static DEFAULT_SVG_PARSE_OPTIONS: OnceLock<RwLock<SvgParseOptions>> = OnceLock::new();
+
+fn default_svg_parse_options_cell() -> &'static RwLock<SvgParseOptions> {
+    DEFAULT_SVG_PARSE_OPTIONS.get_or_init(|| RwLock::new(system_svg_parse_options()))
+}
+
+fn system_svg_parse_options() -> SvgParseOptions {
+    let mut fontdb = usvg::fontdb::Database::new();
+    fontdb.load_system_fonts();
+    SvgParseOptions::new().with_fontdb(Arc::new(fontdb))
+}
+
+/// Replace the default SVG parse options used by convenience render helpers.
+///
+/// This keeps SVG rendering in the core library while letting applications own
+/// the font database used for SVG text.
+pub fn set_default_svg_parse_options(options: SvgParseOptions) {
+    *default_svg_parse_options_cell()
+        .write()
+        .expect("default SVG parse options lock poisoned") = options;
+}
+
+/// Build a `usvg` font database from caller-owned font bytes.
+pub fn svg_fontdb_from_font_data<I>(
+    fonts: I,
+    generic_family: Option<&str>,
+) -> Arc<usvg::fontdb::Database>
+where
+    I: IntoIterator<Item = Vec<u8>>,
+{
+    let mut fontdb = usvg::fontdb::Database::new();
+    for bytes in fonts {
+        fontdb.load_font_data(bytes);
+    }
+    if let Some(family) = generic_family {
+        fontdb.set_serif_family(family);
+        fontdb.set_sans_serif_family(family);
+        fontdb.set_monospace_family(family);
+    }
+    Arc::new(fontdb)
+}
+
 fn parse_svg_tree(data: &[u8], resources_dir: Option<&Path>) -> Result<usvg::Tree, SvgRenderError> {
-    let options = resources_dir
-        .map(|dir| SvgParseOptions::new().with_resources_dir(dir))
-        .unwrap_or_default();
+    let mut options = default_svg_parse_options_cell()
+        .read()
+        .expect("default SVG parse options lock poisoned")
+        .clone();
+    if let Some(dir) = resources_dir {
+        options = options.with_resources_dir(dir);
+    }
     parse_svg(data, &options)
 }
 

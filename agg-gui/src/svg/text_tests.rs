@@ -41,6 +41,26 @@ fn renders_basic_text_from_flattened_usvg_paths() {
 }
 
 #[test]
+fn default_svg_api_renders_text_when_app_fonts_are_available() {
+    let svg = br##"
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="18">
+            <rect width="40" height="18" fill="#000000"/>
+            <text x="2" y="14" font-family="monospace"
+                  font-size="14" fill="#00ff00">Hi</text>
+        </svg>
+    "##;
+
+    let fb = render_svg_to_framebuffer(svg).expect("SVG text should render");
+
+    assert!(
+        fb.pixels()
+            .chunks_exact(4)
+            .any(|px| px[1] > 80 && px[0] < 40 && px[2] < 40 && px[3] > 0),
+        "default SVG API should paint visible green glyph pixels"
+    );
+}
+
+#[test]
 fn renders_shields_style_badge_text_runs() {
     let svg = br##"
         <svg xmlns="http://www.w3.org/2000/svg" width="102" height="20" role="img">

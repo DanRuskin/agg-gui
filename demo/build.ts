@@ -18,12 +18,14 @@ const PKG_DIR  = join(DEMO_DIR, "public", "pkg");
 if (existsSync(DIST_DIR)) rmSync(DIST_DIR, { recursive: true });
 mkdirSync(join(DIST_DIR, "public", "dist"), { recursive: true });
 mkdirSync(join(DIST_DIR, "public", "pkg"),  { recursive: true });
+mkdirSync(join(DIST_DIR, "agg-gui"), { recursive: true });
 
 // Copy index.html
 cpSync(join(DEMO_DIR, "index.html"), join(DIST_DIR, "index.html"));
 
 // Copy app-owned font assets for lazy loading.
 cpSync(join(DEMO_DIR, "assets"), join(DIST_DIR, "assets"), { recursive: true });
+cpSync(join(DEMO_DIR, "..", "agg-gui", "readme_hero.png"), join(DIST_DIR, "agg-gui", "readme_hero.png"));
 
 // Copy WASM package (must be pre-built with wasm-pack)
 if (!existsSync(PKG_DIR)) {

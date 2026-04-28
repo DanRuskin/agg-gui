@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use agg_gui::{font_settings, Font};
+use agg_gui::{font_settings, Font, SvgParseOptions};
 
 use super::system::{try_cells, SystemCells};
 
@@ -163,6 +163,7 @@ static FONT_OPTIONS: &[FontAsset] = &[
 
 thread_local! {
     static FONT_CACHE: RefCell<HashMap<String, Arc<Font>>> = RefCell::new(HashMap::new());
+    static FONT_BYTES_CACHE: RefCell<HashMap<String, Vec<u8>>> = RefCell::new(HashMap::new());
     static PENDING_FONT_REQUESTS: RefCell<VecDeque<FontLoadRequest>> =
         RefCell::new(VecDeque::new());
     static FONT_CACHE_EPOCH: RefCell<u64> = const { RefCell::new(0) };
@@ -262,6 +263,11 @@ pub fn install_font_bytes(
     icon_bytes: Option<Vec<u8>>,
     emoji_bytes: Option<Vec<u8>>,
 ) -> Result<Arc<Font>, &'static str> {
+    FONT_BYTES_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(name.to_string(), primary_bytes.clone());
+    });
     let mut font = Font::from_bytes(primary_bytes)?;
     if let Some(icon_bytes) = icon_bytes {
         let mut icon_font = Font::from_bytes(icon_bytes)?;
@@ -281,6 +287,7 @@ pub fn install_font_bytes(
     });
     FONT_CACHE_EPOCH.with(|epoch| *epoch.borrow_mut() += 1);
     agg_gui::animation::request_draw();
+    refresh_default_svg_fonts();
 
     if let Some(cells) = try_cells() {
         if cells.font_name.borrow().as_deref() == Some(name) {
@@ -292,4 +299,15 @@ pub fn install_font_bytes(
     }
 
     Ok(font)
+}
+
+fn refresh_default_svg_fonts() {
+    FONT_BYTES_CACHE.with(|cache| {
+        let fonts = cache.borrow().values().cloned().collect::<Vec<_>>();
+        if fonts.is_empty() {
+            return;
+        }
+        let fontdb = agg_gui::svg_fontdb_from_font_data(fonts, Some(DEFAULT_FONT_NAME));
+        agg_gui::set_default_svg_parse_options(SvgParseOptions::new().with_fontdb(fontdb));
+    });
 }

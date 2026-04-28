@@ -323,7 +323,7 @@ impl MarkdownView {
                     },
                     seen: false,
                 }
-            } else if is_remote_url(url) {
+            } else if is_fetchable_url(url) {
                 ImageState::RemotePending
             } else {
                 ImageState::Failed
@@ -618,8 +618,11 @@ fn is_rect_visible_in_root(ctx: &dyn DrawCtx, x: f64, y: f64, w: f64, h: f64) ->
     }
 }
 
-fn is_remote_url(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
+fn is_fetchable_url(url: &str) -> bool {
+    !url.is_empty()
+        && !url.starts_with('#')
+        && !url.starts_with("file://")
+        && !url.starts_with("data:")
 }
 
 impl Widget for MarkdownView {

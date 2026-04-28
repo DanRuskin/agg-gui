@@ -430,4 +430,21 @@ mod tests {
             "layout must not clear a freshly loaded image before retained parents repaint"
         );
     }
+
+    #[test]
+    fn relative_image_provider_miss_stays_fetchable() {
+        crate::widget::set_current_viewport(Size::new(220.0, 200.0));
+        let mut view = MarkdownView::new("![hero](agg-gui/readme_hero.png)", test_font())
+            .with_font_size(12.0)
+            .with_padding(8.0)
+            .with_image_provider(|_| None);
+
+        view.layout_markdown(Size::new(220.0, 1000.0));
+
+        let state = view.image_cache[0].state.lock().expect("image state");
+        assert!(
+            matches!(*state, ImageState::RemotePending),
+            "relative images should remain fetchable when the provider misses"
+        );
+    }
 }

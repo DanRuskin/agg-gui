@@ -45,7 +45,7 @@ function notifyReload() {
 
 // --- File serving ---
 async function serveFile(pathname: string): Promise<Response | null> {
-  for (const base of [PUBLIC_DIR, DEMO_DIR]) {
+  for (const base of [PUBLIC_DIR, DEMO_DIR, PROJECT_ROOT]) {
     const file = Bun.file(join(base, pathname));
     if (!(await file.exists())) continue;
 
