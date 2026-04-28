@@ -40,6 +40,10 @@ pub struct PlatformHooks {
     ///   - **Web**: call `window.location.reload()` so the browser
     ///     re-creates the canvas with the saved `antialias` flag.
     pub on_reload: Rc<dyn Fn()>,
+    /// Invoked when a UI action selects a font that has not been loaded yet.
+    /// Platform shells own the actual bytes: native can read from disk, while
+    /// WASM can fetch the asset URL asynchronously and install it later.
+    pub on_font_request: Rc<dyn Fn(&str, &str)>,
 }
 
 impl PlatformHooks {
@@ -48,6 +52,7 @@ impl PlatformHooks {
             kind: PlatformKind::Native,
             running_msaa,
             on_reload: Rc::new(on_reload),
+            on_font_request: Rc::new(|_, _| {}),
         }
     }
     pub fn web(running_msaa: u8, on_reload: impl Fn() + 'static) -> Self {
@@ -55,7 +60,13 @@ impl PlatformHooks {
             kind: PlatformKind::Web,
             running_msaa,
             on_reload: Rc::new(on_reload),
+            on_font_request: Rc::new(|_, _| {}),
         }
+    }
+
+    pub fn with_font_requester(mut self, on_font_request: impl Fn(&str, &str) + 'static) -> Self {
+        self.on_font_request = Rc::new(on_font_request);
+        self
     }
 }
 

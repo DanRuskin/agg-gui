@@ -5,6 +5,19 @@
 //! through the same path/image renderer used by the rest of SVG.
 
 use super::*;
+use std::sync::Arc;
+
+fn text_options() -> SvgParseOptions {
+    let mut fontdb = usvg::fontdb::Database::new();
+    fontdb.load_font_data(include_bytes!("../../../demo/assets/CascadiaCode.ttf").to_vec());
+    fontdb.set_serif_family("Cascadia Code");
+    fontdb.set_sans_serif_family("Cascadia Code");
+    fontdb.set_monospace_family("Cascadia Code");
+
+    SvgParseOptions::new()
+        .with_font_family("Cascadia Code")
+        .with_fontdb(Arc::new(fontdb))
+}
 
 #[test]
 fn renders_basic_text_from_flattened_usvg_paths() {
@@ -16,7 +29,8 @@ fn renders_basic_text_from_flattened_usvg_paths() {
         </svg>
     "##;
 
-    let fb = render_svg_to_framebuffer(svg).expect("SVG text should render");
+    let fb = render_svg_to_framebuffer_with_options(svg, &text_options())
+        .expect("SVG text should render");
 
     assert!(
         fb.pixels()
@@ -51,7 +65,8 @@ fn renders_shields_style_badge_text_runs() {
         </svg>
     "##;
 
-    let fb = render_svg_to_framebuffer(svg).expect("badge SVG should render");
+    let fb = render_svg_to_framebuffer_with_options(svg, &text_options())
+        .expect("badge SVG should render");
 
     assert!(
         has_bright_text_pixel(&fb, 8..57),

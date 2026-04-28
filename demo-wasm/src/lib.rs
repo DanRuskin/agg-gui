@@ -35,28 +35,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::{App, Font, InspectorNode, Key, Modifiers, MouseButton, Rect, Size};
+use agg_gui::{App, InspectorNode, Key, Modifiers, MouseButton, Rect, Size};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-
-// Embed the font family at compile time.  The primary font is CascadiaCode;
-// Font Awesome 4 supplies the sidebar/button icons (private-use codepoints);
-// NotoEmoji fills in true emoji.  Same fallback chain as the native harness.
-const FONT_BYTES: &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
-const FA_BYTES: &[u8] = include_bytes!("../../demo/assets/fa.ttf");
-const EMOJI_BYTES: &[u8] = include_bytes!("../../demo/assets/NotoEmoji-Regular.ttf");
-
-fn make_font() -> Arc<Font> {
-    let emoji = Font::from_slice(EMOJI_BYTES).expect("parse NotoEmoji-Regular.ttf");
-    let fa = Font::from_slice(FA_BYTES)
-        .expect("parse fa.ttf")
-        .with_fallback(Arc::new(emoji));
-    Arc::new(
-        Font::from_slice(FONT_BYTES)
-            .expect("parse CascadiaCode.ttf")
-            .with_fallback(Arc::new(fa)),
-    )
-}
 
 // ---------------------------------------------------------------------------
 // Thread-local state
@@ -106,10 +87,55 @@ thread_local! {
     static SCREENSHOT_CAPTURING:  RefCell<Option<Rc<Cell<bool>>>>               = RefCell::new(None);
 }
 
+fn default_font() -> Arc<agg_gui::Font> {
+    demo_ui::load_font_by_name(demo_ui::DEFAULT_FONT_NAME)
+        .expect("default font must be installed before first render")
+}
+
 /// Initialise panic hook so Rust panics appear in the browser console.
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
     console_error_panic_hook::set_once();
+}
+
+#[wasm_bindgen]
+pub fn default_font_request() -> String {
+    format!(
+        "{}\t{}",
+        demo_ui::DEFAULT_FONT_NAME,
+        demo_ui::font_asset_by_name(demo_ui::DEFAULT_FONT_NAME)
+            .map(|asset| asset.path)
+            .unwrap_or("assets/Nunito_Regular.ttf")
+    )
+}
+
+#[wasm_bindgen]
+pub fn fallback_font_paths() -> String {
+    format!(
+        "{}\t{}",
+        demo_ui::FONT_AWESOME_PATH,
+        demo_ui::EMOJI_FONT_PATH
+    )
+}
+
+#[wasm_bindgen]
+pub fn take_pending_font_request() -> Option<String> {
+    demo_ui::take_pending_font_request().map(|(name, path)| format!("{name}\t{path}"))
+}
+
+#[wasm_bindgen]
+pub fn install_loaded_font(
+    name: String,
+    primary_bytes: Vec<u8>,
+    icon_bytes: Vec<u8>,
+    emoji_bytes: Vec<u8>,
+) -> bool {
+    let ok = demo_ui::install_font_bytes(&name, primary_bytes, Some(icon_bytes), Some(emoji_bytes))
+        .is_ok();
+    if ok {
+        mark_dirty();
+    }
+    ok
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +161,7 @@ fn save_state_wasm(accessor: &demo_ui::StateAccessor) {
 fn ensure_demo_app() {
     DEMO_APP.with(|cell| {
         if cell.borrow().is_none() {
-            let font = make_font();
+            let font = default_font();
             let initial_state = load_state_wasm();
             // Refresh button on the Render tab — WebGL2's `antialias`
             // attribute is only honoured at canvas-context creation time,
@@ -403,7 +429,7 @@ pub fn render_text_software(width: u32, height: u32) -> Vec<u8> {
     use agg_gui::{Color, Framebuffer, GfxCtx};
 
     let mut fb = Framebuffer::new(width, height);
-    let font = make_font();
+    let font = default_font();
     {
         let mut ctx = GfxCtx::new(&mut fb);
         ctx.clear(Color::rgba(1.0, 1.0, 1.0, 1.0));
@@ -423,7 +449,7 @@ pub fn render_text_tess_agg_pixels(width: u32, height: u32) -> Vec<u8> {
     use agg_gui::{Color, Framebuffer, GfxCtx};
 
     let mut fb = Framebuffer::new(width, height);
-    let font = make_font();
+    let font = default_font();
     {
         let mut ctx = GfxCtx::new(&mut fb);
         ctx.clear(Color::rgba(1.0, 1.0, 1.0, 1.0));

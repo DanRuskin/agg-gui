@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::winit_adapter;
-use agg_gui::{App, Font, Modifiers, Rect};
+use agg_gui::{App, Modifiers, Rect};
 
 use demo_gl::{begin_frame, render_app_frame, GlGfxCtx};
 
@@ -53,9 +53,27 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, NamedKey};
 use winit::window::{Fullscreen, WindowAttributes};
 
-const FONT_BYTES: &[u8] = include_bytes!("../../demo/assets/CascadiaCode.ttf");
-const FA_BYTES: &[u8] = include_bytes!("../../demo/assets/fa.ttf");
-const EMOJI_BYTES: &[u8] = include_bytes!("../../demo/assets/NotoEmoji-Regular.ttf");
+fn demo_asset_path(relative: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("demo")
+        .join(relative)
+}
+
+fn install_demo_font_asset(name: &str, path: &str) {
+    let primary = match std::fs::read(demo_asset_path(path)) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            eprintln!("failed to read font asset {path}: {err}");
+            return;
+        }
+    };
+    let icons = std::fs::read(demo_asset_path(demo_ui::FONT_AWESOME_PATH)).ok();
+    let emoji = std::fs::read(demo_asset_path(demo_ui::EMOJI_FONT_PATH)).ok();
+    if let Err(err) = demo_ui::install_font_bytes(name, primary, icons, emoji) {
+        eprintln!("failed to parse font asset {path}: {err}");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // State persistence helpers
@@ -215,16 +233,11 @@ fn main() {
         glow::Context::from_loader_function_cstr(|s| gl_display.get_proc_address(s))
     });
 
-    // Fallback chain: CascadiaCode → Font Awesome 4 (PUA icons) → NotoEmoji (emoji)
-    let emoji_font = Font::from_slice(EMOJI_BYTES).expect("parse NotoEmoji-Regular.ttf");
-    let fa_font = Font::from_slice(FA_BYTES)
-        .expect("parse fa.ttf")
-        .with_fallback(Arc::new(emoji_font));
-    let font = Arc::new(
-        Font::from_slice(FONT_BYTES)
-            .expect("parse CascadiaCode.ttf")
-            .with_fallback(Arc::new(fa_font)),
-    );
+    let default_font_asset = demo_ui::font_asset_by_name(demo_ui::DEFAULT_FONT_NAME)
+        .expect("default demo font asset is registered");
+    install_demo_font_asset(default_font_asset.name, default_font_asset.path);
+    let font = demo_ui::load_font_by_name(demo_ui::DEFAULT_FONT_NAME)
+        .expect("default demo font asset should load at startup");
 
     let init_w = size.width.max(1) as f32;
     let init_h = size.height.max(1) as f32;
@@ -252,6 +265,7 @@ fn main() {
     let platform = {
         let flag = Rc::clone(&relaunch_requested);
         demo_ui::PlatformHooks::native(running_msaa, move || flag.set(true))
+            .with_font_requester(install_demo_font_asset)
     };
     let (mut app, handles) = demo_ui::build_demo_ui(
         Arc::clone(&font),

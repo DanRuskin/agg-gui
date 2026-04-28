@@ -21,6 +21,7 @@ mod misc;
 mod screenshot_demo;
 mod scrolling;
 mod system;
+mod system_fonts;
 mod tests;
 mod text_demos;
 mod truetype_lcd;
@@ -38,9 +39,13 @@ pub use misc::{extra_viewport, highlighting, interactive_container, misc_demos};
 pub use screenshot_demo::screenshot_demo;
 pub use scrolling::scrolling_demo;
 pub use system::{
-    apply_font_by_index, cells as system_cells, default_font_index, font_option_index,
-    font_option_names, init_cells as init_system_cells, load_all_fonts, load_font_by_name,
-    system_view, SystemCells,
+    cells as system_cells, init_cells as init_system_cells, system_view, SystemCells,
+};
+pub use system_fonts::{
+    apply_font_by_index, default_font_index, font_asset_by_name, font_cache_epoch,
+    font_option_index, font_option_names, install_font_bytes, load_font_by_name, loaded_item_fonts,
+    request_all_font_previews, request_font_by_index, take_pending_font_request, FontAsset,
+    DEFAULT_FONT_NAME, EMOJI_FONT_PATH, FONT_AWESOME_PATH,
 };
 pub use tests::{
     clipboard_test, cursor_test, grid_test, id_test, input_event_history, input_test, layout_test,

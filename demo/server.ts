@@ -20,6 +20,7 @@ const MIME_TYPES: Record<string, string> = {
   ".json": "application/json",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".ttf": "font/ttf",
   ".txt": "text/plain",
 };
 

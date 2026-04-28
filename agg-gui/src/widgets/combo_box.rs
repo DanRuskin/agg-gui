@@ -237,6 +237,12 @@ impl ComboBox {
     /// is closed) is also rebuilt with the currently-selected font so
     /// the closed combo reflects the live face.
     pub fn with_item_fonts(mut self, fonts: Vec<Arc<Font>>) -> Self {
+        self.set_item_fonts(fonts);
+        self
+    }
+
+    /// Replace per-item preview fonts after construction for lazy font UIs.
+    pub fn set_item_fonts(&mut self, fonts: Vec<Arc<Font>>) {
         self.item_fonts = Some(fonts.clone());
         let size = self.font_size;
         self.item_labels = self
@@ -253,7 +259,6 @@ impl ComboBox {
                     .with_ignore_system_font(true)
             })
             .collect();
-        // Rebuild the selected label with its matching font too.
         if let Some(sel_font) = fonts.get(self.selected).cloned() {
             self.selected_label = Label::new(
                 self.options
@@ -265,7 +270,6 @@ impl ComboBox {
             .with_font_size(size)
             .with_ignore_system_font(true);
         }
-        self
     }
 
     // ── Accessors ────────────────────────────────────────────────────────────

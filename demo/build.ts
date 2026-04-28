@@ -22,6 +22,9 @@ mkdirSync(join(DIST_DIR, "public", "pkg"),  { recursive: true });
 // Copy index.html
 cpSync(join(DEMO_DIR, "index.html"), join(DIST_DIR, "index.html"));
 
+// Copy app-owned font assets for lazy loading.
+cpSync(join(DEMO_DIR, "assets"), join(DIST_DIR, "assets"), { recursive: true });
+
 // Copy WASM package (must be pre-built with wasm-pack)
 if (!existsSync(PKG_DIR)) {
   console.error("ERROR: public/pkg/ not found. Run 'bun run build:wasm' first.");

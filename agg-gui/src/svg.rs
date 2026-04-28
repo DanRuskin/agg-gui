@@ -6,8 +6,8 @@
 //! hardware targets all share one render path.
 
 use std::fmt;
-use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use agg_rust::math_stroke::{LineCap, LineJoin};
 use agg_rust::trans_affine::TransAffine;
@@ -74,27 +74,60 @@ impl From<image::ImageError> for SvgRenderError {
     }
 }
 
-fn parse_svg_tree(data: &[u8], resources_dir: Option<&Path>) -> Result<usvg::Tree, SvgRenderError> {
-    let mut options = usvg::Options::default();
-    options.resources_dir = resources_dir.map(Path::to_path_buf);
-    options.font_family = "Cascadia Code".to_string();
-    options.fontdb = svg_fontdb();
-    Ok(usvg::Tree::from_data(data, &options)?)
+/// Options used while parsing SVG documents.
+///
+/// `agg-gui` keeps SVG rendering in the core library, but font selection is
+/// intentionally application-owned. Callers that need SVG text should provide a
+/// `fontdb` built from their own assets.
+#[derive(Clone, Default)]
+pub struct SvgParseOptions {
+    resources_dir: Option<PathBuf>,
+    font_family: Option<String>,
+    fontdb: Option<Arc<usvg::fontdb::Database>>,
 }
 
-fn svg_fontdb() -> Arc<usvg::fontdb::Database> {
-    static FONTDB: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+impl SvgParseOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    Arc::clone(FONTDB.get_or_init(|| {
-        let mut fontdb = usvg::fontdb::Database::new();
-        fontdb.load_font_data(include_bytes!("../../demo/assets/CascadiaCode.ttf").to_vec());
-        fontdb.load_font_data(include_bytes!("../assets/fonts/NotoSans-Regular.ttf").to_vec());
-        fontdb.load_system_fonts();
-        fontdb.set_serif_family("Cascadia Code");
-        fontdb.set_sans_serif_family("Cascadia Code");
-        fontdb.set_monospace_family("Cascadia Code");
-        Arc::new(fontdb)
-    }))
+    /// Resolve relative image references from `resources_dir`.
+    pub fn with_resources_dir(mut self, resources_dir: impl Into<PathBuf>) -> Self {
+        self.resources_dir = Some(resources_dir.into());
+        self
+    }
+
+    /// Set the preferred SVG text family for documents that omit one.
+    pub fn with_font_family(mut self, family: impl Into<String>) -> Self {
+        self.font_family = Some(family.into());
+        self
+    }
+
+    /// Provide a prepared font database for SVG text parsing.
+    pub fn with_fontdb(mut self, fontdb: Arc<usvg::fontdb::Database>) -> Self {
+        self.fontdb = Some(fontdb);
+        self
+    }
+}
+
+fn parse_svg_tree(data: &[u8], resources_dir: Option<&Path>) -> Result<usvg::Tree, SvgRenderError> {
+    let options = resources_dir
+        .map(|dir| SvgParseOptions::new().with_resources_dir(dir))
+        .unwrap_or_default();
+    parse_svg(data, &options)
+}
+
+/// Parse an SVG document using caller-supplied parse options.
+pub fn parse_svg(data: &[u8], svg_options: &SvgParseOptions) -> Result<usvg::Tree, SvgRenderError> {
+    let mut options = usvg::Options::default();
+    options.resources_dir = svg_options.resources_dir.clone();
+    if let Some(font_family) = &svg_options.font_family {
+        options.font_family = font_family.clone();
+    }
+    if let Some(fontdb) = &svg_options.fontdb {
+        options.fontdb = Arc::clone(fontdb);
+    }
+    Ok(usvg::Tree::from_data(data, &options)?)
 }
 
 /// Parse an SVG document and render it into `ctx`.
@@ -103,6 +136,16 @@ fn svg_fontdb() -> Arc<usvg::fontdb::Database> {
 /// already cache a `usvg::Tree` should use [`render_svg_tree`] directly.
 pub fn render_svg(data: &[u8], ctx: &mut dyn DrawCtx) -> Result<(), SvgRenderError> {
     let tree = parse_svg_tree(data, None)?;
+    render_svg_tree(&tree, ctx)
+}
+
+/// Parse an SVG document with explicit options and render it into `ctx`.
+pub fn render_svg_with_options(
+    data: &[u8],
+    ctx: &mut dyn DrawCtx,
+    options: &SvgParseOptions,
+) -> Result<(), SvgRenderError> {
+    let tree = parse_svg(data, options)?;
     render_svg_tree(&tree, ctx)
 }
 
@@ -115,6 +158,17 @@ pub fn render_svg_at_size(
     height: u32,
 ) -> Result<(), SvgRenderError> {
     let tree = parse_svg_tree(data, None)?;
+    render_svg_tree_at_size(&tree, ctx, width, height)
+}
+
+pub fn render_svg_at_size_with_options(
+    data: &[u8],
+    ctx: &mut dyn DrawCtx,
+    width: u32,
+    height: u32,
+    options: &SvgParseOptions,
+) -> Result<(), SvgRenderError> {
+    let tree = parse_svg(data, options)?;
     render_svg_tree_at_size(&tree, ctx, width, height)
 }
 
@@ -138,6 +192,14 @@ pub fn render_svg_to_framebuffer(data: &[u8]) -> Result<Framebuffer, SvgRenderEr
     render_svg_tree_to_framebuffer(&tree)
 }
 
+pub fn render_svg_to_framebuffer_with_options(
+    data: &[u8],
+    options: &SvgParseOptions,
+) -> Result<Framebuffer, SvgRenderError> {
+    let tree = parse_svg(data, options)?;
+    render_svg_tree_to_framebuffer(&tree)
+}
+
 /// Parse an SVG document and render it into an RGBA framebuffer with an
 /// explicit pixel size.
 ///
@@ -150,6 +212,16 @@ pub fn render_svg_to_framebuffer_at_size(
     height: u32,
 ) -> Result<Framebuffer, SvgRenderError> {
     let tree = parse_svg_tree(data, None)?;
+    render_svg_tree_to_framebuffer_at_size(&tree, width, height)
+}
+
+pub fn render_svg_to_framebuffer_at_size_with_options(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    options: &SvgParseOptions,
+) -> Result<Framebuffer, SvgRenderError> {
+    let tree = parse_svg(data, options)?;
     render_svg_tree_to_framebuffer_at_size(&tree, width, height)
 }
 
@@ -195,6 +267,14 @@ pub fn render_svg_to_lcd_buffer(data: &[u8]) -> Result<LcdBuffer, SvgRenderError
     render_svg_tree_to_lcd_buffer(&tree)
 }
 
+pub fn render_svg_to_lcd_buffer_with_options(
+    data: &[u8],
+    options: &SvgParseOptions,
+) -> Result<LcdBuffer, SvgRenderError> {
+    let tree = parse_svg(data, options)?;
+    render_svg_tree_to_lcd_buffer(&tree)
+}
+
 /// Parse an SVG document and render it into an LCD coverage buffer with an
 /// explicit pixel size.
 pub fn render_svg_to_lcd_buffer_at_size(
@@ -203,6 +283,16 @@ pub fn render_svg_to_lcd_buffer_at_size(
     height: u32,
 ) -> Result<LcdBuffer, SvgRenderError> {
     let tree = parse_svg_tree(data, None)?;
+    render_svg_tree_to_lcd_buffer_at_size(&tree, width, height)
+}
+
+pub fn render_svg_to_lcd_buffer_at_size_with_options(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    options: &SvgParseOptions,
+) -> Result<LcdBuffer, SvgRenderError> {
+    let tree = parse_svg(data, options)?;
     render_svg_tree_to_lcd_buffer_at_size(&tree, width, height)
 }
 

@@ -80,13 +80,16 @@ pub use gfx_ctx::GfxCtx;
 pub use layout_props::{resolve_fit_or_stretch, HAnchor, Insets, VAnchor, WidgetBase};
 pub use screenshot::ScreenshotHandle;
 pub use svg::{
-    compare_svg_rgba, render_svg, render_svg_at_size, render_svg_at_size_with_resources,
-    render_svg_to_framebuffer, render_svg_to_framebuffer_at_size,
-    render_svg_to_framebuffer_at_size_with_resources, render_svg_to_lcd_buffer,
-    render_svg_to_lcd_buffer_at_size, render_svg_to_lcd_buffer_at_size_with_resources,
-    render_svg_tree, render_svg_tree_at_size, render_svg_tree_to_framebuffer,
-    render_svg_tree_to_framebuffer_at_size, render_svg_tree_to_lcd_buffer,
-    render_svg_tree_to_lcd_buffer_at_size, SvgCompareResult, SvgCompareThresholds, SvgRenderError,
+    compare_svg_rgba, parse_svg, render_svg, render_svg_at_size, render_svg_at_size_with_options,
+    render_svg_at_size_with_resources, render_svg_to_framebuffer,
+    render_svg_to_framebuffer_at_size, render_svg_to_framebuffer_at_size_with_options,
+    render_svg_to_framebuffer_at_size_with_resources, render_svg_to_framebuffer_with_options,
+    render_svg_to_lcd_buffer, render_svg_to_lcd_buffer_at_size,
+    render_svg_to_lcd_buffer_at_size_with_options, render_svg_to_lcd_buffer_at_size_with_resources,
+    render_svg_to_lcd_buffer_with_options, render_svg_tree, render_svg_tree_at_size,
+    render_svg_tree_to_framebuffer, render_svg_tree_to_framebuffer_at_size,
+    render_svg_tree_to_lcd_buffer, render_svg_tree_to_lcd_buffer_at_size, render_svg_with_options,
+    SvgCompareResult, SvgCompareThresholds, SvgParseOptions, SvgRenderError,
     DEFAULT_ALPHA_TOLERANCE, DEFAULT_MISMATCH_RATIO, DEFAULT_OPAQUE_RGB_TOLERANCE,
     DEFAULT_TRANSLUCENT_RGB_TOLERANCE, DEFAULT_VISUAL_RGB_TOLERANCE,
 };

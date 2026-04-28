@@ -13,8 +13,13 @@ type VoidFn        = () => void;
 type ClipGetFn     = () => string | null;
 type ClipSetFn     = (text: string) => void;
 type BoolFn        = () => boolean;
+type StringFn      = () => string;
+type OptionalStringFn = () => string | null;
+type InstallFontFn = (name: string, primary: Uint8Array, icons: Uint8Array, emoji: Uint8Array) => boolean;
 
 let wasmModule: Record<string, unknown> | null = null;
+const fontFetchCache = new Map<string, Promise<Uint8Array>>();
+let fontDrainRunning = false;
 
 // --- Canvas setup ---
 // The WASM module calls getContext("webgl2") on this element internally.
@@ -22,6 +27,7 @@ let wasmModule: Record<string, unknown> | null = null;
 
 const canvas    = document.getElementById("canvas") as HTMLCanvasElement;
 const loadingEl = document.getElementById("loading")!;
+const loadingTextEl = document.getElementById("loading-text")!;
 const mobileTextInput = document.createElement("textarea");
 mobileTextInput.setAttribute("aria-hidden", "true");
 mobileTextInput.setAttribute("autocomplete", "off");
@@ -92,6 +98,7 @@ function render() {
 
 function animationLoop() {
   if (wasmModule) {
+    void drainPendingFontRequests();
     const needs = (wasmModule["needs_draw"] as (() => boolean) | undefined);
     if (!needs || needs()) {
       render();
@@ -409,21 +416,87 @@ ro.observe(canvas.parentElement!);
 
 // --- Load WASM ---
 
+function setLoadingText(text: string) {
+  loadingTextEl.textContent = text;
+}
+
+function parseFontRequest(request: string): [string, string] {
+  const tab = request.indexOf("\t");
+  if (tab < 0) throw new Error(`Invalid font request: ${request}`);
+  return [request.slice(0, tab), request.slice(tab + 1)];
+}
+
+function fetchFontBytes(path: string): Promise<Uint8Array> {
+  let pending = fontFetchCache.get(path);
+  if (!pending) {
+    pending = fetch(new URL(path, location.href))
+      .then((response) => {
+        if (!response.ok) throw new Error(`Font fetch failed for ${path}: ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((buffer) => new Uint8Array(buffer));
+    fontFetchCache.set(path, pending);
+  }
+  return pending;
+}
+
+function fallbackFontPaths(module: Record<string, unknown>): [string, string] {
+  return parseFontRequest((module["fallback_font_paths"] as StringFn)());
+}
+
+async function installFontRequest(module: Record<string, unknown>, request: string) {
+  const [name, path] = parseFontRequest(request);
+  const [iconsPath, emojiPath] = fallbackFontPaths(module);
+  const [primary, icons, emoji] = await Promise.all([
+    fetchFontBytes(path),
+    fetchFontBytes(iconsPath),
+    fetchFontBytes(emojiPath),
+  ]);
+  const ok = (module["install_loaded_font"] as InstallFontFn)(name, primary, icons, emoji);
+  if (!ok) throw new Error(`WASM rejected font ${name}`);
+}
+
+async function drainPendingFontRequests() {
+  if (!wasmModule || fontDrainRunning) return;
+  const takeRequest = wasmModule["take_pending_font_request"] as OptionalStringFn | undefined;
+  if (!takeRequest) return;
+
+  fontDrainRunning = true;
+  try {
+    for (;;) {
+      const request = takeRequest();
+      if (!request) break;
+      await installFontRequest(wasmModule, request);
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    fontDrainRunning = false;
+  }
+}
+
 async function init() {
   try {
+    setLoadingText("Loading WASM…");
     const wasm    = await import("../public/pkg/demo_wasm.js");
     const wasmUrl = new URL("./public/pkg/demo_wasm_bg.wasm", location.href);
     await wasm.default({ module_or_path: wasmUrl });
 
-    wasmModule = wasm as unknown as Record<string, unknown>;
+    const module = wasm as unknown as Record<string, unknown>;
+    setLoadingText("Loading fonts…");
+    await installFontRequest(module, (module["default_font_request"] as StringFn)());
+
+    wasmModule = module;
     // Expose on window so Playwright tests can access WASM functions directly.
     (window as unknown as Record<string, unknown>).__wasm = wasmModule;
+    setLoadingText("Drawing first frame…");
+    render();
     loadingEl.classList.add("hidden");
 
-    // Start the continuous animation loop.
+    // Start the reactive animation loop.
     requestAnimationFrame(animationLoop);
   } catch (e) {
-    loadingEl.textContent = `Error loading WASM: ${e}`;
+    setLoadingText(`Error loading WASM: ${e}`);
     console.error(e);
   }
 }

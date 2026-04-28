@@ -180,16 +180,11 @@ pub fn build_demo_ui(
     agg_gui::font_settings::set_faux_weight(faux_weight_cell.get());
     agg_gui::font_settings::set_faux_italic(faux_italic_cell.get());
     agg_gui::font_settings::set_primary_weight(primary_weight_cell.get());
-    let resolved_idx = font_name_cell
+    let resolved_font_idx = font_name_cell
         .borrow()
         .as_deref()
         .and_then(windows::font_option_index)
         .unwrap_or_else(|| font_index_cell.get());
-    if let Some(name) = windows::font_option_names().get(resolved_idx).copied() {
-        if let Some(f) = windows::load_font_by_name(name) {
-            agg_gui::font_settings::set_system_font(Some(f));
-        }
-    }
     windows::init_system_cells(windows::SystemCells {
         font_name: Rc::clone(&font_name_cell),
         font_index: Rc::clone(&font_index_cell),
@@ -206,6 +201,10 @@ pub fn build_demo_ui(
         system_tab: Rc::clone(&system_tab_cell),
         platform: platform.clone(),
     });
+    {
+        let cells = windows::system_cells();
+        windows::request_font_by_index(&cells, resolved_font_idx);
+    }
     let all_specs_count = DEMOS.len() + TESTS.len();
     let reset_cells: Vec<Rc<Cell<Option<Rect>>>> = (0..all_specs_count)
         .map(|_| Rc::new(Cell::new(None)))
@@ -541,8 +540,6 @@ pub fn build_demo_ui(
         let reset_cells = reset_cells.iter().map(Rc::clone).collect::<Vec<_>>();
         let specs_w = specs_w.clone();
         let specs_h = specs_h.clone();
-        let font_name = Rc::clone(&font_name_cell);
-        let font_index = Rc::clone(&font_index_cell);
         let font_scale = Rc::clone(&font_size_scale_cell);
         let lcd_cell = Rc::clone(&lcd_enabled_cell);
         let hint_cell = Rc::clone(&hinting_enabled_cell);
@@ -565,11 +562,9 @@ pub fn build_demo_ui(
                 cell.set(Some(r));
             }
             let default_idx = windows::default_font_index();
-            let default_name = windows::font_option_names().get(default_idx).copied();
             let standard_dpi = agg_gui::device_scale() <= 1.25;
-            agg_gui::font_settings::set_system_font(
-                default_name.and_then(windows::load_font_by_name),
-            );
+            let cells = windows::system_cells();
+            windows::apply_font_by_index(&cells, default_idx);
             agg_gui::font_settings::set_font_size_scale(1.0);
             agg_gui::font_settings::set_lcd_enabled(standard_dpi);
             agg_gui::font_settings::set_hinting_enabled(standard_dpi);
@@ -579,8 +574,6 @@ pub fn build_demo_ui(
             agg_gui::font_settings::set_faux_weight(0.0);
             agg_gui::font_settings::set_faux_italic(0.0);
             agg_gui::font_settings::set_primary_weight(1.0 / 3.0);
-            *font_name.borrow_mut() = default_name.map(|s| s.to_string());
-            font_index.set(default_idx);
             font_scale.set(1.0);
             lcd_cell.set(standard_dpi);
             hint_cell.set(standard_dpi);

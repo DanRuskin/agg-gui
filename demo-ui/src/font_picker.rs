@@ -2,10 +2,8 @@
 //!
 //! Returns a configured `ComboBox` set up for the bundled font table:
 //! - One entry per font in `windows::system::FONT_OPTIONS`
-//! - Each entry rendered in **its own typeface** (`with_item_fonts`)
-//!   so the dropdown previews the look of each face at a glance, and
-//!   the closed combo button shows the currently-selected font in
-//!   that face
+//! - The catalog lists app-owned font assets without parsing them up front.
+//!   Selecting an unloaded font queues a platform-specific load request.
 //! - Bound bidirectionally to the shared `font_index` cell on
 //!   `windows::system::SystemCells` — picking a font in one window
 //!   snaps every other picker in the app to the same selection on
@@ -14,47 +12,31 @@
 //!   through to `font_settings::set_system_font`, the persisted
 //!   `font_name` cell, and the shared `font_index` cell
 //!
-//! Drop `font_picker(font)` in anywhere a font choice is exposed —
-//! the wiring (cell binding, font loading, per-item previews,
-//! on-change side-effects) is all handled here so call sites stay
-//! one line.
+//! Drop `font_picker(font)` in anywhere a font choice is exposed — the wiring
+//! (cell binding, lazy load request, on-change side-effects) is handled here so
+//! call sites stay one line.
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::{ComboBox, Font, Widget};
+use agg_gui::{ComboBox, DrawCtx, Event, EventResult, Font, Point, Rect, Size, Widget};
 
 use crate::windows::{
-    apply_font_by_index, font_option_names, load_all_fonts, system_cells as cells,
+    apply_font_by_index, font_cache_epoch, font_option_names, loaded_item_fonts,
+    request_all_font_previews, system_cells as cells,
 };
 
 /// Build a font-picker `ComboBox` ready to drop into any layout.
 ///
 /// `label_font` is the typeface used for the closed combo's
-/// selected-name label *only* if no per-item fonts are loaded — but
-/// we always load them, so the closed combo previews in the selected
-/// font.  Pass any reasonable fallback (the window's body font is
-/// fine).
+/// selected-name label and unloaded dropdown entries. Pass any reasonable
+/// fallback (the window's body font is fine).
 ///
 /// The returned box is the picker itself — no wrapping.  All
 /// font-picker behaviour comes from `ComboBox`'s built-in features
 /// plus the cell-binding + on-change wiring set up here.
 pub fn font_picker(label_font: Arc<Font>) -> Box<dyn Widget> {
-    let cells = cells();
-    let names = font_option_names();
-    let per_item = load_all_fonts();
-    let initial_idx = cells.font_index.get().min(names.len().saturating_sub(1));
-
-    let cells_for_change = cells.clone();
-    Box::new(
-        ComboBox::new(names, initial_idx, label_font)
-            .with_font_size(13.0)
-            .with_item_fonts(per_item)
-            .with_selected_cell(Rc::clone(&cells.font_index))
-            .on_change(move |idx| {
-                apply_font_by_index(&cells_for_change, idx);
-            }),
-    )
+    font_picker_with_size(label_font, 13.0)
 }
 
 /// Variant that lets the caller override the closed-combo's font size
@@ -63,17 +45,99 @@ pub fn font_picker(label_font: Arc<Font>) -> Box<dyn Widget> {
 pub fn font_picker_with_size(label_font: Arc<Font>, font_size: f64) -> Box<dyn Widget> {
     let cells = cells();
     let names = font_option_names();
-    let per_item = load_all_fonts();
     let initial_idx = cells.font_index.get().min(names.len().saturating_sub(1));
+    request_all_font_previews(&cells);
 
     let cells_for_change = cells.clone();
-    Box::new(
-        ComboBox::new(names, initial_idx, label_font)
-            .with_font_size(font_size)
-            .with_item_fonts(per_item)
-            .with_selected_cell(Rc::clone(&cells.font_index))
-            .on_change(move |idx| {
-                apply_font_by_index(&cells_for_change, idx);
-            }),
-    )
+    let mut combo = ComboBox::new(names, initial_idx, Arc::clone(&label_font))
+        .with_font_size(font_size)
+        .with_selected_cell(Rc::clone(&cells.font_index))
+        .on_change(move |idx| {
+            apply_font_by_index(&cells_for_change, idx);
+        });
+    combo.set_item_fonts(loaded_item_fonts(&label_font));
+
+    Box::new(LazyFontPicker {
+        combo,
+        label_font,
+        last_font_epoch: font_cache_epoch(),
+    })
+}
+
+struct LazyFontPicker {
+    combo: ComboBox,
+    label_font: Arc<Font>,
+    last_font_epoch: u64,
+}
+
+impl LazyFontPicker {
+    fn refresh_loaded_fonts(&mut self) {
+        let epoch = font_cache_epoch();
+        if epoch != self.last_font_epoch {
+            self.combo
+                .set_item_fonts(loaded_item_fonts(&self.label_font));
+            self.last_font_epoch = epoch;
+        }
+    }
+}
+
+impl Widget for LazyFontPicker {
+    fn bounds(&self) -> Rect {
+        self.combo.bounds()
+    }
+
+    fn set_bounds(&mut self, bounds: Rect) {
+        self.combo.set_bounds(bounds);
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        self.combo.children()
+    }
+
+    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
+        self.combo.children_mut()
+    }
+
+    fn layout(&mut self, available: Size) -> Size {
+        self.refresh_loaded_fonts();
+        self.combo.layout(available)
+    }
+
+    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
+        self.refresh_loaded_fonts();
+        self.combo.paint(ctx);
+    }
+
+    fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        self.combo.paint_overlay(ctx);
+    }
+
+    fn paint_global_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        self.combo.paint_global_overlay(ctx);
+    }
+
+    fn hit_test(&self, local_pos: Point) -> bool {
+        self.combo.hit_test(local_pos)
+    }
+
+    fn hit_test_global_overlay(&self, local_pos: Point) -> bool {
+        self.combo.hit_test_global_overlay(local_pos)
+    }
+
+    fn on_event(&mut self, event: &Event) -> EventResult {
+        self.refresh_loaded_fonts();
+        self.combo.on_event(event)
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.combo.is_focusable()
+    }
+
+    fn type_name(&self) -> &'static str {
+        "FontPicker"
+    }
+
+    fn properties(&self) -> Vec<(&'static str, String)> {
+        self.combo.properties()
+    }
 }

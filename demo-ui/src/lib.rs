@@ -18,7 +18,11 @@ pub use api::{DemoHandles, PlatformHooks, PlatformKind};
 pub use app_builder::build_demo_ui;
 pub use backend_panel::FrameHistory;
 pub use state::{SavedState, StateAccessor, WindowState};
-pub use windows::{window_resize_sub_windows, ResizeTestWindow};
+pub use windows::{
+    font_asset_by_name, install_font_bytes, load_font_by_name, take_pending_font_request,
+    window_resize_sub_windows, FontAsset, ResizeTestWindow, DEFAULT_FONT_NAME, EMOJI_FONT_PATH,
+    FONT_AWESOME_PATH,
+};
 
 /// Encode a top-down RGBA8 buffer as a PNG.
 pub fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {

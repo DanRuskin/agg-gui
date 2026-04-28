@@ -69,12 +69,10 @@ pub struct SavedState {
     // ── System-window persistence ──────────────────────────────────────
     //
     // These mirror `agg_gui::font_settings` so the user's typography
-    // choices survive across runs.  `font_name` matches one of the
-    // demo-ui `FONT_OPTIONS` display names (e.g. "Cascadia Code") — we
-    // persist the name, not an `Arc<Font>`, and re-load the bytes on
-    // next startup from the bundled assets.
+    // choices survive across runs. `font_name` matches one of the demo's
+    // app-owned font asset names; platforms reload the bytes on demand.
     /// Selected font's display name.  `None` or unknown name → keep the
-    /// app default (Cascadia Code).
+    /// app default.
     pub font_name: Option<String>,
     /// Font-size multiplier applied system-wide.  Default 1.0.
     pub font_size_scale: f64,
