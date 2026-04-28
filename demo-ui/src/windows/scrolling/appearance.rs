@@ -8,7 +8,7 @@
 //! 3. **ScrollBarVisibility** selector (AlwaysHidden / VisibleWhenNeeded /
 //!    AlwaysVisible) — drives the global scroll visibility,
 //!    since visibility is per-area in egui.
-//! 4. **Content length** slider with the numeric value shown to its right.
+//! 4. **Content length** slider with its built-in numeric value readout.
 //! 5. The demo ScrollView with N lorem-ipsum paragraphs.
 
 use std::cell::Cell;
@@ -21,7 +21,7 @@ use agg_gui::{
     ScrollBarVisibility, ScrollView, Separator, Size, SizedBox, Slider, Widget,
 };
 
-use super::helpers::{label, wrapped_label, LiveLabel, SegRow};
+use super::helpers::{label, wrapped_label, SegRow};
 
 const CTRL_W: f64 = 70.0; // Width of each compact control.
 
@@ -526,10 +526,9 @@ pub fn build(font: Arc<Font>) -> Box<dyn Widget> {
 
     col.push(Box::new(Separator::horizontal()), 0.0);
 
-    // Content length slider with numeric readout to its right.
+    // Content length slider. Slider already renders its own value readout.
     {
         let cl_slider = Rc::clone(&content_len);
-        let cl_label = Rc::clone(&content_len);
         col.push(
             Box::new(
                 FlexRow::new()
@@ -542,15 +541,7 @@ pub fn build(font: Arc<Font>) -> Box<dyn Widget> {
                                 .on_change(move |v| cl_slider.set(v.round() as usize)),
                         ),
                         1.0,
-                    )
-                    .add(Box::new(SizedBox::new().with_width(8.0)))
-                    .add(Box::new(
-                        LiveLabel::new(
-                            Arc::clone(&font),
-                            Rc::new(move || format!("{}", cl_label.get())),
-                        )
-                        .with_font_size(12.0),
-                    )),
+                    ),
             ),
             0.0,
         );
@@ -564,6 +555,34 @@ pub fn build(font: Arc<Font>) -> Box<dyn Widget> {
     col.push(Box::new(scroll), 1.0);
 
     Box::new(col)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use agg_gui::{Font, Size, Widget};
+
+    fn count_widgets_by_type(widget: &dyn Widget, type_name: &str) -> usize {
+        let here = usize::from(widget.type_name() == type_name);
+        here + widget
+            .children()
+            .iter()
+            .map(|child| count_widgets_by_type(child.as_ref(), type_name))
+            .sum::<usize>()
+    }
+
+    #[test]
+    fn content_length_uses_only_slider_value_readout() {
+        const BYTES: &[u8] = include_bytes!("../../../../demo/assets/CascadiaCode.ttf");
+        let font = Arc::new(Font::from_slice(BYTES).expect("parse CascadiaCode.ttf"));
+        let mut root = super::build(font);
+
+        root.layout(Size::new(680.0, 360.0));
+
+        assert_eq!(count_widgets_by_type(root.as_ref(), "Slider"), 1);
+        assert_eq!(count_widgets_by_type(root.as_ref(), "LiveLabel"), 0);
+    }
 }
 
 // ── ConditionalRow ─ wraps a child widget and shows/hides it each layout

@@ -13,6 +13,12 @@ impl MarkdownView {
     pub(super) fn handle_markdown_event(&mut self, event: &Event) -> EventResult {
         match event {
             Event::MouseMove { pos } => {
+                if self.context_menu.is_some() {
+                    set_cursor_icon(CursorIcon::ContextMenu);
+                    if self.update_context_menu_hover(*pos) {
+                        return EventResult::Consumed;
+                    }
+                }
                 if let Some(block_idx) = self.dragging_block() {
                     if self.drag_block_scrollbar(block_idx, *pos) {
                         crate::animation::request_draw();
@@ -37,7 +43,7 @@ impl MarkdownView {
                 if self.hit_scrollbar(*pos).is_some() {
                     set_cursor_icon(CursorIcon::ResizeHorizontal);
                 }
-                if self.context_menu.is_some() || self.hit_image(*pos).is_some() {
+                if self.hit_image(*pos).is_some() {
                     set_cursor_icon(CursorIcon::ContextMenu);
                 } else if self.link_at(*pos).is_some() {
                     set_cursor_icon(CursorIcon::PointingHand);
@@ -172,6 +178,10 @@ impl MarkdownView {
     }
 
     fn handle_left_mouse_up(&mut self, pos: crate::geometry::Point) -> EventResult {
+        if self.suppress_next_left_mouse_up {
+            self.suppress_next_left_mouse_up = false;
+            return EventResult::Consumed;
+        }
         let was_dragging = self.block_scrolls.iter().any(|scroll| scroll.dragging);
         if was_dragging {
             for scroll in &mut self.block_scrolls {

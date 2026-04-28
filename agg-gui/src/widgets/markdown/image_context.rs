@@ -14,6 +14,7 @@ pub(super) struct MarkdownContextMenuState {
     pos: Point,
     image: ImageContextTarget,
     actions: Vec<ImageContextAction>,
+    hovered: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -61,8 +62,28 @@ impl MarkdownView {
                 cache_idx,
             },
             actions,
+            hovered: None,
         });
         true
+    }
+
+    pub(super) fn update_context_menu_hover(&mut self, pos: Point) -> bool {
+        let Some(menu) = self.context_menu.as_mut() else {
+            return false;
+        };
+        let was = menu.hovered;
+        menu.hovered = menu.action_index_at(pos);
+        if was != menu.hovered {
+            crate::animation::request_draw_without_invalidation();
+        }
+        menu.bounds().contains(pos)
+    }
+
+    pub(super) fn context_menu_contains(&self, pos: Point) -> bool {
+        self.context_menu
+            .as_ref()
+            .map(|menu| menu.bounds().contains(pos))
+            .unwrap_or(false)
     }
 
     pub(super) fn handle_context_menu_mouse_down(&mut self, pos: Point) -> bool {
@@ -72,9 +93,11 @@ impl MarkdownView {
         if let Some(action) = menu.action_at(pos) {
             self.run_image_action(action, &menu.image);
             self.context_menu = None;
+            self.suppress_next_left_mouse_up = true;
             crate::animation::request_draw();
             true
         } else if menu.bounds().contains(pos) {
+            self.suppress_next_left_mouse_up = true;
             true
         } else {
             self.context_menu = None;
@@ -127,7 +150,8 @@ impl MarkdownView {
         ctx.begin_path();
         ctx.rounded_rect(bounds.x, bounds.y, bounds.width, bounds.height, 4.0);
         ctx.fill();
-        ctx.set_fill_color(v.widget_stroke);
+        ctx.set_stroke_color(v.widget_stroke);
+        ctx.set_line_width(1.0);
         ctx.begin_path();
         ctx.rounded_rect(bounds.x, bounds.y, bounds.width, bounds.height, 4.0);
         ctx.stroke();
@@ -136,6 +160,17 @@ impl MarkdownView {
         ctx.set_font_size(self.font_size);
         for (idx, action) in menu.actions.iter().enumerate() {
             let row_y = bounds.y + bounds.height - (idx as f64 + 1.0) * MENU_ROW_H;
+            if menu.hovered == Some(idx) {
+                ctx.set_fill_color(v.selection_bg_unfocused);
+                ctx.begin_path();
+                ctx.rect(
+                    bounds.x + 2.0,
+                    row_y + 2.0,
+                    bounds.width - 4.0,
+                    MENU_ROW_H - 4.0,
+                );
+                ctx.fill();
+            }
             ctx.set_fill_color(v.text_color);
             ctx.fill_text(action.label(), bounds.x + MENU_PAD_X, row_y + 8.0);
         }
@@ -153,12 +188,17 @@ impl MarkdownContextMenuState {
     }
 
     fn action_at(&self, pos: Point) -> Option<ImageContextAction> {
+        self.action_index_at(pos)
+            .and_then(|idx| self.actions.get(idx).copied())
+    }
+
+    fn action_index_at(&self, pos: Point) -> Option<usize> {
         let bounds = self.bounds();
         if !bounds.contains(pos) {
             return None;
         }
         let from_top = ((bounds.y + bounds.height - pos.y) / MENU_ROW_H).floor() as usize;
-        self.actions.get(from_top).copied()
+        (from_top < self.actions.len()).then_some(from_top)
     }
 }
 

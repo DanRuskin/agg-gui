@@ -311,7 +311,6 @@ impl MarkdownView {
                 }
             }
         }
-        self.paint_context_menu(ctx);
     }
 
     fn paint_block_scrollbar(

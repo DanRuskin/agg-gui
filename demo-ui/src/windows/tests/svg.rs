@@ -10,9 +10,9 @@ use agg_gui::{
     render_svg_at_size, render_svg_to_framebuffer_at_size_with_resources,
     render_svg_to_lcd_buffer_at_size_with_resources, set_cursor_icon, Color, Container, CursorIcon,
     DrawCtx, Event, EventResult, FlexColumn, FlexRow, Font, Hyperlink, Label, MouseButton, Point,
-    Rect, Resize, ScrollBarVisibility, ScrollView, Separator, Size, SizedBox, TextArea, TextField,
-    Visuals, Widget,
+    Rect, Resize, ScrollView, Separator, Size, SizedBox, TextArea, TextField, Visuals, Widget,
 };
+use std::ops::Range;
 
 mod controls;
 mod drawing;
@@ -74,8 +74,7 @@ pub fn svg_test(font: Arc<Font>) -> Box<dyn Widget> {
             .with_offset_cell(Rc::clone(&v_offset))
             .with_max_scroll_cell(Rc::clone(&v_max))
             .with_h_offset_cell(Rc::clone(&h_offset))
-            .with_h_max_scroll_cell(Rc::clone(&h_max))
-            .with_bar_visibility(ScrollBarVisibility::AlwaysVisible),
+            .with_h_max_scroll_cell(Rc::clone(&h_max)),
         ),
         1.0,
     );
@@ -441,7 +440,19 @@ impl Widget for SvgProgressBody {
         ctx.rect(0.0, 0.0, w, h);
         ctx.fill();
 
-        for (row, sample) in self.samples.iter().enumerate() {
+        let viewport_h = (h - self.v_max.get()).max(0.0);
+        let viewport_x = self.h_offset.get();
+        let viewport_w = (w - self.h_max.get()).max(0.0);
+        let rows = visible_svg_row_range(
+            self.samples.len(),
+            row_h,
+            SVG_PAD,
+            self.v_offset.get(),
+            viewport_h,
+        );
+
+        for row in rows {
+            let sample = &self.samples[row];
             let row_top = h - SVG_PAD - row as f64 * row_h;
             let y = row_top - row_h + 6.0;
             let title_x = SVG_PAD + 6.0;
@@ -459,6 +470,9 @@ impl Widget for SvgProgressBody {
 
             for col in 0..4 {
                 let x = SVG_PAD + col as f64 * (col_w + SVG_GAP);
+                if !ranges_overlap(x, x + col_w, viewport_x, viewport_x + viewport_w) {
+                    continue;
+                }
                 draw_panel(ctx, x, y, col_w, row_h - 26.0, &v);
                 match col {
                     0 => draw_raster_column(
@@ -681,6 +695,28 @@ fn column_width(samples: &[SvgSampleRender], available_width: f64, zoom: f64) ->
         .map(|sample| sample.width as f64 * zoom)
         .fold(120.0, f64::max);
     ((available_width - SVG_PAD * 2.0 - SVG_GAP * 3.0) / 4.0).max(max_sample_w + 16.0)
+}
+
+fn visible_svg_row_range(
+    row_count: usize,
+    row_h: f64,
+    pad: f64,
+    viewport_top: f64,
+    viewport_h: f64,
+) -> Range<usize> {
+    if row_count == 0 || row_h <= 0.0 || viewport_h <= 0.0 {
+        return 0..0;
+    }
+
+    let first = ((viewport_top - pad) / row_h).floor().max(0.0) as usize;
+    let last = ((viewport_top + viewport_h - pad) / row_h)
+        .ceil()
+        .max(first as f64) as usize;
+    first.min(row_count)..last.min(row_count)
+}
+
+fn ranges_overlap(a_start: f64, a_end: f64, b_start: f64, b_end: f64) -> bool {
+    a_start < b_end && b_start < a_end
 }
 
 fn is_zoom_level(actual: f64, expected: f64) -> bool {

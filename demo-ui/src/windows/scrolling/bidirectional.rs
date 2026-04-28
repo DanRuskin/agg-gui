@@ -6,8 +6,7 @@
 use std::sync::Arc;
 
 use agg_gui::{
-    DrawCtx, Event, EventResult, FlexColumn, Font, Rect, ScrollBarVisibility, ScrollView,
-    Separator, Size, Widget,
+    DrawCtx, Event, EventResult, FlexColumn, Font, Rect, ScrollView, Separator, Size, Widget,
 };
 
 use super::helpers::{wrapped_label, LOREM_IPSUM_LONG};
@@ -100,9 +99,7 @@ pub fn build(font: Arc<Font>) -> Box<dyn Widget> {
     );
     col.push(Box::new(Separator::horizontal()), 0.0);
 
-    let scroll = ScrollView::new(Box::new(LoremCanvas::new(Arc::clone(&font))))
-        .horizontal(true)
-        .with_bar_visibility(ScrollBarVisibility::AlwaysVisible);
+    let scroll = ScrollView::new(Box::new(LoremCanvas::new(Arc::clone(&font)))).horizontal(true);
     col.push(Box::new(scroll), 1.0);
 
     Box::new(col)
@@ -123,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn bidirectional_scroll_area_keeps_both_scrollbars_visible() {
+    fn bidirectional_scroll_area_uses_global_scrollbar_visibility() {
         const BYTES: &[u8] = include_bytes!("../../../../demo/assets/CascadiaCode.ttf");
         let font = Arc::new(Font::from_slice(BYTES).expect("parse CascadiaCode.ttf"));
 
@@ -138,7 +135,7 @@ mod tests {
 
         assert_property(&props, "v_enabled", "true");
         assert_property(&props, "h_enabled", "true");
-        assert_property(&props, "bar_visibility", "AlwaysVisible");
+        assert_property(&props, "bar_visibility", "AlwaysHidden");
         assert_positive_property(&props, "max_scroll");
         assert_positive_property(&props, "h_max_scroll");
     }

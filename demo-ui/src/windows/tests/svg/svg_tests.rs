@@ -1,6 +1,17 @@
 use std::sync::Arc;
 
-use agg_gui::{find_widget_by_type, Event, Font, Modifiers, MouseButton, Point, Size};
+use agg_gui::{
+    find_widget_by_type, set_scroll_visibility, Event, Font, Modifiers, MouseButton, Point,
+    ScrollBarVisibility, Size,
+};
+
+struct VisibilityGuard;
+
+impl Drop for VisibilityGuard {
+    fn drop(&mut self) {
+        set_scroll_visibility(ScrollBarVisibility::VisibleWhenNeeded);
+    }
+}
 
 #[test]
 fn svg_test_keeps_header_fixed_above_bidirectional_scroll_area() {
@@ -26,9 +37,25 @@ fn svg_test_keeps_header_fixed_above_bidirectional_scroll_area() {
     let props = scroll.properties();
     assert_property(&props, "v_enabled", "true");
     assert_property(&props, "h_enabled", "true");
-    assert_property(&props, "bar_visibility", "AlwaysVisible");
+    assert_property(&props, "bar_visibility", "VisibleWhenNeeded");
     assert_positive_property(&props, "max_scroll");
     assert_positive_property(&props, "h_max_scroll");
+}
+
+#[test]
+fn svg_test_scroll_area_uses_global_scrollbar_visibility() {
+    const BYTES: &[u8] = include_bytes!("../../../../../demo/assets/CascadiaCode.ttf");
+    let font = Arc::new(Font::from_slice(BYTES).expect("parse CascadiaCode.ttf"));
+
+    let _guard = VisibilityGuard;
+    set_scroll_visibility(ScrollBarVisibility::AlwaysHidden);
+    let mut root = super::svg_test(font);
+    root.layout(Size::new(520.0, 260.0));
+
+    let scroll = find_widget_by_type(root.as_ref(), "ScrollView").expect("SVG Test scroll view");
+    let props = scroll.properties();
+
+    assert_property(&props, "bar_visibility", "AlwaysHidden");
 }
 
 #[test]
@@ -45,6 +72,52 @@ fn svg_test_defaults_to_half_zoom() {
     assert!(
         h_content < 1400.0,
         "SVG Test should default to 50% zoom, got h_content={h_content}"
+    );
+}
+
+#[test]
+fn svg_test_paint_culls_rows_outside_scroll_viewport() {
+    assert_eq!(
+        super::visible_svg_row_range(10, 100.0, 8.0, 0.0, 150.0),
+        0..2
+    );
+    assert_eq!(
+        super::visible_svg_row_range(10, 100.0, 8.0, 208.0, 100.0),
+        2..3
+    );
+    assert_eq!(
+        super::visible_svg_row_range(10, 100.0, 8.0, 850.0, 180.0),
+        8..10
+    );
+}
+
+#[test]
+fn svg_test_paint_culls_columns_outside_scroll_viewport() {
+    assert!(super::ranges_overlap(8.0, 128.0, 0.0, 200.0));
+    assert!(super::ranges_overlap(8.0, 128.0, 100.0, 200.0));
+    assert!(!super::ranges_overlap(8.0, 128.0, 128.0, 220.0));
+    assert!(!super::ranges_overlap(140.0, 260.0, 0.0, 140.0));
+}
+
+#[test]
+fn svg_test_is_idle_after_static_paint() {
+    const BYTES: &[u8] = include_bytes!("../../../../../demo/assets/CascadiaCode.ttf");
+    let font = Arc::new(Font::from_slice(BYTES).expect("parse CascadiaCode.ttf"));
+    let mut root = super::svg_test(font);
+
+    root.layout(Size::new(520.0, 260.0));
+    agg_gui::animation::clear_draw_request();
+    let mut fb = agg_gui::Framebuffer::new(520, 260);
+    let mut ctx = agg_gui::GfxCtx::new(&mut fb);
+    agg_gui::widget::paint_subtree(root.as_mut(), &mut ctx);
+
+    assert!(
+        !agg_gui::animation::wants_draw(),
+        "static SVG Test paint must not request continuous redraw"
+    );
+    assert!(
+        !root.needs_draw(),
+        "static SVG Test widgets must be idle after paint"
     );
 }
 

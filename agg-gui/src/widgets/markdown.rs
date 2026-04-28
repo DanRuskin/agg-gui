@@ -222,6 +222,7 @@ pub struct MarkdownView {
     selectable_text: String,
     selectable_fragments: Vec<selection::SelectableFragment>,
     context_menu: Option<image_context::MarkdownContextMenuState>,
+    suppress_next_left_mouse_up: bool,
 }
 
 impl MarkdownView {
@@ -250,6 +251,7 @@ impl MarkdownView {
             selectable_text: String::new(),
             selectable_fragments: Vec::new(),
             context_menu: None,
+            suppress_next_left_mouse_up: false,
         }
     }
 
@@ -658,6 +660,14 @@ impl Widget for MarkdownView {
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         self.paint_markdown(ctx);
+    }
+
+    fn hit_test_global_overlay(&self, local_pos: Point) -> bool {
+        self.context_menu_contains(local_pos)
+    }
+
+    fn paint_global_overlay(&mut self, ctx: &mut dyn DrawCtx) {
+        self.paint_context_menu(ctx);
     }
 
     fn needs_draw(&self) -> bool {

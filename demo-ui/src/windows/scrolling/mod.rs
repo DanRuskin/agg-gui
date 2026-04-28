@@ -42,3 +42,43 @@ pub fn scrolling_demo(font: Arc<Font>) -> Box<dyn Widget> {
         .add_tab("Bidirectional", bidirectional::build(Arc::clone(&font)));
     Box::new(tv)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use agg_gui::{set_scroll_visibility, Font, ScrollBarVisibility, Size};
+
+    struct VisibilityGuard;
+
+    impl Drop for VisibilityGuard {
+        fn drop(&mut self) {
+            set_scroll_visibility(ScrollBarVisibility::VisibleWhenNeeded);
+        }
+    }
+
+    #[test]
+    fn scrolling_demo_is_idle_after_static_paint() {
+        const BYTES: &[u8] = include_bytes!("../../../../demo/assets/CascadiaCode.ttf");
+        let font = Arc::new(Font::from_slice(BYTES).expect("parse CascadiaCode.ttf"));
+
+        let _guard = VisibilityGuard;
+        set_scroll_visibility(ScrollBarVisibility::VisibleWhenNeeded);
+        let mut root = super::scrolling_demo(font);
+
+        root.layout(Size::new(680.0, 540.0));
+        agg_gui::animation::clear_draw_request();
+        let mut fb = agg_gui::Framebuffer::new(680, 540);
+        let mut ctx = agg_gui::GfxCtx::new(&mut fb);
+        agg_gui::widget::paint_subtree(root.as_mut(), &mut ctx);
+
+        assert!(
+            !agg_gui::animation::wants_draw(),
+            "static Scrolling demo paint must not request continuous redraw"
+        );
+        assert!(
+            !root.needs_draw(),
+            "static Scrolling demo widgets must be idle after paint"
+        );
+    }
+}

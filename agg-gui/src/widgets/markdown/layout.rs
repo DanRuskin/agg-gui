@@ -333,8 +333,12 @@ impl MarkdownView {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
     use std::sync::Arc;
 
+    use crate::event::{Event, EventResult, Modifiers, MouseButton};
+    use crate::geometry::Point;
     use crate::text::Font;
     use crate::widget::Widget;
 
@@ -445,6 +449,63 @@ mod tests {
         assert!(
             matches!(*state, ImageState::RemotePending),
             "relative images should remain fetchable when the provider misses"
+        );
+    }
+
+    #[test]
+    fn context_menu_action_click_consumes_followup_mouse_up() {
+        crate::widget::set_current_viewport(Size::new(260.0, 200.0));
+        let opened_link = Rc::new(Cell::new(false));
+        let opened_link_for_cb = Rc::clone(&opened_link);
+        let mut view =
+            MarkdownView::new("[![hero](hero.png)](https://example.com/demo)", test_font())
+                .with_font_size(12.0)
+                .with_padding(8.0)
+                .with_image_provider(|_| Some((vec![255; 96 * 48 * 4], 96, 48)))
+                .on_link_click(move |_| opened_link_for_cb.set(true));
+
+        view.layout_markdown(Size::new(260.0, 1000.0));
+        let image = view
+            .selectable_fragments
+            .iter()
+            .find(|fragment| {
+                matches!(
+                    fragment.kind,
+                    super::super::selection::SelectableKind::Image { .. }
+                )
+            })
+            .expect("image fragment");
+        let menu_pos = Point::new(image.text_x + 8.0, image.y + image.height - 4.0);
+        let copy_row_pos = Point::new(menu_pos.x + 12.0, menu_pos.y - 12.0);
+
+        assert_eq!(
+            view.on_event(&Event::MouseDown {
+                pos: menu_pos,
+                button: MouseButton::Right,
+                modifiers: Modifiers::default(),
+            }),
+            EventResult::Consumed
+        );
+        assert_eq!(
+            view.on_event(&Event::MouseDown {
+                pos: copy_row_pos,
+                button: MouseButton::Left,
+                modifiers: Modifiers::default(),
+            }),
+            EventResult::Consumed
+        );
+        assert_eq!(
+            view.on_event(&Event::MouseUp {
+                pos: copy_row_pos,
+                button: MouseButton::Left,
+                modifiers: Modifiers::default(),
+            }),
+            EventResult::Consumed
+        );
+
+        assert!(
+            !opened_link.get(),
+            "clicking a context-menu action must not fall through to the linked image"
         );
     }
 }

@@ -388,6 +388,54 @@ fn test_scroll_fade_does_not_overpaint_front_window() {
     );
 }
 
+#[test]
+fn test_scroll_fade_uses_window_background() {
+    use crate::theme::{set_visuals, Visuals};
+    use crate::widget::paint_subtree;
+    use crate::Rect;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct VisualsGuard;
+
+    impl Drop for VisualsGuard {
+        fn drop(&mut self) {
+            set_visuals(Visuals::dark());
+        }
+    }
+
+    let _guard = VisualsGuard;
+    let visuals = Visuals::light();
+    let expected = visuals.window_fill;
+    set_visuals(visuals);
+
+    let offset = Rc::new(Cell::new(40.0));
+    let mut style = ScrollBarStyle::default();
+    style.fade_strength = 1.0;
+    style.fade_size = 40.0;
+
+    let content = Box::new(SizedBox::new().with_height(300.0));
+    let mut scroll = ScrollView::new(content)
+        .with_offset_cell(Rc::clone(&offset))
+        .with_bar_visibility(crate::ScrollBarVisibility::AlwaysHidden)
+        .with_style(style);
+    scroll.layout(Size::new(200.0, 100.0));
+    scroll.set_bounds(Rect::new(0.0, 0.0, 200.0, 100.0));
+
+    let mut fb = Framebuffer::new(200, 100);
+    {
+        let mut ctx = GfxCtx::new(&mut fb);
+        ctx.clear(expected);
+        paint_subtree(&mut scroll, &mut ctx);
+    }
+
+    let p = sample(&fb, 100, 98);
+    assert!(
+        p[0] > 244 && p[1] > 244 && p[2] > 244,
+        "scroll fade should blend toward the window background, got {p:?}"
+    );
+}
+
 mod combo_popup;
 
 /// Splitter updates its ratio when dragged across the divider.

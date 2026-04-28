@@ -409,7 +409,7 @@ impl ScrollView {
     /// transparent — giving a smooth dissolve into the surrounding background.
     fn paint_fade(&self, ctx: &mut dyn DrawCtx) {
         let v = ctx.visuals();
-        let c = v.panel_fill;
+        let c = v.window_fill;
         let (vw, vh) = self.viewport();
         let strength = self.style.fade_strength.clamp(0.0, 1.0) as f32;
         let size = self.style.fade_size.max(0.0);
