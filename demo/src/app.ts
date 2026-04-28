@@ -12,6 +12,7 @@ type KeyFn         = (key: string, shift: boolean, ctrl: boolean, alt: boolean, 
 type VoidFn        = () => void;
 type ClipGetFn     = () => string | null;
 type ClipSetFn     = (text: string) => void;
+type BoolFn        = () => boolean;
 
 let wasmModule: Record<string, unknown> | null = null;
 
@@ -21,6 +22,24 @@ let wasmModule: Record<string, unknown> | null = null;
 
 const canvas    = document.getElementById("canvas") as HTMLCanvasElement;
 const loadingEl = document.getElementById("loading")!;
+const mobileTextInput = document.createElement("textarea");
+mobileTextInput.setAttribute("aria-hidden", "true");
+mobileTextInput.setAttribute("autocomplete", "off");
+mobileTextInput.setAttribute("autocorrect", "off");
+mobileTextInput.setAttribute("autocapitalize", "off");
+mobileTextInput.setAttribute("spellcheck", "false");
+mobileTextInput.inputMode = "text";
+Object.assign(mobileTextInput.style, {
+  position: "fixed",
+  left: "0",
+  top: "0",
+  width: "1px",
+  height: "1px",
+  opacity: "0",
+  pointerEvents: "none",
+  zIndex: "-1",
+});
+document.body.appendChild(mobileTextInput);
 
 // --- Canvas size helper ---
 
@@ -104,6 +123,7 @@ canvas.addEventListener("mousedown", (e) => {
   canvas.focus();
   const [x, y] = canvasPos(e);
   (wasmModule["on_mouse_down"] as MouseXYBFn)(x, y, e.button);
+  syncMobileKeyboard();
 });
 
 canvas.addEventListener("mouseup", (e) => {
@@ -125,19 +145,81 @@ canvas.addEventListener("wheel", (e) => {
   (wasmModule["on_mouse_wheel"] as WheelFn)(x, y, delta_y);
 }, { passive: false });
 
-canvas.addEventListener("keydown", (e) => {
+function forwardKeyDown(e: KeyboardEvent, fromMobileTextInput = false) {
   if (!wasmModule) return;
+  if (
+    fromMobileTextInput &&
+    e.key.length === 1 &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  ) {
+    // Virtual keyboards deliver printable text through beforeinput/input.
+    // Let that path own insertion so we don't double-insert on browsers that
+    // also fire keydown for printable keys.
+    e.preventDefault();
+    return;
+  }
   // Ctrl+V / Meta+V: don't intercept here — we handle paste via the 'paste'
   // DOM event so we get the system clipboard text synchronously.
   if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) return;
   if (e.key !== "Tab") e.preventDefault();
   (wasmModule["on_key_down"] as KeyFn)(e.key, e.shiftKey, e.ctrlKey, e.altKey, e.metaKey);
+}
+
+canvas.addEventListener("keydown", (e) => forwardKeyDown(e));
+mobileTextInput.addEventListener("keydown", (e) => forwardKeyDown(e, true));
+
+function sendTextInput(text: string) {
+  if (!wasmModule || text.length === 0) return;
+  const keyDown = wasmModule["on_key_down"] as KeyFn;
+  for (const ch of Array.from(text)) {
+    keyDown(ch, false, false, false, false);
+  }
+}
+
+mobileTextInput.addEventListener("beforeinput", (e: InputEvent) => {
+  if (!wasmModule) return;
+  if (e.inputType === "insertText" || e.inputType === "insertCompositionText") {
+    e.preventDefault();
+    sendTextInput(e.data ?? "");
+    mobileTextInput.value = "";
+  } else if (e.inputType === "deleteContentBackward") {
+    e.preventDefault();
+    (wasmModule["on_key_down"] as KeyFn)("Backspace", false, false, false, false);
+    mobileTextInput.value = "";
+  } else if (e.inputType === "deleteContentForward") {
+    e.preventDefault();
+    (wasmModule["on_key_down"] as KeyFn)("Delete", false, false, false, false);
+    mobileTextInput.value = "";
+  } else if (e.inputType === "insertFromPaste") {
+    // The paste event below supplies the actual clipboard text.
+    e.preventDefault();
+  }
 });
+
+mobileTextInput.addEventListener("input", () => {
+  // Fallback for browsers that skip beforeinput for simple text entry.
+  sendTextInput(mobileTextInput.value);
+  mobileTextInput.value = "";
+});
+
+function syncMobileKeyboard() {
+  if (!wasmModule) return;
+  const textFocused = (wasmModule["text_input_focused"] as BoolFn | undefined)?.() ?? false;
+  if (textFocused) {
+    mobileTextInput.value = "";
+    mobileTextInput.focus({ preventScroll: true });
+  } else if (document.activeElement === mobileTextInput) {
+    mobileTextInput.blur();
+    canvas.focus();
+  }
+}
 
 // --- Clipboard event bridge ---
 // copy: WASM already wrote selected text to the in-process buffer via Ctrl+C
 //       keydown; we forward it to the system clipboard here.
-canvas.addEventListener("copy", (e: Event) => {
+function handleCopy(e: Event) {
   if (!wasmModule) return;
   const ce = e as ClipboardEvent;
   const text = (wasmModule["wasm_clipboard_get"] as ClipGetFn)();
@@ -145,10 +227,13 @@ canvas.addEventListener("copy", (e: Event) => {
     ce.clipboardData?.setData("text/plain", text);
     ce.preventDefault();
   }
-});
+}
+
+canvas.addEventListener("copy", handleCopy);
+mobileTextInput.addEventListener("copy", handleCopy);
 
 // cut: same as copy — WASM cut the text and stored it in the buffer.
-canvas.addEventListener("cut", (e: Event) => {
+function handleCut(e: Event) {
   if (!wasmModule) return;
   const ce = e as ClipboardEvent;
   const text = (wasmModule["wasm_clipboard_get"] as ClipGetFn)();
@@ -156,11 +241,14 @@ canvas.addEventListener("cut", (e: Event) => {
     ce.clipboardData?.setData("text/plain", text);
     ce.preventDefault();
   }
-});
+}
+
+canvas.addEventListener("cut", handleCut);
+mobileTextInput.addEventListener("cut", handleCut);
 
 // paste: get text from the system clipboard, store in the in-process buffer,
 //        then synthesise a Ctrl+V key event so Rust's paste handler fires.
-canvas.addEventListener("paste", (e: Event) => {
+function handlePaste(e: Event) {
   if (!wasmModule) return;
   const ce = e as ClipboardEvent;
   const text = ce.clipboardData?.getData("text/plain") ?? "";
@@ -169,7 +257,11 @@ canvas.addEventListener("paste", (e: Event) => {
     (wasmModule["wasm_clipboard_set"] as ClipSetFn)(text);
     (wasmModule["on_key_down"] as KeyFn)("v", false, true, false, false);
   }
-});
+  mobileTextInput.value = "";
+}
+
+canvas.addEventListener("paste", handlePaste);
+mobileTextInput.addEventListener("paste", handlePaste);
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -261,8 +353,10 @@ canvas.addEventListener("touchend", (e) => {
       if (!primaryTouchScrolling) {
         (wasmModule["on_mouse_down"] as MouseXYBFn)(x, y, 0);
         (wasmModule["on_mouse_up"] as MouseXYBFn)(x, y, 0);
+        syncMobileKeyboard();
       } else {
         (wasmModule["on_mouse_up"] as MouseXYBFn)(x, y, 1);
+        syncMobileKeyboard();
       }
       (wasmModule["on_mouse_leave"] as VoidFn)();
       primaryTouchId = null;

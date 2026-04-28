@@ -53,11 +53,7 @@ pub use truetype_lcd::truetype_lcd_view;
 
 use std::sync::Arc;
 
-use agg_gui::widget::paint_subtree;
-use agg_gui::{
-    Color, DrawCtx, Event, EventResult, FlexColumn, Font, Insets, Label, MarkdownView, Rect,
-    ScrollView, Size, SizedBox, Widget,
-};
+use agg_gui::{DrawCtx, Event, EventResult, Font, MarkdownView, Rect, ScrollView, Size, Widget};
 
 // ---------------------------------------------------------------------------
 // "Coming Soon" placeholder
@@ -109,115 +105,6 @@ pub fn coming_soon() -> Box<dyn Widget> {
 }
 
 // ---------------------------------------------------------------------------
-// Logo widget — vector drawing of the agg-gui mark shown in the About window.
-// Matches the SVG favicon at `demo/public/favicon.svg`.
-// ---------------------------------------------------------------------------
-
-struct LogoWidget {
-    bounds: Rect,
-    children: Vec<Box<dyn Widget>>,
-    /// Bold lowercase "a" centered inside the window shape.
-    letter: Label,
-    size: f64,
-}
-
-impl LogoWidget {
-    fn new(font: Arc<Font>, size: f64) -> Self {
-        let letter = Label::new("a", font)
-            .with_font_size(size * 0.55)
-            .with_color(Color::rgb(1.0, 1.0, 1.0));
-        Self {
-            bounds: Rect::default(),
-            children: Vec::new(),
-            letter,
-            size,
-        }
-    }
-}
-
-impl Widget for LogoWidget {
-    fn type_name(&self) -> &'static str {
-        "LogoWidget"
-    }
-    fn bounds(&self) -> Rect {
-        self.bounds
-    }
-    fn set_bounds(&mut self, b: Rect) {
-        self.bounds = b;
-    }
-    fn children(&self) -> &[Box<dyn Widget>] {
-        &self.children
-    }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
-        &mut self.children
-    }
-
-    fn layout(&mut self, _available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, self.size, self.size);
-        let s = self.letter.layout(Size::new(self.size, self.size));
-        self.letter
-            .set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
-        Size::new(self.size, self.size)
-    }
-
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let s = self.size;
-        let r = s * 0.16; // corner radius
-        let tb = s * 0.20; // title-bar height
-        let dr = s * 0.032; // dot radius
-
-        // Window body (accent blue).
-        ctx.set_fill_color(Color::rgb(0.29, 0.56, 0.89));
-        ctx.begin_path();
-        ctx.rounded_rect(0.0, 0.0, s, s, r);
-        ctx.fill();
-
-        // Title bar (darker blue, anchored at the TOP of the logo — which in
-        // this widget's Y-up local space means high Y).
-        ctx.set_fill_color(Color::rgb(0.12, 0.31, 0.55));
-        ctx.begin_path();
-        ctx.rounded_rect(0.0, s - tb, s, tb, r);
-        ctx.fill();
-        // Square off the bottom of the title bar so only top corners are round.
-        ctx.set_fill_color(Color::rgb(0.12, 0.31, 0.55));
-        ctx.begin_path();
-        ctx.rect(0.0, s - tb, s, r.min(tb));
-        ctx.fill();
-
-        // Three traffic-light dots, left-aligned in the title bar.
-        let dots = [
-            (Color::rgb(1.00, 0.37, 0.34), 0.10),
-            (Color::rgb(1.00, 0.74, 0.18), 0.18),
-            (Color::rgb(0.16, 0.78, 0.25), 0.26),
-        ];
-        let dot_y = s - tb * 0.5;
-        for (col, fx) in &dots {
-            ctx.set_fill_color(*col);
-            ctx.begin_path();
-            ctx.circle(s * *fx, dot_y, dr);
-            ctx.fill();
-        }
-
-        // Centered "a" glyph in the body area (below the title bar).
-        let body_top = s - tb;
-        let lw = self.letter.bounds().width;
-        let lh = self.letter.bounds().height;
-        let lx = (s - lw) * 0.5;
-        let ly = (body_top - lh) * 0.5;
-        self.letter.set_bounds(Rect::new(lx, ly, lw, lh));
-
-        ctx.save();
-        ctx.translate(lx, ly);
-        paint_subtree(&mut self.letter, ctx);
-        ctx.restore();
-    }
-
-    fn on_event(&mut self, _: &Event) -> EventResult {
-        EventResult::Ignored
-    }
-}
-
-// ---------------------------------------------------------------------------
 // About window
 // ---------------------------------------------------------------------------
 
@@ -252,18 +139,7 @@ pub fn about(font: Arc<Font>) -> Box<dyn Widget> {
             load_png(&path)
         });
 
-    // Logo hero at the top of the About window, above the README content.
-    let logo = SizedBox::new()
-        .with_width(96.0)
-        .with_height(96.0)
-        .with_margin(Insets::from_sides(0.0, 0.0, 16.0, 8.0))
-        .with_child(Box::new(LogoWidget::new(Arc::clone(&font), 96.0)));
-
-    let mut col = FlexColumn::new().with_gap(0.0).with_padding(0.0);
-    col.push(Box::new(logo), 0.0);
-    col.push(Box::new(md_view), 0.0);
-
-    Box::new(ScrollView::new(Box::new(col)))
+    Box::new(ScrollView::new(Box::new(md_view)))
 }
 
 // ---------------------------------------------------------------------------

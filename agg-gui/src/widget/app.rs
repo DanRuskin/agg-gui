@@ -26,6 +26,14 @@ fn widget_at_path<'a>(root: &'a mut Box<dyn Widget>, path: &[usize]) -> &'a mut 
     widget_at_path(&mut root.children_mut()[idx], &path[1..])
 }
 
+fn widget_at_path_ref<'a>(root: &'a dyn Widget, path: &[usize]) -> &'a dyn Widget {
+    if path.is_empty() {
+        return root;
+    }
+    let idx = path[0];
+    widget_at_path_ref(root.children()[idx].as_ref(), &path[1..])
+}
+
 // ---------------------------------------------------------------------------
 // App — top-level owner of the widget tree
 // ---------------------------------------------------------------------------
@@ -86,6 +94,13 @@ impl App {
     /// scroll offset) after the App has routed an event.
     pub fn root_mut(&mut self) -> &mut dyn Widget {
         self.root.as_mut()
+    }
+
+    /// Return the type name of the currently focused widget, if any.
+    pub fn focused_widget_type_name(&self) -> Option<&'static str> {
+        self.focus
+            .as_deref()
+            .map(|path| widget_at_path_ref(self.root.as_ref(), path).type_name())
     }
 
     /// Register a global key handler invoked before the focused widget receives

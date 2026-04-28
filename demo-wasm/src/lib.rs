@@ -530,6 +530,20 @@ pub fn wasm_clipboard_set(text: &str) {
     agg_gui::wasm_clipboard::set(text);
 }
 
+/// True when the focused widget is an editable text control. The JS shell uses
+/// this to focus a hidden DOM textarea, which is what mobile browsers require
+/// before they will raise the software keyboard for a canvas UI.
+#[wasm_bindgen]
+pub fn text_input_focused() -> bool {
+    DEMO_APP.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|app| app.focused_widget_type_name())
+            .map(|name| matches!(name, "TextField" | "TextArea"))
+            .unwrap_or(false)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // WASM event exports
 // ---------------------------------------------------------------------------

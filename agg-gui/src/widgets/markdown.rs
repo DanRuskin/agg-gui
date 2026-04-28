@@ -1,7 +1,7 @@
 //! `MarkdownView` — render a Markdown string as formatted text with images.
 //!
 //! Uses `pulldown-cmark` for parsing, then converts the event stream into a
-//! flat list of styled lines and image placeholders.  Word-wrapping is
+//! flat list of styled lines, inline image runs, and image placeholders. Word-wrapping is
 //! computed in `layout()` using the standalone `measure_text_metrics` function
 //! so no `DrawCtx` is needed at layout time.
 //!
@@ -24,7 +24,7 @@
 //! - Inline code `` `x` `` (highlight)
 //! - Fenced code blocks (background box)
 //! - Horizontal rules (thin separator line)
-//! - Images via `image_provider` callback; placeholder box when unavailable
+//! - Images via `image_provider` callback; compact inline placeholder when unavailable
 //! - Links (coloured text, URL is not opened — add `on_link_click` if needed)
 
 use std::sync::Arc;
@@ -73,23 +73,25 @@ impl LineStyle {
 enum LayoutItem {
     /// A text row (including blank spacing rows and horizontal rules).
     Line {
-        text: String,
+        runs: Vec<LineRun>,
         style: LineStyle,
         indent: f64,
         y: f64,
         height: f64,
     },
-    /// An image row — draws cached pixel data or a placeholder box.
-    Image {
-        /// URL/path originally specified in the Markdown.
-        #[allow(dead_code)]
-        url: String,
-        alt: String,
-        /// Index into `MarkdownView::image_cache`.
-        cache_idx: usize,
-        /// Displayed rect in local Y-up coordinates.
+}
+
+#[derive(Clone)]
+enum LineRun {
+    Text {
+        text: String,
         x: f64,
-        y: f64,
+    },
+    Image {
+        alt: String,
+        cache_idx: usize,
+        x: f64,
+        y_offset: f64,
         width: f64,
         height: f64,
     },
@@ -97,9 +99,20 @@ enum LayoutItem {
 
 // ── Intermediate paragraph item (before layout) ────────────────────────────────
 
-enum ParagraphItem {
-    Text(String, LineStyle, f64),
+#[derive(Clone)]
+enum InlineItem {
+    Text(String),
     Image { url: String, alt: String },
+}
+
+enum ParagraphItem {
+    Flow {
+        items: Vec<InlineItem>,
+        style: LineStyle,
+        indent: f64,
+    },
+    Spacer,
+    Rule,
 }
 
 // ── Image cache entry ──────────────────────────────────────────────────────────
@@ -128,7 +141,7 @@ pub struct MarkdownView {
     /// (top-row first) + (width, height), or `None` if unavailable.
     image_provider: Option<Box<dyn Fn(&str) -> Option<(Vec<u8>, u32, u32)>>>,
 
-    /// Cached image data, indexed by `LayoutItem::Image::cache_idx`.
+    /// Cached image data, indexed by `LineRun::Image::cache_idx`.
     image_cache: Vec<ImageEntry>,
 
     /// Laid-out items (populated by `layout()`).
@@ -198,51 +211,76 @@ impl MarkdownView {
     // ── Markdown → paragraph items ────────────────────────────────────────────
 
     fn parse_paragraphs(&self) -> Vec<ParagraphItem> {
-        let mut out: Vec<ParagraphItem> = Vec::new();
-
+        let mut out = Vec::new();
         let opts =
             Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES;
         let parser = Parser::new_ext(&self.markdown, opts);
 
+        let mut cur_items = Vec::new();
         let mut cur_text = String::new();
         let mut cur_style = LineStyle::Body;
         let mut cur_indent = 0.0_f64;
         let mut list_depth = 0u32;
         let mut list_ordinal: Vec<u64> = Vec::new();
-        // When inside an image tag, collect the alt text and suppress normal text.
-        let mut in_image: Option<String> = None; // Some(url) while parsing image
+        let mut in_image: Option<String> = None;
 
-        let flush =
-            |out: &mut Vec<ParagraphItem>, text: &mut String, style: LineStyle, indent: f64| {
-                let t = text.trim().to_string();
-                if !t.is_empty() {
-                    out.push(ParagraphItem::Text(t, style, indent));
-                }
-                text.clear();
-            };
+        fn flush_text(items: &mut Vec<InlineItem>, text: &mut String) {
+            let t = text.trim().to_string();
+            if !t.is_empty() {
+                items.push(InlineItem::Text(t));
+            }
+            text.clear();
+        }
+        fn flush_flow(
+            out: &mut Vec<ParagraphItem>,
+            items: &mut Vec<InlineItem>,
+            text: &mut String,
+            style: LineStyle,
+            indent: f64,
+        ) {
+            flush_text(items, text);
+            if !items.is_empty() {
+                out.push(ParagraphItem::Flow {
+                    items: std::mem::take(items),
+                    style,
+                    indent,
+                });
+            }
+        }
+        fn add_spacer(out: &mut Vec<ParagraphItem>) {
+            if !matches!(out.last(), Some(ParagraphItem::Spacer)) {
+                out.push(ParagraphItem::Spacer);
+            }
+        }
+        fn append_text(text: &mut String, value: &str) {
+            if !text.is_empty() && !text.ends_with(' ') && !text.ends_with('\n') {
+                text.push(' ');
+            }
+            text.push_str(value.trim_start());
+        }
 
         for ev in parser {
             match ev {
                 MdEvent::Start(Tag::Image { dest_url, .. }) => {
-                    // Flush any pending text, then start collecting alt text.
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
+                    flush_text(&mut cur_items, &mut cur_text);
                     in_image = Some(dest_url.to_string());
                 }
                 MdEvent::End(TagEnd::Image) => {
                     if let Some(url) = in_image.take() {
                         let alt = cur_text.trim().to_string();
                         cur_text.clear();
-                        out.push(ParagraphItem::Image { url, alt });
-                        out.push(ParagraphItem::Text("".to_string(), LineStyle::Body, 0.0));
-                        // spacing
+                        cur_items.push(InlineItem::Image { url, alt });
                     }
                 }
-                // While parsing an image, Text events are alt text — collect separately.
-                MdEvent::Text(t) if in_image.is_some() => {
-                    cur_text.push_str(&t);
-                }
+                MdEvent::Text(t) if in_image.is_some() => cur_text.push_str(&t),
                 MdEvent::Start(Tag::Heading { level, .. }) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
                     cur_style = match level as u8 {
                         1 => LineStyle::H1,
                         2 => LineStyle::H2,
@@ -252,17 +290,35 @@ impl MarkdownView {
                     cur_indent = 0.0;
                 }
                 MdEvent::End(TagEnd::Heading(_)) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
-                    out.push(ParagraphItem::Text("".to_string(), LineStyle::Body, 0.0));
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
+                    add_spacer(&mut out);
                     cur_style = LineStyle::Body;
                     cur_indent = 0.0;
                 }
                 MdEvent::Start(Tag::Paragraph) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
                 }
                 MdEvent::End(TagEnd::Paragraph) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
-                    out.push(ParagraphItem::Text("".to_string(), LineStyle::Body, 0.0));
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
+                    add_spacer(&mut out);
                 }
                 MdEvent::Start(Tag::List(first)) => {
                     list_depth += 1;
@@ -270,16 +326,28 @@ impl MarkdownView {
                     cur_indent = list_depth as f64 * 16.0;
                 }
                 MdEvent::End(TagEnd::List(_)) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
                     list_depth = list_depth.saturating_sub(1);
                     list_ordinal.pop();
                     cur_indent = list_depth as f64 * 16.0;
                     if list_depth == 0 {
-                        out.push(ParagraphItem::Text("".to_string(), LineStyle::Body, 0.0));
+                        add_spacer(&mut out);
                     }
                 }
                 MdEvent::Start(Tag::Item) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
                     if let Some(n) = list_ordinal.last_mut() {
                         cur_text = format!("{}. ", n);
                         *n += 1;
@@ -288,84 +356,112 @@ impl MarkdownView {
                     }
                 }
                 MdEvent::End(TagEnd::Item) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
                 }
                 MdEvent::Start(Tag::CodeBlock(_)) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
                     cur_style = LineStyle::Code;
                 }
                 MdEvent::End(TagEnd::CodeBlock) => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
-                    out.push(ParagraphItem::Text("".to_string(), LineStyle::Body, 0.0));
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
+                    add_spacer(&mut out);
                     cur_style = LineStyle::Body;
                 }
                 MdEvent::Rule => {
-                    flush(&mut out, &mut cur_text, cur_style, cur_indent);
-                    out.push(ParagraphItem::Text("".to_string(), LineStyle::Rule, 0.0));
+                    flush_flow(
+                        &mut out,
+                        &mut cur_items,
+                        &mut cur_text,
+                        cur_style,
+                        cur_indent,
+                    );
+                    out.push(ParagraphItem::Rule);
                 }
-                MdEvent::Text(t) => {
-                    if !cur_text.is_empty() && !cur_text.ends_with(' ') && !cur_text.ends_with('\n')
-                    {
-                        cur_text.push(' ');
-                    }
-                    cur_text.push_str(&t);
-                }
-                MdEvent::Code(t) => {
-                    if !cur_text.is_empty() && !cur_text.ends_with(' ') {
-                        cur_text.push(' ');
-                    }
-                    cur_text.push('`');
-                    cur_text.push_str(&t);
-                    cur_text.push('`');
-                }
-                MdEvent::SoftBreak | MdEvent::HardBreak => {
-                    cur_text.push(' ');
-                }
+                MdEvent::Text(t) => append_text(&mut cur_text, &t),
+                MdEvent::Code(t) => append_text(&mut cur_text, &format!("`{t}`")),
+                MdEvent::SoftBreak | MdEvent::HardBreak => cur_text.push(' '),
                 MdEvent::Start(Tag::Link { .. }) | MdEvent::End(TagEnd::Link) => {}
                 _ => {}
             }
         }
-        flush(&mut out, &mut cur_text, cur_style, cur_indent);
+        flush_flow(
+            &mut out,
+            &mut cur_items,
+            &mut cur_text,
+            cur_style,
+            cur_indent,
+        );
         out
     }
 
     // ── Word-wrapping ─────────────────────────────────────────────────────────
 
-    fn wrap_paragraph(
-        &self,
-        text: &str,
+    fn text_width(&self, text: &str, style: LineStyle) -> f64 {
+        let font_size = style.font_size(self.font_size);
+        measure_text_metrics(&self.active_font(), text, font_size).width
+    }
+
+    fn inline_image_size(&self, cache_idx: usize, alt: &str, max_w: f64) -> (f64, f64) {
+        if let Some((_, iw, ih)) = self.image_cache[cache_idx].data.as_ref() {
+            let scale = (max_w / *iw as f64).min(1.0);
+            (*iw as f64 * scale, *ih as f64 * scale)
+        } else {
+            let label = if alt.is_empty() { "image" } else { alt };
+            let w = self.text_width(label, LineStyle::Body) + 16.0;
+            (w.min(max_w), self.font_size * 1.45)
+        }
+    }
+
+    fn push_text_run(runs: &mut Vec<LineRun>, text: String, x: f64) {
+        if let Some(LineRun::Text { text: last, .. }) = runs.last_mut() {
+            last.push_str(&text);
+        } else {
+            runs.push(LineRun::Text { text, x });
+        }
+    }
+
+    fn push_line(
+        items: &mut Vec<LayoutItem>,
+        runs: &mut Vec<LineRun>,
         style: LineStyle,
         indent: f64,
-        max_w: f64,
-    ) -> Vec<(String, f64)> {
-        let font_size = style.font_size(self.font_size);
-        let avail = (max_w - indent).max(1.0);
-        if text.is_empty() {
-            return vec![("".to_string(), indent)];
-        }
-
-        let font = self.active_font();
-        let mut lines: Vec<(String, f64)> = Vec::new();
-        let mut current = String::new();
-
-        for word in text.split_whitespace() {
-            let candidate = if current.is_empty() {
-                word.to_string()
-            } else {
-                format!("{} {}", current, word)
-            };
-            let w = measure_text_metrics(&font, &candidate, font_size).width;
-            if w <= avail || current.is_empty() {
-                current = candidate;
-            } else {
-                lines.push((current, indent));
-                current = word.to_string();
+        height: f64,
+    ) {
+        for run in runs.iter_mut() {
+            if let LineRun::Image {
+                y_offset,
+                height: image_h,
+                ..
+            } = run
+            {
+                *y_offset = (height - *image_h).max(0.0) * 0.5;
             }
         }
-        if !current.is_empty() {
-            lines.push((current, indent));
-        }
-        lines
+        items.push(LayoutItem::Line {
+            runs: std::mem::take(runs),
+            style,
+            indent,
+            y: 0.0,
+            height,
+        });
     }
 
     // ── Image cache management ────────────────────────────────────────────────
@@ -419,125 +515,119 @@ impl Widget for MarkdownView {
         let max_w = (available.width - pad * 2.0).max(1.0);
 
         let paragraphs = self.parse_paragraphs();
-
-        // Build intermediate list: (text/image, style, indent, line_h), top-to-bottom.
-        struct RawItem {
-            text: String,
-            style: LineStyle,
-            indent: f64,
-            height: f64,
-            // Image-specific fields.
-            is_image: bool,
-            image_url: String,
-            image_alt: String,
-            cache_idx: usize,
-            img_disp_w: f64,
-        }
-
-        let mut raw: Vec<RawItem> = Vec::new();
+        let mut laid_out = Vec::new();
 
         for item in &paragraphs {
             match item {
-                ParagraphItem::Text(text, style, indent) => {
-                    if *style == LineStyle::Rule {
-                        raw.push(RawItem {
-                            text: String::new(),
-                            style: LineStyle::Rule,
-                            indent: 0.0,
-                            height: 8.0,
-                            is_image: false,
-                            image_url: String::new(),
-                            image_alt: String::new(),
-                            cache_idx: 0,
-                            img_disp_w: 0.0,
-                        });
-                        continue;
-                    }
+                ParagraphItem::Rule => laid_out.push(LayoutItem::Line {
+                    runs: Vec::new(),
+                    style: LineStyle::Rule,
+                    indent: 0.0,
+                    y: 0.0,
+                    height: 8.0,
+                }),
+                ParagraphItem::Spacer => {
+                    let metrics = measure_text_metrics(&self.active_font(), "", self.font_size);
+                    laid_out.push(LayoutItem::Line {
+                        runs: Vec::new(),
+                        style: LineStyle::Body,
+                        indent: 0.0,
+                        y: 0.0,
+                        height: metrics.line_height * 0.65,
+                    });
+                }
+                ParagraphItem::Flow {
+                    items,
+                    style,
+                    indent,
+                } => {
                     let font_size = style.font_size(self.font_size);
                     let metrics = measure_text_metrics(&self.active_font(), "", font_size);
                     let line_h = metrics.line_height * 1.3;
-
-                    if text.is_empty() {
-                        raw.push(RawItem {
-                            text: String::new(),
-                            style: *style,
-                            indent: *indent,
-                            height: line_h * 0.5,
-                            is_image: false,
-                            image_url: String::new(),
-                            image_alt: String::new(),
-                            cache_idx: 0,
-                            img_disp_w: 0.0,
-                        });
-                        continue;
+                    let avail = (max_w - indent).max(1.0);
+                    let mut runs = Vec::new();
+                    let mut used = 0.0;
+                    let mut row_h = line_h;
+                    for inline in items {
+                        match inline {
+                            InlineItem::Text(text) => {
+                                for word in text.split_whitespace() {
+                                    let mut value = word.to_string();
+                                    if used > 0.0 {
+                                        value.insert(0, ' ');
+                                    }
+                                    let mut w = self.text_width(&value, *style);
+                                    if used > 0.0 && used + w > avail {
+                                        Self::push_line(
+                                            &mut laid_out,
+                                            &mut runs,
+                                            *style,
+                                            *indent,
+                                            row_h,
+                                        );
+                                        used = 0.0;
+                                        row_h = line_h;
+                                        value = word.to_string();
+                                        w = self.text_width(&value, *style);
+                                    }
+                                    Self::push_text_run(&mut runs, value, used);
+                                    used += w;
+                                }
+                            }
+                            InlineItem::Image { url, alt } => {
+                                let cache_idx = self.get_or_load_image(url);
+                                let (iw, ih) = self.inline_image_size(cache_idx, alt, avail);
+                                if used > 0.0 && used + iw > avail {
+                                    Self::push_line(
+                                        &mut laid_out,
+                                        &mut runs,
+                                        *style,
+                                        *indent,
+                                        row_h,
+                                    );
+                                    used = 0.0;
+                                    row_h = line_h;
+                                }
+                                runs.push(LineRun::Image {
+                                    alt: alt.clone(),
+                                    cache_idx,
+                                    x: used,
+                                    y_offset: (row_h - ih).max(0.0) * 0.5,
+                                    width: iw,
+                                    height: ih,
+                                });
+                                used += iw + 4.0;
+                                row_h = row_h.max(ih);
+                            }
+                        }
                     }
-                    let wrapped = self.wrap_paragraph(text, *style, *indent, max_w);
-                    for (wl, ind) in wrapped {
-                        raw.push(RawItem {
-                            text: wl,
-                            style: *style,
-                            indent: ind,
-                            height: line_h,
-                            is_image: false,
-                            image_url: String::new(),
-                            image_alt: String::new(),
-                            cache_idx: 0,
-                            img_disp_w: 0.0,
-                        });
+                    if !runs.is_empty() {
+                        Self::push_line(&mut laid_out, &mut runs, *style, *indent, row_h);
                     }
-                }
-                ParagraphItem::Image { url, alt } => {
-                    let cache_idx = self.get_or_load_image(url);
-                    let (disp_w, disp_h) =
-                        if let Some((_, iw, ih)) = self.image_cache[cache_idx].data.as_ref() {
-                            // Scale to fit available width, preserve aspect.
-                            let scale = (max_w / *iw as f64).min(1.0); // never upscale beyond natural size
-                            (*iw as f64 * scale, *ih as f64 * scale)
-                        } else {
-                            // Placeholder: full-width × 60px box.
-                            (max_w, 60.0)
-                        };
-                    raw.push(RawItem {
-                        text: alt.clone(),
-                        style: LineStyle::Body,
-                        indent: 0.0,
-                        height: disp_h,
-                        is_image: true,
-                        image_url: url.clone(),
-                        image_alt: alt.clone(),
-                        cache_idx,
-                        img_disp_w: disp_w,
-                    });
                 }
             }
         }
 
         // Assign Y positions (Y-up: cursor starts at top and decrements).
-        let total_h: f64 = raw.iter().map(|r| r.height).sum::<f64>() + pad * 2.0;
+        let total_h: f64 = laid_out
+            .iter()
+            .map(|item| match item {
+                LayoutItem::Line { height, .. } => *height,
+            })
+            .sum::<f64>()
+            + pad * 2.0;
         let mut y = total_h - pad;
 
         self.items.clear();
-        for r in raw {
-            y -= r.height;
-            if r.is_image {
-                self.items.push(LayoutItem::Image {
-                    url: r.image_url,
-                    alt: r.image_alt,
-                    cache_idx: r.cache_idx,
-                    x: pad,
-                    y,
-                    width: r.img_disp_w,
-                    height: r.height,
-                });
-            } else {
-                self.items.push(LayoutItem::Line {
-                    text: r.text,
-                    style: r.style,
-                    indent: r.indent,
-                    y,
-                    height: r.height,
-                });
+        for mut item in laid_out {
+            let item_h = match &item {
+                LayoutItem::Line { height, .. } => *height,
+            };
+            y -= item_h;
+            match &mut item {
+                LayoutItem::Line { y: item_y, .. } => *item_y = y,
             }
+            self.items.push(item);
         }
 
         self.content_h = total_h;
@@ -555,7 +645,7 @@ impl Widget for MarkdownView {
         for item in &self.items {
             match item {
                 LayoutItem::Line {
-                    text,
+                    runs,
                     style,
                     indent,
                     y,
@@ -566,7 +656,7 @@ impl Widget for MarkdownView {
 
                     let tx = pad + indent;
                     let ty = y + height * 0.5;
-                    let metrics = measure_text_metrics(&font, text.as_str(), fs);
+                    let metrics = measure_text_metrics(&font, "", fs);
                     let text_y = ty - (metrics.ascent - metrics.descent) * 0.5;
 
                     match style {
@@ -582,39 +672,69 @@ impl Widget for MarkdownView {
                             ctx.rounded_rect(pad, *y, w - pad * 2.0, *height, 3.0);
                             ctx.fill();
                             ctx.set_fill_color(v.accent);
-                            ctx.fill_text(text, tx + 4.0, text_y);
+                            for run in runs {
+                                if let LineRun::Text { text, x } = run {
+                                    ctx.fill_text(text, tx + x + 4.0, text_y);
+                                }
+                            }
                         }
                         _ => {
                             ctx.set_fill_color(v.text_color);
-                            if !text.is_empty() {
-                                ctx.fill_text(text, tx, text_y);
+                            for run in runs {
+                                match run {
+                                    LineRun::Text { text, x } => {
+                                        ctx.fill_text(text, tx + x, text_y)
+                                    }
+                                    LineRun::Image {
+                                        alt,
+                                        cache_idx,
+                                        x,
+                                        y_offset,
+                                        width,
+                                        height,
+                                    } => {
+                                        let rx = tx + x;
+                                        let ry = y + y_offset;
+                                        if let Some(entry) = self.image_cache.get(*cache_idx) {
+                                            if let Some((data, iw, ih)) = &entry.data {
+                                                ctx.draw_image_rgba(
+                                                    data.as_slice(),
+                                                    *iw,
+                                                    *ih,
+                                                    rx,
+                                                    ry,
+                                                    *width,
+                                                    *height,
+                                                );
+                                            } else {
+                                                ctx.set_fill_color(Color::rgba(
+                                                    0.5, 0.5, 0.5, 0.15,
+                                                ));
+                                                ctx.begin_path();
+                                                ctx.rounded_rect(rx, ry, *width, *height, 3.0);
+                                                ctx.fill();
+                                                ctx.set_fill_color(v.text_dim);
+                                                ctx.set_font_size(self.font_size * 0.85);
+                                                let label = if alt.is_empty() {
+                                                    "image".to_string()
+                                                } else {
+                                                    alt.clone()
+                                                };
+                                                ctx.fill_text(&label, rx + 8.0, ry + height * 0.5);
+                                                ctx.set_font_size(fs);
+                                                ctx.set_fill_color(v.text_color);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                LayoutItem::Image {
-                    url: _,
-                    alt,
-                    cache_idx,
-                    x,
-                    y,
-                    width,
-                    height,
-                } => {
-                    if let Some(entry) = self.image_cache.get(*cache_idx) {
-                        if let Some((data, iw, ih)) = &entry.data {
-                            ctx.draw_image_rgba(data.as_slice(), *iw, *ih, *x, *y, *width, *height);
-                        } else {
-                            // Placeholder box when image unavailable.
-                            ctx.set_fill_color(Color::rgba(0.5, 0.5, 0.5, 0.15));
-                            ctx.begin_path();
-                            ctx.rounded_rect(*x, *y, *width, *height, 4.0);
-                            ctx.fill();
-                            ctx.set_fill_color(v.text_dim);
-                            ctx.set_font_size(self.font_size * 0.85);
-                            let label = format!("[image: {}]", alt);
-                            ctx.fill_text(&label, x + 8.0, y + height * 0.5);
-                        }
+                    if matches!(style, LineStyle::H1 | LineStyle::H2) && !runs.is_empty() {
+                        ctx.set_fill_color(v.separator);
+                        ctx.begin_path();
+                        ctx.rect(pad, *y, w - pad * 2.0, 1.0);
+                        ctx.fill();
                     }
                 }
             }
