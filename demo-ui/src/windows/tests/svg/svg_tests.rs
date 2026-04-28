@@ -123,6 +123,44 @@ fn svg_test_sample_rows_decode_and_render_for_bitmap_targets() {
     }
 }
 
+#[test]
+fn svg_test_text_anchor_middle_rgba_is_not_done_until_it_matches_reference_exactly() {
+    let sample = super::SVG_SAMPLES
+        .iter()
+        .find(|sample| sample.name == "text/text-anchor/middle-on-text.svg")
+        .expect("SVG Test should include the text-anchor middle sample");
+    let rendered = super::SvgSampleRender::new(sample);
+    let reference = rendered
+        .reference
+        .as_ref()
+        .unwrap_or_else(|err| panic!("{} reference PNG should decode: {err}", sample.name));
+    let rgba = rendered
+        .rgba
+        .as_ref()
+        .unwrap_or_else(|err| panic!("{} should render through RGBA target: {err}", sample.name));
+    let diff = pixel_diff(rgba, reference);
+
+    assert!(
+        diff.mismatched_pixels > 0,
+        "{} now matches reference.png exactly; replace this not-done guard with an exact-match assertion",
+        sample.name
+    );
+}
+
+struct PixelDiff {
+    mismatched_pixels: usize,
+}
+
+fn pixel_diff(a: &[u8], b: &[u8]) -> PixelDiff {
+    let mismatched_pixels = a
+        .chunks_exact(4)
+        .zip(b.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count()
+        + usize::from(a.len() != b.len());
+    PixelDiff { mismatched_pixels }
+}
+
 fn assert_property(props: &[(&'static str, String)], name: &str, expected: &str) {
     let actual = property_value(props, name);
     assert_eq!(actual, expected);

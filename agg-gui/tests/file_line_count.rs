@@ -1,8 +1,20 @@
+//! Guardrail for keeping AI-touchable source files small enough to reason about.
+//!
+//! This deliberately checks more than Rust files. Any text source or checked-in
+//! build artifact that an AI assistant may need to inspect or edit should stay
+//! under the same limit, including JavaScript/HTML glue such as wasm-bindgen
+//! package output. If a file fails this test, split or refactor it instead of
+//! hiding that source type from the scan.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_LINES: usize = 800;
 
+// Keep exclusions limited to third-party mirrors, caches, generated output dirs,
+// and external test suites. Do not exclude first-party source trees just because
+// a file is generated-looking; if it is checked into a source/package directory
+// and may be touched by an agent, it should be counted.
 const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".cursor",
@@ -14,6 +26,9 @@ const EXCLUDED_DIRS: &[&str] = &[
     "tests/resvg-test-suite",
 ];
 
+// Text formats that are part of the project surface area for humans and AI
+// agents. This intentionally includes JS/HTML/CSS/TS, so wasm package glue and
+// web demo sources are held to the same size limit as Rust modules.
 const CHECKED_EXTENSIONS: &[&str] = &[
     "css", "html", "js", "json", "md", "rs", "toml", "ts", "tsx", "yaml", "yml",
 ];

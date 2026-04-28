@@ -77,4 +77,8 @@ pub(super) const SVG_SAMPLES: &[SvgSample] = &[
     sample!("structure/image/embedded-svg"),
     sample!("structure/image/preserveAspectRatio=none"),
     sample!("structure/image/raster-image-and-size-with-odd-numbers"),
+    sample!("text/text/simple-case"),
+    sample!("text/tspan/sequential"),
+    sample!("text/text-anchor/middle-on-text"),
+    sample!("text/text-decoration/underline"),
 ];
