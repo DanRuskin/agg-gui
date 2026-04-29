@@ -118,7 +118,7 @@ pub fn coming_soon() -> Box<dyn Widget> {
 /// About window content: renders README.md via `MarkdownView` inside a scroll view.
 pub fn about(font: Arc<Font>) -> Box<dyn Widget> {
     // Embed README.md at compile time.
-    let readme = include_str!("../../README.md");
+    let readme = about_readme_markdown(include_str!("../../README.md"));
 
     // Base directory for resolving relative image paths (agg-gui workspace root).
     // HTTP(S) images are resolved asynchronously by MarkdownView itself.
@@ -147,6 +147,78 @@ pub fn about(font: Arc<Font>) -> Box<dyn Widget> {
         });
 
     Box::new(ScrollView::new(Box::new(md_view)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn about_readme_markdown(readme: &'static str) -> String {
+    readme.to_string()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn about_readme_markdown(readme: &'static str) -> String {
+    strip_dynamic_readme_badges(readme)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn strip_dynamic_readme_badges(readme: &str) -> String {
+    let mut stripped = String::with_capacity(readme.len());
+    for line in readme.lines() {
+        if is_dynamic_readme_badge_line(line) {
+            continue;
+        }
+        stripped.push_str(line);
+        stripped.push('\n');
+    }
+    stripped
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn is_dynamic_readme_badge_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("[![")
+        && (trimmed.contains("img.shields.io/")
+            || (trimmed.contains("docs.rs/") && trimmed.contains("/badge.svg"))
+            || (trimmed.contains("github.com/") && trimmed.contains("/badge.svg")))
+}
+
+#[cfg(test)]
+mod about_tests {
+    use super::*;
+
+    #[test]
+    fn strip_dynamic_readme_badges_removes_remote_svg_badges() {
+        let readme = "\
+# agg-gui
+
+[![crates.io](https://img.shields.io/crates/v/agg-gui.svg)](https://crates.io/crates/agg-gui)
+[![docs.rs](https://docs.rs/agg-gui/badge.svg)](https://docs.rs/agg-gui)
+[![CI](https://github.com/larsbrubaker/agg-gui/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/larsbrubaker/agg-gui/actions/workflows/ci.yml)
+
+## Live Demo
+";
+
+        let stripped = strip_dynamic_readme_badges(readme);
+
+        assert!(!stripped.contains("img.shields.io"));
+        assert!(!stripped.contains("docs.rs/agg-gui/badge.svg"));
+        assert!(!stripped.contains("actions/workflows/ci.yml/badge.svg"));
+        assert!(stripped.contains("# agg-gui"));
+        assert!(stripped.contains("## Live Demo"));
+    }
+
+    #[test]
+    fn strip_dynamic_readme_badges_keeps_hero_image_and_links() {
+        let readme = "\
+> **[Open interactive WASM demo ->](https://larsbrubaker.github.io/agg-gui/)**
+
+[![agg-gui demo](agg-gui/readme_hero.png)](https://larsbrubaker.github.io/agg-gui/)
+";
+
+        let stripped = strip_dynamic_readme_badges(readme);
+
+        assert!(stripped.contains("Open interactive WASM demo"));
+        assert!(stripped.contains("agg-gui/readme_hero.png"));
+    }
 }
 
 // ---------------------------------------------------------------------------
