@@ -123,6 +123,25 @@ fn test_tween_tick_requests_draw_via_invalidation_epoch() {
 }
 
 #[test]
+fn test_tween_set_target_does_not_request_draw_without_tick() {
+    crate::animation::clear_draw_request();
+    let before = crate::animation::invalidation_epoch();
+    let mut tween = crate::animation::Tween::new(0.0, 1.0);
+
+    tween.set_target(1.0);
+
+    assert!(
+        !crate::animation::wants_draw(),
+        "retargeting during paint must not by itself keep reactive mode awake"
+    );
+    assert_eq!(
+        crate::animation::invalidation_epoch(),
+        before,
+        "set_target should not dirty retained layers until tick advances the animation"
+    );
+}
+
+#[test]
 fn test_request_draw_alone_does_not_invalidate_software_backbuffer_cache() {
     use crate::widget::{paint_subtree, BackbufferCache};
     use crate::{DrawCtx, Event, EventResult, Rect};

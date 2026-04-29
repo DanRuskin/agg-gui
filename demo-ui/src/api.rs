@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use agg_gui::{InspectorNode, Rect};
 
-use crate::backend_panel::FrameHistory;
+use crate::backend_panel::{FrameHistory, RunMode};
 use crate::state::StateAccessor;
 
 // ── Platform hook ─────────────────────────────────────────────────────────────
@@ -78,6 +78,9 @@ pub struct DemoHandles {
     pub inspector_nodes: Rc<RefCell<Vec<InspectorNode>>>,
     pub hovered_bounds: Rc<RefCell<Option<Rect>>>,
     pub cube_visible: Rc<Cell<bool>>,
+    /// Backend panel run mode. Platform hosts read this to choose between
+    /// reactive idle waits and continuous redraw.
+    pub run_mode: Rc<Cell<RunMode>>,
     pub screen_size: Rc<Cell<(u32, u32)>>,
     pub frame_history: Rc<RefCell<FrameHistory>>,
     /// Fullscreen state of the OS window.  The platform harness sets this

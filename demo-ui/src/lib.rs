@@ -2,6 +2,8 @@
 
 mod api;
 mod app_builder;
+#[cfg(test)]
+mod app_builder_tests;
 mod backend_panel;
 mod content;
 mod font_picker;
@@ -10,13 +12,14 @@ mod shell;
 mod sidebar;
 mod specs;
 mod state;
+mod startup_timing;
 mod top_bar;
 mod url;
 mod windows;
 
 pub use api::{DemoHandles, PlatformHooks, PlatformKind};
 pub use app_builder::build_demo_ui;
-pub use backend_panel::FrameHistory;
+pub use backend_panel::{FrameHistory, RunMode};
 pub use state::{SavedState, StateAccessor, WindowState};
 pub use windows::{
     font_asset_by_name, install_font_bytes, load_font_by_name, take_pending_font_request,

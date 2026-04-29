@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,8 +21,8 @@ mod samples;
 mod svg_tests;
 
 use drawing::{
-    decode_png_rgba, draw_hardware_column, draw_lcd_column, draw_panel, draw_raster_column,
-    draw_small_text, native_rect, rgba_matches_reference,
+    decode_png_rgba, decode_png_size, diff_rgba_pixels, draw_hardware_column, draw_lcd_column, draw_panel,
+    draw_raster_column, draw_small_text, native_rect, rgba_matches_reference,
 };
 use samples::{SvgSample, SVG_SAMPLES};
 
@@ -133,11 +133,13 @@ struct SvgSampleRender {
     svg: &'static [u8],
     width: u32,
     height: u32,
-    reference: Result<Arc<Vec<u8>>, String>,
-    rgba: Result<Arc<Vec<u8>>, String>,
-    rgba_diff: Result<Arc<Vec<u8>>, String>,
-    rgba_pass: bool,
-    lcd: Result<SvgLcdPreview, String>,
+    resources_dir: PathBuf,
+    reference_png: &'static [u8],
+    reference: OnceCell<Result<Arc<Vec<u8>>, String>>,
+    rgba: OnceCell<Result<Arc<Vec<u8>>, String>>,
+    rgba_diff: OnceCell<Result<Arc<Vec<u8>>, String>>,
+    rgba_pass: OnceCell<bool>,
+    lcd: OnceCell<Result<SvgLcdPreview, String>>,
 }
 
 struct SvgLcdPreview {
@@ -217,73 +219,77 @@ impl SvgProgressBody {
 
 impl SvgSampleRender {
     fn new(sample: &SvgSample) -> Self {
-        let reference = decode_png_rgba(sample.reference_png);
-        let (width, height) = reference
-            .as_ref()
-            .map(|(_, w, h)| (*w, *h))
-            .unwrap_or((1, 1));
+        let (width, height) = decode_png_size(sample.reference_png).unwrap_or((1, 1));
         let resources_dir = svg_sample_resource_dir(sample.name);
-
-        let rgba = render_svg_to_framebuffer_at_size_with_resources(
-            sample.svg,
-            width,
-            height,
-            &resources_dir,
-        )
-        .map(|fb| {
-            let mut pixels = fb.pixels_flipped();
-            unpremultiply_rgba_inplace(&mut pixels);
-            Arc::new(pixels)
-        })
-        .map_err(|e| e.to_string());
-
-        let lcd = render_svg_to_lcd_buffer_at_size_with_resources(
-            sample.svg,
-            width,
-            height,
-            &resources_dir,
-        )
-        .map(|buffer| SvgLcdPreview {
-            color: Arc::new(buffer.color_plane_flipped()),
-            alpha: Arc::new(buffer.alpha_plane_flipped()),
-        })
-        .map_err(|e| e.to_string());
-        let rgba_diff = match (&reference, &rgba) {
-            (Ok((reference, _, _)), Ok(rgba)) => Ok(Arc::new(diff_rgba_pixels(reference, rgba))),
-            (Err(err), _) => Err(format!("reference: {err}")),
-            (_, Err(err)) => Err(format!("rgba: {err}")),
-        };
-        let rgba_pass = match (&reference, &rgba) {
-            (Ok((reference, _, _)), Ok(rgba)) => rgba_matches_reference(rgba, reference),
-            _ => false,
-        };
 
         Self {
             name: sample.name,
             svg: sample.svg,
             width,
             height,
-            reference: reference.map(|(pixels, _, _)| Arc::new(pixels)),
-            rgba,
-            rgba_diff,
-            rgba_pass,
-            lcd,
+            resources_dir,
+            reference_png: sample.reference_png,
+            reference: OnceCell::new(),
+            rgba: OnceCell::new(),
+            rgba_diff: OnceCell::new(),
+            rgba_pass: OnceCell::new(),
+            lcd: OnceCell::new(),
         }
     }
-}
 
-fn diff_rgba_pixels(reference: &[u8], rendered: &[u8]) -> Vec<u8> {
-    reference
-        .chunks_exact(4)
-        .zip(rendered.chunks_exact(4))
-        .flat_map(|(reference, rendered)| {
-            let dr = reference[0].abs_diff(rendered[0]);
-            let dg = reference[1].abs_diff(rendered[1]);
-            let db = reference[2].abs_diff(rendered[2]);
-            let da = reference[3].abs_diff(rendered[3]);
-            [dr.max(da), dg.max(da), db.max(da), 255]
+    fn reference(&self) -> &Result<Arc<Vec<u8>>, String> {
+        self.reference.get_or_init(|| {
+            decode_png_rgba(self.reference_png).map(|(pixels, _, _)| Arc::new(pixels))
         })
-        .collect()
+    }
+
+    fn rgba(&self) -> &Result<Arc<Vec<u8>>, String> {
+        self.rgba.get_or_init(|| {
+            render_svg_to_framebuffer_at_size_with_resources(
+                self.svg,
+                self.width,
+                self.height,
+                &self.resources_dir,
+            )
+            .map(|fb| {
+                let mut pixels = fb.pixels_flipped();
+                unpremultiply_rgba_inplace(&mut pixels);
+                Arc::new(pixels)
+            })
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    fn lcd(&self) -> &Result<SvgLcdPreview, String> {
+        self.lcd.get_or_init(|| {
+            render_svg_to_lcd_buffer_at_size_with_resources(
+                self.svg,
+                self.width,
+                self.height,
+                &self.resources_dir,
+            )
+            .map(|buffer| SvgLcdPreview {
+                color: Arc::new(buffer.color_plane_flipped()),
+                alpha: Arc::new(buffer.alpha_plane_flipped()),
+            })
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    fn rgba_diff(&self) -> &Result<Arc<Vec<u8>>, String> {
+        self.rgba_diff.get_or_init(|| match (self.reference(), self.rgba()) {
+            (Ok(reference), Ok(rgba)) => Ok(Arc::new(diff_rgba_pixels(reference, rgba))),
+            (Err(err), _) => Err(format!("reference: {err}")),
+            (_, Err(err)) => Err(format!("rgba: {err}")),
+        })
+    }
+
+    fn rgba_pass(&self) -> bool {
+        *self.rgba_pass.get_or_init(|| match (self.reference(), self.rgba()) {
+            (Ok(reference), Ok(rgba)) => rgba_matches_reference(rgba, reference),
+            _ => false,
+        })
+    }
 }
 
 fn svg_sample_resource_dir(name: &str) -> PathBuf {
@@ -477,7 +483,7 @@ impl Widget for SvgProgressBody {
                 match col {
                     0 => draw_raster_column(
                         ctx,
-                        &sample.reference,
+                        sample.reference(),
                         sample.width,
                         sample.height,
                         zoom,
@@ -489,9 +495,9 @@ impl Widget for SvgProgressBody {
                     ),
                     1 => {
                         let pixels = if self.diff_row_held == Some(row) {
-                            &sample.rgba_diff
+                            sample.rgba_diff()
                         } else {
-                            &sample.rgba
+                            sample.rgba()
                         };
                         draw_raster_column(
                             ctx,
@@ -508,7 +514,7 @@ impl Widget for SvgProgressBody {
                     }
                     2 => draw_lcd_column(
                         ctx,
-                        &sample.lcd,
+                        sample.lcd(),
                         sample.width,
                         sample.height,
                         zoom,
@@ -641,7 +647,8 @@ fn title_metrics(ctx: &mut dyn DrawCtx, title: &str, baseline_y: f64) -> (f64, f
 }
 
 fn draw_status_icon(ctx: &mut dyn DrawCtx, sample: &SvgSampleRender, x: f64, y: f64) {
-    let (fill, stroke) = if sample.rgba_pass {
+    let rgba_pass = sample.rgba_pass();
+    let (fill, stroke) = if rgba_pass {
         (Color::rgb(0.2, 0.75, 0.25), Color::rgb(0.1, 0.45, 0.15))
     } else {
         (Color::rgb(0.85, 0.22, 0.22), Color::rgb(0.55, 0.08, 0.08))
@@ -656,7 +663,7 @@ fn draw_status_icon(ctx: &mut dyn DrawCtx, sample: &SvgSampleRender, x: f64, y: 
     ctx.set_stroke_color(Color::white());
     ctx.set_line_width(1.2);
     ctx.begin_path();
-    if sample.rgba_pass {
+    if rgba_pass {
         ctx.move_to(x + 2.0, y + 4.0);
         ctx.line_to(x + 3.5, y + 2.5);
         ctx.line_to(x + 6.4, y + 5.9);

@@ -215,3 +215,29 @@ fn test_theme_change_invalidates_retained_widget_layer() {
     // Restore the common default for later tests in this process.
     crate::set_visuals(crate::Visuals::dark());
 }
+
+#[test]
+fn test_idle_retained_window_does_not_request_reactive_redraw() {
+    use crate::widget::paint_subtree;
+    use crate::widgets::window::Window;
+    use crate::widgets::ToggleSwitch;
+
+    let font = Arc::new(Font::from_slice(TEST_FONT).expect("test font must load"));
+    let toggle = ToggleSwitch::new(false);
+    let mut window =
+        Window::new("Idle", Arc::clone(&font), Box::new(toggle)).with_bounds(Rect::new(
+            0.0, 0.0, 120.0, 80.0,
+        ));
+    window.layout(Size::new(200.0, 120.0));
+
+    let mut ctx = RetainedLayerCtx::new();
+    for _ in 0..2 {
+        crate::animation::clear_draw_request();
+        paint_subtree(&mut window, &mut ctx);
+    }
+
+    assert!(
+        !crate::animation::wants_draw() && !window.needs_draw(),
+        "an idle retained window must let the reactive host go idle"
+    );
+}

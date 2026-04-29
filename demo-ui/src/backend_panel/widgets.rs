@@ -740,7 +740,7 @@ impl Widget for RunModeDesc {
                 } else {
                     1000.0 / hist.mean_ms()
                 };
-                format!("Repainting the UI each frame. FPS: {fps:.1}")
+                format!("Running continuously as fast as possible. FPS: {fps:.1}")
             }
         };
         self.label.set_text(text);

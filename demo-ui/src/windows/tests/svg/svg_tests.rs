@@ -176,22 +176,22 @@ fn svg_test_sample_rows_decode_and_render_for_bitmap_targets() {
     for sample in super::SVG_SAMPLES {
         let rendered = super::SvgSampleRender::new(sample);
         assert!(
-            rendered.reference.is_ok(),
+            rendered.reference().is_ok(),
             "{} reference PNG should decode: {:?}",
             sample.name,
-            rendered.reference.err()
+            rendered.reference().as_ref().err()
         );
         assert!(
-            rendered.rgba.is_ok(),
+            rendered.rgba().is_ok(),
             "{} should render through RGBA target: {:?}",
             sample.name,
-            rendered.rgba.err()
+            rendered.rgba().as_ref().err()
         );
         assert!(
-            rendered.lcd.is_ok(),
+            rendered.lcd().is_ok(),
             "{} should render through LCD target: {:?}",
             sample.name,
-            rendered.lcd.err()
+            rendered.lcd().as_ref().err()
         );
     }
 }
@@ -204,10 +204,10 @@ fn svg_test_every_rgba_row_is_either_exact_or_tracked_as_incomplete() {
     for sample in super::SVG_SAMPLES {
         let rendered = super::SvgSampleRender::new(sample);
         let reference = rendered
-            .reference
+            .reference()
             .as_ref()
             .unwrap_or_else(|err| panic!("{} reference PNG should decode: {err}", sample.name));
-        let rgba = rendered.rgba.as_ref().unwrap_or_else(|err| {
+        let rgba = rendered.rgba().as_ref().unwrap_or_else(|err| {
             panic!("{} should render through RGBA target: {err}", sample.name)
         });
         let diff = pixel_diff(rgba, reference);
@@ -318,6 +318,38 @@ fn pixel_diff(a: &[u8], b: &[u8]) -> PixelDiff {
         mismatched_pixels,
         max_delta,
     }
+}
+
+#[test]
+fn svg_sample_render_defers_bitmap_generation_until_access() {
+    let rendered = super::SvgSampleRender::new(&super::SVG_SAMPLES[0]);
+
+    assert!(
+        rendered.reference.get().is_none(),
+        "reference PNG pixels should be decoded lazily"
+    );
+    assert!(
+        rendered.rgba.get().is_none(),
+        "RGBA render should be generated lazily"
+    );
+    assert!(
+        rendered.lcd.get().is_none(),
+        "LCD render should be generated lazily"
+    );
+    assert!(
+        rendered.rgba_diff.get().is_none(),
+        "diff image should be generated lazily"
+    );
+
+    let _ = rendered.rgba();
+    assert!(
+        rendered.rgba.get().is_some(),
+        "accessing RGBA should populate only that cache"
+    );
+    assert!(
+        rendered.lcd.get().is_none(),
+        "accessing RGBA should not force LCD generation"
+    );
 }
 
 fn assert_property(props: &[(&'static str, String)], name: &str, expected: &str) {

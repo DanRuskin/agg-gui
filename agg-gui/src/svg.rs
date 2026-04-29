@@ -119,6 +119,7 @@ fn default_svg_parse_options_cell() -> &'static RwLock<SvgParseOptions> {
 fn system_svg_parse_options() -> SvgParseOptions {
     let mut fontdb = usvg::fontdb::Database::new();
     fontdb.load_system_fonts();
+    font_defaults::configure_generic_font_families(&mut fontdb, None);
     SvgParseOptions::new().with_fontdb(Arc::new(fontdb))
 }
 
@@ -144,11 +145,7 @@ where
     for bytes in fonts {
         fontdb.load_font_data(bytes);
     }
-    if let Some(family) = generic_family {
-        fontdb.set_serif_family(family);
-        fontdb.set_sans_serif_family(family);
-        fontdb.set_monospace_family(family);
-    }
+    font_defaults::configure_generic_font_families(&mut fontdb, generic_family);
     Arc::new(fontdb)
 }
 
@@ -778,6 +775,7 @@ mod opacity_tests;
 #[cfg(test)]
 mod text_tests;
 
+mod font_defaults;
 mod paint;
 mod pattern;
 

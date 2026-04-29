@@ -46,7 +46,6 @@ pub fn font_picker_with_size(label_font: Arc<Font>, font_size: f64) -> Box<dyn W
     let cells = cells();
     let names = font_option_names();
     let initial_idx = cells.font_index.get().min(names.len().saturating_sub(1));
-    request_all_font_previews(&cells);
 
     let cells_for_change = cells.clone();
     let mut combo = ComboBox::new(names, initial_idx, Arc::clone(&label_font))
@@ -61,6 +60,7 @@ pub fn font_picker_with_size(label_font: Arc<Font>, font_size: f64) -> Box<dyn W
         combo,
         label_font,
         last_font_epoch: font_cache_epoch(),
+        requested_previews: false,
     })
 }
 
@@ -68,9 +68,17 @@ struct LazyFontPicker {
     combo: ComboBox,
     label_font: Arc<Font>,
     last_font_epoch: u64,
+    requested_previews: bool,
 }
 
 impl LazyFontPicker {
+    fn request_previews_once(&mut self) {
+        if !self.requested_previews {
+            request_all_font_previews(&cells());
+            self.requested_previews = true;
+        }
+    }
+
     fn refresh_loaded_fonts(&mut self) {
         let epoch = font_cache_epoch();
         if epoch != self.last_font_epoch {
@@ -125,6 +133,9 @@ impl Widget for LazyFontPicker {
     }
 
     fn on_event(&mut self, event: &Event) -> EventResult {
+        if matches!(event, Event::MouseDown { .. } | Event::KeyDown { .. }) {
+            self.request_previews_once();
+        }
         self.refresh_loaded_fonts();
         self.combo.on_event(event)
     }

@@ -151,6 +151,13 @@ pub(super) fn decode_png_rgba(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String
     Ok((rgba, info.width, info.height))
 }
 
+pub(super) fn decode_png_size(data: &[u8]) -> Result<(u32, u32), String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let info = reader.info();
+    Ok((info.width, info.height))
+}
+
 pub(super) fn rgba_matches_reference(rendered: &[u8], reference: &[u8]) -> bool {
     agg_gui::compare_svg_rgba(
         rendered,
@@ -158,4 +165,18 @@ pub(super) fn rgba_matches_reference(rendered: &[u8], reference: &[u8]) -> bool 
         agg_gui::SvgCompareThresholds::default(),
     )
     .pass
+}
+
+pub(super) fn diff_rgba_pixels(reference: &[u8], rendered: &[u8]) -> Vec<u8> {
+    reference
+        .chunks_exact(4)
+        .zip(rendered.chunks_exact(4))
+        .flat_map(|(reference, rendered)| {
+            let dr = reference[0].abs_diff(rendered[0]);
+            let dg = reference[1].abs_diff(rendered[1]);
+            let db = reference[2].abs_diff(rendered[2]);
+            let da = reference[3].abs_diff(rendered[3]);
+            [dr.max(da), dg.max(da), db.max(da), 255]
+        })
+        .collect()
 }

@@ -675,6 +675,7 @@ fn test_scroll_view_reports_overlay_animation_draw_need() {
 #[test]
 fn test_toggle_switch_reports_animation_draw_need() {
     use crate::widget::paint_subtree;
+    use std::time::Duration;
 
     let mut toggle = ToggleSwitch::new(false);
     toggle.layout(Size::new(100.0, 40.0));
@@ -702,6 +703,14 @@ fn test_toggle_switch_reports_animation_draw_need() {
     assert!(
         crate::animation::wants_draw(),
         "in-flight toggle tweens must request the next frame"
+    );
+
+    std::thread::sleep(Duration::from_millis(260));
+    crate::animation::clear_draw_request();
+    paint_subtree(&mut toggle, &mut ctx);
+    assert!(
+        !crate::animation::wants_draw() && !toggle.needs_draw(),
+        "settled toggle tweens must let reactive mode go idle"
     );
 }
 
