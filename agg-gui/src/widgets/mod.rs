@@ -9,6 +9,7 @@ pub mod flex;
 pub mod hyperlink;
 pub mod image_view;
 pub mod inspector;
+mod inspector_props;
 pub mod label;
 pub mod markdown;
 pub mod menu;

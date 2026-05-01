@@ -20,7 +20,7 @@ use std::rc::Rc;
 use glow::HasContext;
 
 use crate::{draw_hover_overlay, GlGfxCtx};
-use agg_gui::{App, InspectorNode, Rect, Size};
+use agg_gui::{App, InspectorNode, InspectorOverlay, Size};
 
 thread_local! {
     static INSPECTOR_SNAPSHOT_EPOCH: Cell<Option<u64>> = const { Cell::new(None) };
@@ -87,7 +87,7 @@ pub fn render_app_frame(
     _frame_ms: f64,
     show_inspector: bool,
     inspector_nodes: &Rc<RefCell<Vec<InspectorNode>>>,
-    hovered_bounds: &Rc<RefCell<Option<Rect>>>,
+    hovered_bounds: &Rc<RefCell<Option<InspectorOverlay>>>,
 ) {
     // Inspector snapshot sync: refresh the tree snapshot when the
     // inspector is shown, or clear the hover highlight when it's hidden
@@ -118,7 +118,7 @@ pub fn render_app_frame(
     app.paint(ctx);
 
     let hovered = *hovered_bounds.borrow();
-    if let Some(rect) = hovered {
-        draw_hover_overlay(ctx, rect);
+    if let Some(overlay) = hovered {
+        draw_hover_overlay(ctx, overlay);
     }
 }

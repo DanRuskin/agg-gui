@@ -2,7 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::{InspectorNode, Rect};
+use agg_gui::InspectorNode;
+use agg_gui::InspectorOverlay;
 
 use crate::backend_panel::{FrameHistory, RunMode};
 use crate::state::StateAccessor;
@@ -76,7 +77,7 @@ impl PlatformHooks {
 pub struct DemoHandles {
     pub show_inspector: Rc<Cell<bool>>,
     pub inspector_nodes: Rc<RefCell<Vec<InspectorNode>>>,
-    pub hovered_bounds: Rc<RefCell<Option<Rect>>>,
+    pub hovered_bounds: Rc<RefCell<Option<InspectorOverlay>>>,
     pub cube_visible: Rc<Cell<bool>>,
     /// Backend panel run mode. Platform hosts read this to choose between
     /// reactive idle waits and continuous redraw.

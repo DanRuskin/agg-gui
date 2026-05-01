@@ -566,6 +566,18 @@ pub trait Widget {
         Insets::ZERO
     }
 
+    /// Inner padding — space the widget reserves between its own bounds and
+    /// its child layout area.  Only container widgets carry padding; leaf
+    /// widgets default to [`Insets::ZERO`].
+    ///
+    /// The inspector reads this to draw a Chrome F12-style padding band on
+    /// the highlighted widget.  Containers that already store padding
+    /// internally (e.g. `FlexColumn::inner_padding`) override this to expose
+    /// it to the inspector.
+    fn padding(&self) -> Insets {
+        Insets::ZERO
+    }
+
     /// Horizontal anchor: how this widget sizes/positions itself horizontally
     /// within the slot the parent assigns.
     /// Default: [`HAnchor::FIT`] (take natural content width).
@@ -704,5 +716,5 @@ pub use tree::{
     active_modal_path, collect_inspector_nodes, current_mouse_world, current_viewport,
     dispatch_event, dispatch_unconsumed_key, find_widget_by_id, find_widget_by_id_mut,
     find_widget_by_type, global_overlay_hit_path, hit_test_subtree, set_current_mouse_world,
-    set_current_viewport, InspectorNode,
+    set_current_viewport, InspectorNode, InspectorOverlay,
 };

@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use agg_gui::{App, Rect};
+use agg_gui::{App, InspectorOverlay, Rect};
 use demo_gl::{begin_frame, render_app_frame, GlGfxCtx, CUBE_SCREEN_RECT};
 
 pub fn render_frame(
@@ -20,7 +20,7 @@ pub fn render_frame(
     frame_ms: f64,
     show_inspector: bool,
     inspector_nodes: &Rc<RefCell<Vec<agg_gui::InspectorNode>>>,
-    hovered_bounds: &Rc<RefCell<Option<Rect>>>,
+    hovered_bounds: &Rc<RefCell<Option<InspectorOverlay>>>,
 ) {
     begin_frame(gl, w, h);
     CUBE_SCREEN_RECT.with(|r| r.set(Rect::default()));

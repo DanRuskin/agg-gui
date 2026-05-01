@@ -33,7 +33,7 @@ pub fn build_demo_ui(
             .unwrap_or(false),
     ));
     let inspector_nodes = Rc::new(RefCell::new(Vec::<InspectorNode>::new()));
-    let hovered_bounds = Rc::new(RefCell::new(None::<Rect>));
+    let hovered_bounds = Rc::new(RefCell::new(None::<agg_gui::InspectorOverlay>));
     let screen_size = Rc::new(Cell::new((0u32, 0u32)));
     let window_fullscreen = Rc::new(Cell::new(
         initial_state

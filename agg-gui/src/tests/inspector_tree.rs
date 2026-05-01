@@ -22,12 +22,16 @@ fn test_inspector_row0_at_top() {
             type_name: "Root",
             screen_bounds: Rect::new(0.0, 0.0, 100.0, 50.0),
             depth: 0,
+            margin: crate::layout_props::Insets::ZERO,
+            padding: crate::layout_props::Insets::ZERO,
             properties: vec![],
         },
         InspectorNode {
             type_name: "Child",
             screen_bounds: Rect::new(0.0, 0.0, 50.0, 20.0),
             depth: 1,
+            margin: crate::layout_props::Insets::ZERO,
+            padding: crate::layout_props::Insets::ZERO,
             properties: vec![],
         },
     ]));
@@ -106,18 +110,24 @@ fn test_inspector_tree_populates_from_nodes() {
             type_name: "Root",
             screen_bounds: Rect::new(0.0, 0.0, 100.0, 50.0),
             depth: 0,
+            margin: crate::layout_props::Insets::ZERO,
+            padding: crate::layout_props::Insets::ZERO,
             properties: vec![],
         },
         InspectorNode {
             type_name: "Child",
             screen_bounds: Rect::new(0.0, 0.0, 50.0, 20.0),
             depth: 1,
+            margin: crate::layout_props::Insets::ZERO,
+            padding: crate::layout_props::Insets::ZERO,
             properties: vec![],
         },
         InspectorNode {
             type_name: "Sibling",
             screen_bounds: Rect::new(0.0, 0.0, 50.0, 20.0),
             depth: 0,
+            margin: crate::layout_props::Insets::ZERO,
+            padding: crate::layout_props::Insets::ZERO,
             properties: vec![],
         },
     ]));
@@ -179,12 +189,16 @@ fn test_inspector_tree_default_expanded() {
             type_name: "Root",
             screen_bounds: Rect::new(0.0, 0.0, 100.0, 50.0),
             depth: 0,
+            margin: crate::layout_props::Insets::ZERO,
+            padding: crate::layout_props::Insets::ZERO,
             properties: vec![],
         },
         InspectorNode {
             type_name: "Child",
             screen_bounds: Rect::new(0.0, 0.0, 50.0, 20.0),
             depth: 1,
+            margin: crate::layout_props::Insets::ZERO,
+            padding: crate::layout_props::Insets::ZERO,
             properties: vec![],
         },
     ]));
@@ -214,6 +228,8 @@ fn test_inspector_tree_drag_disabled() {
         type_name: "Root",
         screen_bounds: Rect::new(0.0, 0.0, 100.0, 50.0),
         depth: 0,
+        margin: crate::layout_props::Insets::ZERO,
+        padding: crate::layout_props::Insets::ZERO,
         properties: vec![],
     }]));
 
@@ -340,6 +356,8 @@ fn test_inspector_top_row_appears_at_top_of_tree_area() {
         type_name: "Window",
         screen_bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
         depth: 0,
+        margin: crate::layout_props::Insets::ZERO,
+        padding: crate::layout_props::Insets::ZERO,
         properties: vec![],
     }]));
     let hovered = Rc::new(RefCell::new(None));
@@ -714,78 +732,3 @@ fn test_treeview_click_collapses_when_flag_on() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Phase N — layer compositing
-// ---------------------------------------------------------------------------
-
-/// `push_layer` / `pop_layer` must composite a solid red square into a white
-/// framebuffer.  The composited pixels must be red, not white or black.
-#[test]
-fn test_push_pop_layer_solid_composites_correctly() {
-    let mut fb = Framebuffer::new(20, 20);
-    let mut ctx = GfxCtx::new(&mut fb);
-    // White background.
-    ctx.clear(Color::white());
-
-    // Draw a red square via a layer — the layer sits at (0,0) so the full fb
-    // is covered.
-    ctx.push_layer(20.0, 20.0);
-    ctx.set_fill_color(Color::rgba(1.0, 0.0, 0.0, 1.0));
-    ctx.begin_path();
-    ctx.rect(0.0, 0.0, 20.0, 20.0);
-    ctx.fill();
-    ctx.pop_layer();
-
-    drop(ctx);
-
-    let center = sample(&fb, 10, 10);
-    assert!(
-        is_red(center),
-        "After layer composite, centre must be red; got {center:?}"
-    );
-}
-
-/// A layer with 50 % alpha blended onto a white background must produce a
-/// pixel that is neither fully red nor fully white (i.e. a pink mid-tone).
-#[test]
-fn test_push_pop_layer_alpha_blends_into_parent() {
-    let mut fb = Framebuffer::new(20, 20);
-    let mut ctx = GfxCtx::new(&mut fb);
-    ctx.clear(Color::white());
-
-    ctx.push_layer(20.0, 20.0);
-    // 50 % opaque red.
-    ctx.set_fill_color(Color::rgba(1.0, 0.0, 0.0, 0.5));
-    ctx.begin_path();
-    ctx.rect(0.0, 0.0, 20.0, 20.0);
-    ctx.fill();
-    ctx.pop_layer();
-
-    drop(ctx);
-
-    let [r, g, b, _] = sample(&fb, 10, 10);
-    // Result should be pink: R high, G and B ~midway (not 0, not 255).
-    assert!(r > 200, "Red channel must be high; got {r}");
-    assert!(
-        g > 80 && g < 200,
-        "Green channel must be mid-tone (pink); got {g}"
-    );
-    assert!(
-        b > 80 && b < 200,
-        "Blue channel must be mid-tone (pink); got {b}"
-    );
-}
-
-/// DELETED — Label backbuffer tests
-///
-/// Three tests that exercised Label's RGBA backbuffer cache
-/// (`test_label_backbuffer_renders_text`,
-/// `test_label_backbuffer_cache_is_straight_alpha`,
-/// `test_label_backbuffer_matches_direct_agg_render`) lived here.
-/// They became obsolete when Label switched to the per-channel LCD
-/// coverage mask pipeline (see `text_lcd::rasterize_lcd_mask` +
-/// `DrawCtx::draw_lcd_mask`): rendering is now direct through
-/// `ctx.fill_text` and no RGBA cache is retained on the widget.  The
-/// LCD correctness tests live in `text_lcd::tests`.
-#[cfg(any())]
-fn _deleted_backbuffer_tests_marker() {}

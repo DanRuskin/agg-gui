@@ -38,7 +38,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::{App, InspectorNode, Key, Modifiers, MouseButton, Rect, Size};
+use agg_gui::{App, InspectorNode, InspectorOverlay, Key, Modifiers, MouseButton, Rect, Size};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -56,7 +56,7 @@ thread_local! {
     static SHOW_INSPECTOR:  RefCell<Option<Rc<Cell<bool>>>>                     = RefCell::new(None);
     static INSPECTOR_NODES: RefCell<Option<Rc<RefCell<Vec<InspectorNode>>>>>    = RefCell::new(None);
     /// Shared hover-bounds handle — written by the inspector, read by render().
-    static HOVERED_BOUNDS: RefCell<Option<Rc<RefCell<Option<Rect>>>>>           = RefCell::new(None);
+    static HOVERED_BOUNDS: RefCell<Option<Rc<RefCell<Option<InspectorOverlay>>>>>           = RefCell::new(None);
     /// Current canvas dimensions — written each frame, read by the backend panel.
     static SCREEN_SIZE: RefCell<Option<Rc<Cell<(u32, u32)>>>>                   = RefCell::new(None);
     /// Accessor for reading window open/position state for localStorage persistence.

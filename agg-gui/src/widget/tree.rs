@@ -203,9 +203,26 @@ pub struct InspectorNode {
     pub type_name: &'static str,
     /// Absolute screen bounds (Y-up), accumulated as the tree is walked.
     pub screen_bounds: Rect,
+    /// Outer margin in logical units (per-side).  Drawn as the orange band
+    /// outside `screen_bounds` in the Chrome F12-style hover overlay.
+    pub margin: crate::layout_props::Insets,
+    /// Inner padding in logical units (per-side) — only nonzero on container
+    /// widgets that override [`Widget::padding`].  Drawn as the green band
+    /// inset from `screen_bounds`.
+    pub padding: crate::layout_props::Insets,
     pub depth: usize,
     /// Type-specific display properties from [`Widget::properties`].
     pub properties: Vec<(&'static str, String)>,
+}
+
+/// Snapshot pushed to the platform render loop so the host can draw a
+/// Chrome F12-style three-band overlay (margin + bounds + padding) around
+/// the widget the inspector is hovering.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InspectorOverlay {
+    pub bounds: Rect,
+    pub margin: crate::layout_props::Insets,
+    pub padding: crate::layout_props::Insets,
 }
 
 // ── Global mouse-world-pos (for nested drags that can't use widget-
@@ -336,6 +353,8 @@ pub fn collect_inspector_nodes(
     out.push(InspectorNode {
         type_name: widget.type_name(),
         screen_bounds: abs,
+        margin: widget.margin(),
+        padding: widget.padding(),
         depth,
         properties: props,
     });

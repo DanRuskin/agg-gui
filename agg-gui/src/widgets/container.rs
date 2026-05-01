@@ -142,6 +142,9 @@ impl Widget for Container {
     fn margin(&self) -> Insets {
         self.base.margin
     }
+    fn padding(&self) -> Insets {
+        self.inner_padding
+    }
     fn h_anchor(&self) -> HAnchor {
         self.base.h_anchor
     }
