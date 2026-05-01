@@ -8,8 +8,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    DrawCtx, Event, EventResult, Font, MenuBar, MenuEntry, MenuItem, MenuResponse, MouseButton,
-    Point, PopupMenu, Rect, Size, TopMenu, Widget,
+    font_settings, DrawCtx, Event, EventResult, Font, MenuBar, MenuEntry, MenuItem, MenuResponse,
+    MouseButton, Point, PopupMenu, Rect, Size, TopMenu, Widget,
 };
 
 pub fn menu_demo(font: Arc<Font>) -> Box<dyn Widget> {
@@ -26,6 +26,10 @@ struct MenuDemo {
 }
 
 impl MenuDemo {
+    fn active_font(&self) -> Arc<Font> {
+        font_settings::current_system_font().unwrap_or_else(|| Arc::clone(&self.font))
+    }
+
     fn new(font: Arc<Font>) -> Self {
         let log = Rc::new(RefCell::new(vec![
             "Right-click the test area or open a top menu.".to_string(),
@@ -88,7 +92,7 @@ impl Widget for MenuDemo {
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let v = ctx.visuals();
-        ctx.set_font(Arc::clone(&self.font));
+        ctx.set_font(self.active_font());
         ctx.set_font_size(14.0);
 
         ctx.set_fill_color(v.window_fill);
@@ -169,12 +173,8 @@ impl Widget for MenuDemo {
     }
 
     fn paint_global_overlay(&mut self, ctx: &mut dyn DrawCtx) {
-        self.context_menu.paint(
-            ctx,
-            Arc::clone(&self.font),
-            14.0,
-            agg_gui::widget::current_viewport(),
-        );
+        self.context_menu
+            .paint(ctx, self.active_font(), 14.0, agg_gui::widget::current_viewport());
     }
 }
 

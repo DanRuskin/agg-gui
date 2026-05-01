@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::draw_ctx::DrawCtx;
 use crate::event::{Event, EventResult, Key, Modifiers, MouseButton};
+use crate::font_settings;
 use crate::geometry::{Point, Rect, Size};
 use crate::text::Font;
 use crate::widget::{current_viewport, Widget};
@@ -122,6 +123,14 @@ impl MenuBar {
         self
     }
 
+    /// Resolve the font used for layout/paint.  Prefers the system-wide
+    /// font override so the System window's font picker propagates live;
+    /// falls back to the per-instance font otherwise.  Mirrors the
+    /// `Label::active_font` pattern.
+    fn active_font(&self) -> Arc<Font> {
+        font_settings::current_system_font().unwrap_or_else(|| Arc::clone(&self.font))
+    }
+
     fn menu_at(&self, pos: Point) -> Option<usize> {
         self.menus.iter().position(|menu| contains(menu.rect, pos))
     }
@@ -213,7 +222,7 @@ impl Widget for MenuBar {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        ctx.set_font(Arc::clone(&self.font));
+        ctx.set_font(self.active_font());
         ctx.set_font_size(self.font_size);
         let v = ctx.visuals();
         ctx.set_fill_color(v.top_bar_bg);
@@ -334,12 +343,7 @@ impl Widget for MenuBar {
     }
 
     fn paint_global_overlay(&mut self, ctx: &mut dyn DrawCtx) {
-        self.popup.paint(
-            ctx,
-            Arc::clone(&self.font),
-            self.font_size,
-            current_viewport(),
-        );
+        self.popup.paint(ctx, self.active_font(), self.font_size, current_viewport());
     }
 }
 
