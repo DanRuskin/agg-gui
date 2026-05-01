@@ -471,9 +471,18 @@ pub trait Widget {
     }
 
     /// Mark this widget's own retained surface dirty, if it owns one.
+    ///
+    /// Invalidates *both* the retained-layer [`BackbufferState`] and the
+    /// per-widget bitmap [`BackbufferCache`].  Inspector edits that mutate
+    /// a widget's reflected props bypass setters that normally invalidate
+    /// the cache (e.g. `Label::set_text`); calling `mark_dirty` after an
+    /// edit restores correct re-raster on the next frame.
     fn mark_dirty(&mut self) {
         if let Some(state) = self.backbuffer_state_mut() {
             state.invalidate();
+        }
+        if let Some(cache) = self.backbuffer_cache_mut() {
+            cache.invalidate();
         }
     }
 
@@ -739,5 +748,7 @@ pub use tree::{
     active_modal_path, collect_inspector_nodes, current_mouse_world, current_viewport,
     dispatch_event, dispatch_unconsumed_key, find_widget_by_id, find_widget_by_id_mut,
     find_widget_by_type, global_overlay_hit_path, hit_test_subtree, set_current_mouse_world,
-    set_current_viewport, InspectorNode, InspectorOverlay,
+    set_current_viewport, walk_path_mut, InspectorNode, InspectorOverlay,
 };
+#[cfg(feature = "reflect")]
+pub use tree::{apply_inspector_edit, reflect_fields, InspectorEdit};

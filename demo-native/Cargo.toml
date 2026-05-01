@@ -7,6 +7,10 @@ edition = "2021"
 name = "demo-native"
 path = "src/main.rs"
 
+[features]
+default = ["reflect"]
+reflect = ["agg-gui/reflect", "demo-gl/reflect", "demo-ui/reflect"]
+
 [dependencies]
 agg-gui      = { path = "../agg-gui", features = ["clipboard", "winit-adapter"] }
 demo-gl      = { path = "../demo-gl" }

@@ -10,18 +10,21 @@ use std::sync::Arc;
 
 use crate::color::Color;
 use crate::draw_ctx::DrawCtx;
+use crate::geometry::Rect;
 use crate::text::Font;
 use crate::widget::InspectorNode;
 
-use super::inspector::{c_border, c_dim_text, c_text, FONT_SIZE};
+use super::inspector::{c_border, c_dim_text, c_text, PropHit, PropHitKind, FONT_SIZE};
 
 pub(super) fn paint_properties(
     ctx: &mut dyn DrawCtx,
     available_h: f64,
+    _panel_y_offset: f64,
     panel_w: f64,
     font: &Arc<Font>,
     selected: Option<usize>,
     nodes: &[InspectorNode],
+    hits: &mut Vec<PropHit>,
 ) {
     if available_h < 4.0 {
         return;
@@ -86,7 +89,10 @@ pub(super) fn paint_properties(
         ctx.stroke();
     }
 
-    // Type-specific widget properties (from Widget::properties()).
+    // Type-specific widget properties (from Widget::properties() +
+    // reflected fields via `as_reflect`).  Bool and numeric rows record a
+    // PropHit so the parent panel can map a click into a queued
+    // `InspectorEdit`.
     let prop_start_y = row_start_y - rows.len() as f64 * 18.0 - 4.0;
     for (j, (prop_label, prop_value)) in node.properties.iter().enumerate() {
         let ry = prop_start_y - j as f64 * 18.0;
@@ -115,6 +121,36 @@ pub(super) fn paint_properties(
         ctx.move_to(8.0, ry - 4.0);
         ctx.line_to(w - 8.0, ry - 4.0);
         ctx.stroke();
+
+        // Build a hit-rect spanning the right half of the row, where the
+        // displayed value lives (left half is the label).  Y is panel-local;
+        // we record the row's vertical band (ry-4 .. ry+12).
+        let hit_x = w * 0.5;
+        let hit_w = w * 0.5 - 2.0;
+        let hit_rect = Rect::new(hit_x, ry - 4.0, hit_w, 16.0);
+        if is_bool {
+            hits.push(PropHit {
+                rect: hit_rect,
+                field: (*prop_label).to_string(),
+                kind: PropHitKind::BoolToggle {
+                    current: prop_value == "true",
+                },
+            });
+        } else if let Ok(parsed) = prop_value.parse::<f64>() {
+            // Heuristic step: 5% of |value|, with a sensible floor and tiny
+            // values getting a 0.1 step.  Good enough for inspector
+            // affordances; precision editing belongs in a focused control.
+            let mag = parsed.abs().max(1.0);
+            let step = (mag * 0.05).max(0.1);
+            hits.push(PropHit {
+                rect: hit_rect,
+                field: (*prop_label).to_string(),
+                kind: PropHitKind::NumericStep {
+                    current: parsed,
+                    step,
+                },
+            });
+        }
     }
 
     // Box-model mini diagram.

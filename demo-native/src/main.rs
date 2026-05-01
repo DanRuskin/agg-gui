@@ -290,6 +290,8 @@ fn main() {
     let show_inspector = Rc::clone(&handles.show_inspector);
     let inspector_nodes = Rc::clone(&handles.inspector_nodes);
     let hovered_bounds = Rc::clone(&handles.hovered_bounds);
+    #[cfg(feature = "reflect")]
+    let inspector_edits = Rc::clone(&handles.inspector_edits);
     // `cube_visible` used to drive the ControlFlow decision; now the 3-D
     // cube's `Widget::needs_draw` returns true whenever it's visited by
     // the tree walk, which automatically skips when its Window is closed.
@@ -383,6 +385,8 @@ fn main() {
         show_inspector.get(),
         &inspector_nodes,
         &hovered_bounds,
+        #[cfg(feature = "reflect")]
+        &inspector_edits,
     );
     let _ = gl_surface.swap_buffers(&gl_context);
 
@@ -444,6 +448,8 @@ fn main() {
                             show_inspector.get(),
                             &inspector_nodes,
                             &hovered_bounds,
+                            #[cfg(feature = "reflect")]
+                            &inspector_edits,
                         );
                         gl_surface.swap_buffers(&gl_context).expect("swap_buffers");
                     }
@@ -681,6 +687,8 @@ fn main() {
                                     show_insp,
                                     &inspector_nodes,
                                     &hovered_bounds,
+                                    #[cfg(feature = "reflect")]
+                                    &inspector_edits,
                                 )
                             },
                             |gc| gc.read_screenshot(),

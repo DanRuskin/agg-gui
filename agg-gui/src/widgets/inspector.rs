@@ -208,6 +208,34 @@ pub struct InspectorPanel {
     /// so the harness can persist it without needing mutable access to the
     /// widget tree.
     snapshot_out: Option<Rc<RefCell<Option<InspectorSavedState>>>>,
+    /// Edit queue — clicks on reflected property rows push
+    /// [`crate::widget::InspectorEdit`] entries here; the host frame loop
+    /// drains and applies them via [`crate::widget::apply_inspector_edit`].
+    /// Holds mouse-down coords so the click handler in `on_event` can locate
+    /// which property row was hit when the layout next paints.
+    #[cfg(feature = "reflect")]
+    pub edits: Option<Rc<RefCell<Vec<crate::widget::InspectorEdit>>>>,
+    /// Cached row hit-rectangles built during paint (panel-local bounds);
+    /// each entry is `(rect, field_name, row_kind)`.  Used by `on_event` to
+    /// translate a click to a queued edit.
+    prop_hits: Vec<PropHit>,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "reflect"), allow(dead_code))]
+pub(super) struct PropHit {
+    pub(super) rect: Rect,
+    pub(super) field: String,
+    pub(super) kind: PropHitKind,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "reflect"), allow(dead_code))]
+pub(super) enum PropHitKind {
+    /// Clicking flips the bool.
+    BoolToggle { current: bool },
+    /// Clicking the left half decrements, right half increments by `step`.
+    NumericStep { current: f64, step: f64 },
 }
 
 /// Serializable inspector UI state — apply at startup, snapshot at shutdown.
@@ -246,6 +274,9 @@ impl InspectorPanel {
             split_dragging: false,
             hovered_bounds,
             tree_view,
+            #[cfg(feature = "reflect")]
+            edits: None,
+            prop_hits: Vec::new(),
             pending_expanded: None,
             pending_selected: None,
             snapshot_out: None,
@@ -257,6 +288,20 @@ impl InspectorPanel {
     /// that persists app state.
     pub fn with_snapshot_cell(mut self, cell: Rc<RefCell<Option<InspectorSavedState>>>) -> Self {
         self.snapshot_out = Some(cell);
+        self
+    }
+
+    /// Bind a queue the inspector pushes [`crate::widget::InspectorEdit`]s
+    /// into when the user clicks an editable property value.  The host frame
+    /// loop is responsible for draining and applying via
+    /// [`crate::widget::apply_inspector_edit`] — doing it inline would
+    /// violate the immutable-tree-during-event contract.
+    #[cfg(feature = "reflect")]
+    pub fn with_edit_queue(
+        mut self,
+        cell: Rc<RefCell<Vec<crate::widget::InspectorEdit>>>,
+    ) -> Self {
+        self.edits = Some(cell);
         self
     }
 
@@ -612,6 +657,10 @@ impl Widget for InspectorPanel {
                 button: MouseButton::Left,
                 ..
             } => {
+                #[cfg(feature = "reflect")]
+                if pos.y < self.split_y() - 2.0 && self.try_emit_edit_from_click(*pos) {
+                    return EventResult::Consumed;
+                }
                 if self.on_split_handle(*pos) {
                     self.split_dragging = true;
                     // No tick: grabbing the split handle produces no visual
@@ -670,14 +719,67 @@ impl Widget for InspectorPanel {
 // project line limit.
 
 impl InspectorPanel {
-    fn paint_properties(&self, ctx: &mut dyn DrawCtx, available_h: f64) {
+    fn paint_properties(&mut self, ctx: &mut dyn DrawCtx, available_h: f64) {
+        let panel_y_offset = 0.0; // properties pane sits at panel-local y=0
+        self.prop_hits.clear();
         super::inspector_props::paint_properties(
             ctx,
             available_h,
+            panel_y_offset,
             self.bounds.width,
             &self.font,
             self.selected,
             &self.nodes.borrow(),
+            &mut self.prop_hits,
         );
     }
+
+    /// Test a panel-local click against the cached property-row rectangles
+    /// painted last frame.  Returns true if the click produced a queued edit.
+    #[cfg(feature = "reflect")]
+    fn try_emit_edit_from_click(&self, pos: Point) -> bool {
+        let Some(queue) = &self.edits else { return false };
+        let Some(sel_idx) = self.selected else {
+            return false;
+        };
+        let nodes = self.nodes.borrow();
+        let Some(node) = nodes.get(sel_idx) else {
+            return false;
+        };
+        let Some(hit) = self
+            .prop_hits
+            .iter()
+            .find(|h| pos.x >= h.rect.x
+                && pos.x <= h.rect.x + h.rect.width
+                && pos.y >= h.rect.y
+                && pos.y <= h.rect.y + h.rect.height)
+        else {
+            return false;
+        };
+
+        let edit = match &hit.kind {
+            PropHitKind::BoolToggle { current } => crate::widget::InspectorEdit {
+                path: node.path.clone(),
+                field_path: hit.field.clone(),
+                new_value: Box::new(!*current),
+            },
+            PropHitKind::NumericStep { current, step } => {
+                let mid = hit.rect.x + hit.rect.width * 0.5;
+                let new_v = if pos.x < mid {
+                    *current - *step
+                } else {
+                    *current + *step
+                };
+                crate::widget::InspectorEdit {
+                    path: node.path.clone(),
+                    field_path: hit.field.clone(),
+                    new_value: Box::new(new_v),
+                }
+            }
+        };
+        queue.borrow_mut().push(edit);
+        crate::animation::request_draw();
+        true
+    }
 }
+

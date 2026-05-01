@@ -88,7 +88,26 @@ pub fn render_app_frame(
     show_inspector: bool,
     inspector_nodes: &Rc<RefCell<Vec<InspectorNode>>>,
     hovered_bounds: &Rc<RefCell<Option<InspectorOverlay>>>,
+    #[cfg(feature = "reflect")] inspector_edits: &Rc<
+        RefCell<Vec<agg_gui::InspectorEdit>>,
+    >,
 ) {
+    // Drain pending inspector edits FIRST so the layout/paint that follows
+    // sees the new values.  Stale-path edits (the tree shape changed since
+    // the inspector snapshot) silently fail; the next frame's snapshot will
+    // re-issue them if the user clicks again.
+    #[cfg(feature = "reflect")]
+    {
+        let mut q = inspector_edits.borrow_mut();
+        if !q.is_empty() {
+            for edit in q.drain(..) {
+                let _ = agg_gui::apply_inspector_edit(app.root_mut(), &edit);
+            }
+            // Force the next snapshot to refresh — values changed.
+            INSPECTOR_SNAPSHOT_EPOCH.with(|last| last.set(None));
+        }
+    }
+
     // Inspector snapshot sync: refresh the tree snapshot when the
     // inspector is shown, or clear the hover highlight when it's hidden
     // so the overlay vanishes without waiting for the next mouse event.

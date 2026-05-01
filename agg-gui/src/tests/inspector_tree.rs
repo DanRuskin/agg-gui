@@ -24,6 +24,7 @@ fn test_inspector_row0_at_top() {
             depth: 0,
             margin: crate::layout_props::Insets::ZERO,
             padding: crate::layout_props::Insets::ZERO,
+            path: vec![],
             properties: vec![],
         },
         InspectorNode {
@@ -32,6 +33,7 @@ fn test_inspector_row0_at_top() {
             depth: 1,
             margin: crate::layout_props::Insets::ZERO,
             padding: crate::layout_props::Insets::ZERO,
+            path: vec![],
             properties: vec![],
         },
     ]));
@@ -112,6 +114,7 @@ fn test_inspector_tree_populates_from_nodes() {
             depth: 0,
             margin: crate::layout_props::Insets::ZERO,
             padding: crate::layout_props::Insets::ZERO,
+            path: vec![],
             properties: vec![],
         },
         InspectorNode {
@@ -120,6 +123,7 @@ fn test_inspector_tree_populates_from_nodes() {
             depth: 1,
             margin: crate::layout_props::Insets::ZERO,
             padding: crate::layout_props::Insets::ZERO,
+            path: vec![],
             properties: vec![],
         },
         InspectorNode {
@@ -128,6 +132,7 @@ fn test_inspector_tree_populates_from_nodes() {
             depth: 0,
             margin: crate::layout_props::Insets::ZERO,
             padding: crate::layout_props::Insets::ZERO,
+            path: vec![],
             properties: vec![],
         },
     ]));
@@ -191,6 +196,7 @@ fn test_inspector_tree_default_expanded() {
             depth: 0,
             margin: crate::layout_props::Insets::ZERO,
             padding: crate::layout_props::Insets::ZERO,
+            path: vec![],
             properties: vec![],
         },
         InspectorNode {
@@ -199,6 +205,7 @@ fn test_inspector_tree_default_expanded() {
             depth: 1,
             margin: crate::layout_props::Insets::ZERO,
             padding: crate::layout_props::Insets::ZERO,
+            path: vec![],
             properties: vec![],
         },
     ]));
@@ -230,6 +237,7 @@ fn test_inspector_tree_drag_disabled() {
         depth: 0,
         margin: crate::layout_props::Insets::ZERO,
         padding: crate::layout_props::Insets::ZERO,
+        path: vec![],
         properties: vec![],
     }]));
 
@@ -358,6 +366,7 @@ fn test_inspector_top_row_appears_at_top_of_tree_area() {
         depth: 0,
         margin: crate::layout_props::Insets::ZERO,
         padding: crate::layout_props::Insets::ZERO,
+        path: vec![],
         properties: vec![],
     }]));
     let hovered = Rc::new(RefCell::new(None));

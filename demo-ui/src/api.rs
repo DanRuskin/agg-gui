@@ -78,6 +78,11 @@ pub struct DemoHandles {
     pub show_inspector: Rc<Cell<bool>>,
     pub inspector_nodes: Rc<RefCell<Vec<InspectorNode>>>,
     pub hovered_bounds: Rc<RefCell<Option<InspectorOverlay>>>,
+    /// Pending inspector edits — the platform harness drains and applies via
+    /// `agg_gui::apply_inspector_edit` each frame after layout.  Only present
+    /// with the `reflect` cargo feature.
+    #[cfg(feature = "reflect")]
+    pub inspector_edits: Rc<RefCell<Vec<agg_gui::InspectorEdit>>>,
     pub cube_visible: Rc<Cell<bool>>,
     /// Backend panel run mode. Platform hosts read this to choose between
     /// reactive idle waits and continuous redraw.

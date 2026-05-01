@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Shared demo UI builders — identical widget trees for native and WASM"
 
+[features]
+default = ["reflect"]
+reflect = ["agg-gui/reflect"]
+
 [dependencies]
 agg-gui    = { path = "../agg-gui" }
 agg-rust   = "1.0.2"

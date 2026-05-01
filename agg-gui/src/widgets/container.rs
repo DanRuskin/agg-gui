@@ -13,15 +13,10 @@ use crate::geometry::{Rect, Size};
 use crate::layout_props::{HAnchor, Insets, VAnchor, WidgetBase};
 use crate::widget::Widget;
 
-/// A rectangular container widget.
-///
-/// Paints a background rounded-rect (optional border), then lets the framework
-/// recurse into its children. Children are stacked bottom-to-top inside the
-/// padding area.
-pub struct Container {
-    bounds: Rect,
-    children: Vec<Box<dyn Widget>>,
-    base: WidgetBase,
+/// Inspector-visible properties of a [`Container`].
+#[cfg_attr(feature = "reflect", derive(bevy_reflect::Reflect))]
+#[derive(Clone, Debug)]
+pub struct ContainerProps {
     pub background: Color,
     pub border_color: Option<Color>,
     pub border_width: f64,
@@ -34,6 +29,31 @@ pub struct Container {
     pub fit_height: bool,
 }
 
+impl Default for ContainerProps {
+    fn default() -> Self {
+        Self {
+            background: Color::rgba(0.0, 0.0, 0.0, 0.0),
+            border_color: None,
+            border_width: 1.0,
+            corner_radius: 0.0,
+            inner_padding: Insets::ZERO,
+            fit_height: false,
+        }
+    }
+}
+
+/// A rectangular container widget.
+///
+/// Paints a background rounded-rect (optional border), then lets the framework
+/// recurse into its children. Children are stacked bottom-to-top inside the
+/// padding area.
+pub struct Container {
+    bounds: Rect,
+    children: Vec<Box<dyn Widget>>,
+    base: WidgetBase,
+    pub props: ContainerProps,
+}
+
 impl Container {
     /// Create a transparent container with no border and default padding.
     pub fn new() -> Self {
@@ -41,12 +61,7 @@ impl Container {
             bounds: Rect::default(),
             children: Vec::new(),
             base: WidgetBase::new(),
-            background: Color::rgba(0.0, 0.0, 0.0, 0.0),
-            border_color: None,
-            border_width: 1.0,
-            corner_radius: 0.0,
-            inner_padding: Insets::ZERO,
-            fit_height: false,
+            props: ContainerProps::default(),
         }
     }
 
@@ -57,7 +72,7 @@ impl Container {
     /// which would otherwise pick up the full available height as
     /// the container's preferred size and inflate the window.
     pub fn with_fit_height(mut self, fit: bool) -> Self {
-        self.fit_height = fit;
+        self.props.fit_height = fit;
         self
     }
 
@@ -68,28 +83,28 @@ impl Container {
     }
 
     pub fn with_background(mut self, color: Color) -> Self {
-        self.background = color;
+        self.props.background = color;
         self
     }
 
     pub fn with_border(mut self, color: Color, width: f64) -> Self {
-        self.border_color = Some(color);
-        self.border_width = width;
+        self.props.border_color = Some(color);
+        self.props.border_width = width;
         self
     }
 
     pub fn with_corner_radius(mut self, r: f64) -> Self {
-        self.corner_radius = r;
+        self.props.corner_radius = r;
         self
     }
 
     pub fn with_padding(mut self, p: f64) -> Self {
-        self.inner_padding = Insets::all(p);
+        self.props.inner_padding = Insets::all(p);
         self
     }
 
     pub fn with_inner_padding(mut self, p: Insets) -> Self {
-        self.inner_padding = p;
+        self.props.inner_padding = p;
         self
     }
 
@@ -139,11 +154,20 @@ impl Widget for Container {
         &mut self.children
     }
 
+    #[cfg(feature = "reflect")]
+    fn as_reflect(&self) -> Option<&dyn bevy_reflect::Reflect> {
+        Some(&self.props)
+    }
+    #[cfg(feature = "reflect")]
+    fn as_reflect_mut(&mut self) -> Option<&mut dyn bevy_reflect::Reflect> {
+        Some(&mut self.props)
+    }
+
     fn margin(&self) -> Insets {
         self.base.margin
     }
     fn padding(&self) -> Insets {
-        self.inner_padding
+        self.props.inner_padding
     }
     fn h_anchor(&self) -> HAnchor {
         self.base.h_anchor
@@ -159,10 +183,10 @@ impl Widget for Container {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        let pad_l = self.inner_padding.left;
-        let pad_r = self.inner_padding.right;
-        let pad_t = self.inner_padding.top;
-        let pad_b = self.inner_padding.bottom;
+        let pad_l = self.props.inner_padding.left;
+        let pad_r = self.props.inner_padding.right;
+        let pad_t = self.props.inner_padding.top;
+        let pad_b = self.props.inner_padding.bottom;
         let inner_w = (available.width - pad_l - pad_r).max(0.0);
 
         // Stack children top-to-bottom (first child = visually highest).
@@ -198,7 +222,7 @@ impl Widget for Container {
         // sites use `Container` as a decorated wrapper around content
         // that should stretch).  Opt in to content-fit via
         // `with_fit_height(true)` — matches egui `Frame` semantics.
-        if self.fit_height {
+        if self.props.fit_height {
             let consumed_h = (start_cursor - cursor_y).max(0.0);
             let natural_h = (consumed_h + pad_t + pad_b).min(available.height);
             Size::new(available.width, natural_h)
@@ -210,27 +234,27 @@ impl Widget for Container {
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
         let w = self.bounds.width;
         let h = self.bounds.height;
-        let r = self.corner_radius;
+        let r = self.props.corner_radius;
 
         // Background
-        if self.background.a > 0.001 {
-            ctx.set_fill_color(self.background);
+        if self.props.background.a > 0.001 {
+            ctx.set_fill_color(self.props.background);
             ctx.begin_path();
             ctx.rounded_rect(0.0, 0.0, w, h, r);
             ctx.fill();
         }
 
         // Border
-        if let Some(bc) = self.border_color {
+        if let Some(bc) = self.props.border_color {
             ctx.set_stroke_color(bc);
-            ctx.set_line_width(self.border_width);
+            ctx.set_line_width(self.props.border_width);
             ctx.begin_path();
-            let inset = self.border_width * 0.5;
+            let inset = self.props.border_width * 0.5;
             ctx.rounded_rect(
                 inset,
                 inset,
-                (w - self.border_width).max(0.0),
-                (h - self.border_width).max(0.0),
+                (w - self.props.border_width).max(0.0),
+                (h - self.props.border_width).max(0.0),
                 r,
             );
             ctx.stroke();

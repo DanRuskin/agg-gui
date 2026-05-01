@@ -107,6 +107,10 @@ pub use widget::{
     find_widget_by_id_mut, find_widget_by_type, App, BackbufferKind, BackbufferSpec,
     BackbufferState, InspectorNode, InspectorOverlay, Widget,
 };
+#[cfg(feature = "reflect")]
+pub use widget::{
+    apply_inspector_edit, reflect_fields, InspectorEdit,
+};
 pub use widgets::{
     current_scroll_style, current_scroll_visibility, set_scroll_style, set_scroll_visibility,
     Button, Checkbox, CollapsingHeader, ColorPicker, ComboBox, Container, DragValue, FlexColumn,

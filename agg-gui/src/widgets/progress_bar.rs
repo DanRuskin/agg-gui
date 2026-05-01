@@ -13,16 +13,35 @@ use crate::widget::Widget;
 const BAR_H: f64 = 18.0;
 const WIDGET_H: f64 = 24.0;
 
+/// Inspector-visible properties of a [`ProgressBar`].
+#[cfg_attr(feature = "reflect", derive(bevy_reflect::Reflect))]
+#[derive(Clone, Debug)]
+pub struct ProgressBarProps {
+    /// Progress in `[0.0, 1.0]`.
+    pub value: f64,
+    pub show_text: bool,
+    pub font_size: f64,
+    pub fill_color: Option<Color>,
+}
+
+impl Default for ProgressBarProps {
+    fn default() -> Self {
+        Self {
+            value: 0.0,
+            show_text: true,
+            font_size: 11.0,
+            fill_color: None,
+        }
+    }
+}
+
 /// A horizontal progress bar. `value` is in `[0.0, 1.0]`.
 pub struct ProgressBar {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>, // always empty
     base: WidgetBase,
-    value: f64,
-    show_text: bool,
+    pub props: ProgressBarProps,
     font: Arc<Font>,
-    font_size: f64,
-    fill_color: Option<Color>,
 }
 
 impl ProgressBar {
@@ -31,20 +50,20 @@ impl ProgressBar {
             bounds: Rect::default(),
             children: Vec::new(),
             base: WidgetBase::new(),
-            value: value.clamp(0.0, 1.0),
-            show_text: true,
+            props: ProgressBarProps {
+                value: value.clamp(0.0, 1.0),
+                ..ProgressBarProps::default()
+            },
             font,
-            font_size: 11.0,
-            fill_color: None,
         }
     }
 
     pub fn with_show_text(mut self, show: bool) -> Self {
-        self.show_text = show;
+        self.props.show_text = show;
         self
     }
     pub fn with_fill_color(mut self, color: Color) -> Self {
-        self.fill_color = Some(color);
+        self.props.fill_color = Some(color);
         self
     }
 
@@ -70,11 +89,11 @@ impl ProgressBar {
     }
 
     pub fn set_value(&mut self, v: f64) {
-        self.value = v.clamp(0.0, 1.0);
+        self.props.value = v.clamp(0.0, 1.0);
     }
 
     pub fn value(&self) -> f64 {
-        self.value
+        self.props.value
     }
 }
 
@@ -93,6 +112,15 @@ impl Widget for ProgressBar {
     }
     fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
         &mut self.children
+    }
+
+    #[cfg(feature = "reflect")]
+    fn as_reflect(&self) -> Option<&dyn bevy_reflect::Reflect> {
+        Some(&self.props)
+    }
+    #[cfg(feature = "reflect")]
+    fn as_reflect_mut(&mut self) -> Option<&mut dyn bevy_reflect::Reflect> {
+        Some(&mut self.props)
     }
 
     fn margin(&self) -> Insets {
@@ -129,8 +157,8 @@ impl Widget for ProgressBar {
         ctx.fill();
 
         // Fill — use explicit fill_color if set, otherwise fall back to accent.
-        let fill_color = self.fill_color.unwrap_or(v.accent);
-        let fill_w = (w * self.value).max(0.0);
+        let fill_color = self.props.fill_color.unwrap_or(v.accent);
+        let fill_w = (w * self.props.value).max(0.0);
         if fill_w >= 1.0 {
             ctx.set_fill_color(fill_color);
             ctx.begin_path();
@@ -139,10 +167,10 @@ impl Widget for ProgressBar {
         }
 
         // Percentage text centered over bar
-        if self.show_text {
-            let label = format!("{:.0}%", self.value * 100.0);
+        if self.props.show_text {
+            let label = format!("{:.0}%", self.props.value * 100.0);
             ctx.set_font(Arc::clone(&self.font));
-            ctx.set_font_size(self.font_size);
+            ctx.set_font_size(self.props.font_size);
             // Text color: always use theme text contrasted against the bar.
             let mid = w * 0.5;
             let text_color = if fill_w > mid {

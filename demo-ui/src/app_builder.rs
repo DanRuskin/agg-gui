@@ -34,6 +34,9 @@ pub fn build_demo_ui(
     ));
     let inspector_nodes = Rc::new(RefCell::new(Vec::<InspectorNode>::new()));
     let hovered_bounds = Rc::new(RefCell::new(None::<agg_gui::InspectorOverlay>));
+    #[cfg(feature = "reflect")]
+    let inspector_edits: Rc<RefCell<Vec<agg_gui::InspectorEdit>>> =
+        Rc::new(RefCell::new(Vec::new()));
     let screen_size = Rc::new(Cell::new((0u32, 0u32)));
     let window_fullscreen = Rc::new(Cell::new(
         initial_state
@@ -500,6 +503,10 @@ pub fn build_demo_ui(
             Rc::clone(&hovered_bounds),
         )
         .with_snapshot_cell(Rc::clone(&inspector_snapshot_cell));
+        #[cfg(feature = "reflect")]
+        {
+            inspector = inspector.with_edit_queue(Rc::clone(&inspector_edits));
+        }
         if let Some(saved) = initial_state.as_ref().and_then(|s| s.inspector.clone()) {
             inspector.apply_saved_state(agg_gui::InspectorSavedState {
                 expanded: saved.expanded,
@@ -709,6 +716,8 @@ pub fn build_demo_ui(
         show_inspector,
         inspector_nodes,
         hovered_bounds,
+        #[cfg(feature = "reflect")]
+        inspector_edits,
         cube_visible,
         run_mode,
         screen_size,

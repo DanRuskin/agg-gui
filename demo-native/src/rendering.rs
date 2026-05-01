@@ -21,6 +21,9 @@ pub fn render_frame(
     show_inspector: bool,
     inspector_nodes: &Rc<RefCell<Vec<agg_gui::InspectorNode>>>,
     hovered_bounds: &Rc<RefCell<Option<InspectorOverlay>>>,
+    #[cfg(feature = "reflect")] inspector_edits: &Rc<
+        RefCell<Vec<agg_gui::InspectorEdit>>,
+    >,
 ) {
     begin_frame(gl, w, h);
     CUBE_SCREEN_RECT.with(|r| r.set(Rect::default()));
@@ -33,5 +36,7 @@ pub fn render_frame(
         show_inspector,
         inspector_nodes,
         hovered_bounds,
+        #[cfg(feature = "reflect")]
+        inspector_edits,
     );
 }

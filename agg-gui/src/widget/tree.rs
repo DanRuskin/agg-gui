@@ -211,6 +211,10 @@ pub struct InspectorNode {
     /// inset from `screen_bounds`.
     pub padding: crate::layout_props::Insets,
     pub depth: usize,
+    /// Path of child indices from the App root to this widget.  Used by the
+    /// inspector's live-editing pipeline to walk back to the live widget and
+    /// apply a reflected edit.  Empty for the root.
+    pub path: Vec<usize>,
     /// Type-specific display properties from [`Widget::properties`].
     pub properties: Vec<(&'static str, String)>,
 }
@@ -394,6 +398,16 @@ pub fn collect_inspector_nodes(
     screen_origin: Point,
     out: &mut Vec<InspectorNode>,
 ) {
+    collect_inspector_nodes_with_path(widget, depth, screen_origin, &[], out);
+}
+
+fn collect_inspector_nodes_with_path(
+    widget: &dyn Widget,
+    depth: usize,
+    screen_origin: Point,
+    path_prefix: &[usize],
+    out: &mut Vec<InspectorNode>,
+) {
     // Invisible widgets (and their entire subtrees) are excluded from the
     // inspector — they are not part of the live rendered scene.
     if !widget.is_visible() {
@@ -439,6 +453,7 @@ pub fn collect_inspector_nodes(
         margin: widget.margin(),
         padding: widget.padding(),
         depth,
+        path: path_prefix.to_vec(),
         properties: props,
     });
 
@@ -451,7 +466,92 @@ pub fn collect_inspector_nodes(
     }
 
     let child_origin = Point::new(abs.x, abs.y);
-    for child in widget.children() {
-        collect_inspector_nodes(child.as_ref(), depth + 1, child_origin, out);
+    let mut child_path: Vec<usize> = Vec::with_capacity(path_prefix.len() + 1);
+    child_path.extend_from_slice(path_prefix);
+    child_path.push(0);
+    for (i, child) in widget.children().iter().enumerate() {
+        *child_path.last_mut().unwrap() = i;
+        collect_inspector_nodes_with_path(
+            child.as_ref(),
+            depth + 1,
+            child_origin,
+            &child_path,
+            out,
+        );
     }
+}
+
+/// Walk the widget tree from `root` along `path` and return the deepest
+/// reachable widget as a mutable reference.  Returns `None` if the path
+/// indexes past the available children at any level — useful when the path
+/// is stale (e.g. the tree shape changed since the inspector snapshot).
+pub fn walk_path_mut<'a>(
+    root: &'a mut dyn Widget,
+    path: &[usize],
+) -> Option<&'a mut dyn Widget> {
+    let mut node: &mut dyn Widget = root;
+    for &idx in path {
+        let children = node.children_mut();
+        if idx >= children.len() {
+            return None;
+        }
+        node = children[idx].as_mut();
+    }
+    Some(node)
+}
+
+/// A pending inspector edit: navigate to the widget at `path`, look up
+/// `field_path` via reflection, and apply `new_value`.
+///
+/// Edits are queued by the inspector and drained by the host frame loop —
+/// applying them mid-paint or mid-event-dispatch could violate borrow rules
+/// or layout invariants.
+#[cfg(feature = "reflect")]
+pub struct InspectorEdit {
+    pub path: Vec<usize>,
+    /// Reflection path inside the target widget's `as_reflect` value, e.g.
+    /// `"checked"` or `"value"` or `"margin.left"`.
+    pub field_path: String,
+    /// Replacement value, already type-correct for the target field.
+    pub new_value: Box<dyn bevy_reflect::PartialReflect>,
+}
+
+#[cfg(feature = "reflect")]
+impl std::fmt::Debug for InspectorEdit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InspectorEdit")
+            .field("path", &self.path)
+            .field("field_path", &self.field_path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Apply a single queued inspector edit against the live widget tree.
+/// Returns `true` if the edit landed; `false` if the path was stale or the
+/// field path didn't resolve.
+#[cfg(feature = "reflect")]
+pub fn apply_inspector_edit(root: &mut dyn Widget, edit: &InspectorEdit) -> bool {
+    use bevy_reflect::{GetPath, PartialReflect};
+    let Some(target) = walk_path_mut(root, &edit.path) else {
+        return false;
+    };
+    let applied;
+    {
+        let Some(reflected) = target.as_reflect_mut() else {
+            return false;
+        };
+        let Ok(field) = reflected.reflect_path_mut(edit.field_path.as_str()) else {
+            return false;
+        };
+        let field: &mut dyn PartialReflect = field;
+        applied = field.try_apply(edit.new_value.as_ref()).is_ok();
+    }
+    // Reflection bypasses the widget's setters, which is where cache
+    // invalidation normally happens (e.g. Label::set_text).  Hand the
+    // widget a single-shot dirty signal so the next paint re-rasterises.
+    if applied {
+        target.mark_dirty();
+        crate::animation::request_draw();
+    }
+    applied
 }

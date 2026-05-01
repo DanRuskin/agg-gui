@@ -79,6 +79,49 @@ fn slider_reflected_props_appear_in_inspector_node() {
 }
 
 #[test]
+fn inspector_edit_pipeline_flips_a_bool() {
+    use crate::text::Font;
+    use crate::widget::{apply_inspector_edit, InspectorEdit, Widget};
+    use crate::Checkbox;
+    use std::sync::Arc;
+
+    const TEST_FONT: &[u8] = include_bytes!("../../../demo/assets/CascadiaCode.ttf");
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+    let mut checkbox = Checkbox::new("test", font, false);
+    assert!(!checkbox.checked());
+
+    let edit = InspectorEdit {
+        path: vec![],
+        field_path: "checked".to_string(),
+        new_value: Box::new(true),
+    };
+    let applied = apply_inspector_edit(&mut checkbox as &mut dyn Widget, &edit);
+    assert!(applied, "edit must apply");
+    assert!(checkbox.checked(), "checkbox should now be checked");
+}
+
+#[test]
+fn inspector_edit_pipeline_changes_an_f64() {
+    use crate::text::Font;
+    use crate::widget::{apply_inspector_edit, InspectorEdit, Widget};
+    use crate::Slider;
+    use std::sync::Arc;
+
+    const TEST_FONT: &[u8] = include_bytes!("../../../demo/assets/CascadiaCode.ttf");
+    let font = Arc::new(Font::from_slice(TEST_FONT).unwrap());
+    let mut slider = Slider::new(0.0, 0.0, 10.0, font);
+
+    let edit = InspectorEdit {
+        path: vec![],
+        field_path: "value".to_string(),
+        new_value: Box::new(7.5_f64),
+    };
+    let applied = apply_inspector_edit(&mut slider as &mut dyn Widget, &edit);
+    assert!(applied, "edit must apply");
+    assert!((slider.value() - 7.5).abs() < 1e-9);
+}
+
+#[test]
 fn reflect_partial_clone_color() {
     let original = Color::rgba(0.1, 0.2, 0.3, 0.4);
     let cloned: Box<dyn PartialReflect> = (&original as &dyn PartialReflect).to_dynamic();

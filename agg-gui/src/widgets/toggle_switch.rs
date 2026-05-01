@@ -56,6 +56,14 @@ const RING_ANIM_SECS: f64 = 0.22;
 
 // ── Struct ─────────────────────────────────────────────────────────────────
 
+/// Inspector-visible properties of a [`ToggleSwitch`].
+#[cfg_attr(feature = "reflect", derive(bevy_reflect::Reflect))]
+#[derive(Clone, Debug, Default)]
+pub struct ToggleSwitchProps {
+    /// Internal on/off state, used when `state_cell` is `None`.
+    pub on: bool,
+}
+
 /// An iOS-style boolean toggle.
 ///
 /// Displays a pill-shaped background that switches from gray (off) to blue (on)
@@ -64,8 +72,7 @@ pub struct ToggleSwitch {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>, // always empty
     base: WidgetBase,
-    /// Internal on/off state, used when `state_cell` is `None`.
-    on: bool,
+    pub props: ToggleSwitchProps,
     /// When set, this cell is the authoritative state; `paint` reads from it
     /// and `toggle` writes to it so external changes are reflected immediately.
     state_cell: Option<Rc<Cell<bool>>>,
@@ -91,7 +98,7 @@ impl ToggleSwitch {
             bounds: Rect::default(),
             children: Vec::new(),
             base: WidgetBase::new(),
-            on,
+            props: ToggleSwitchProps { on },
             state_cell: None,
             hovered: false,
             anim: crate::animation::Tween::new(initial, ANIM_SECS),
@@ -146,7 +153,7 @@ impl ToggleSwitch {
         if let Some(ref cell) = self.state_cell {
             cell.get()
         } else {
-            self.on
+            self.props.on
         }
     }
 
@@ -154,7 +161,7 @@ impl ToggleSwitch {
 
     fn toggle(&mut self) {
         let new_val = !self.is_on();
-        self.on = new_val;
+        self.props.on = new_val;
         if let Some(ref cell) = self.state_cell {
             cell.set(new_val);
         }
@@ -205,6 +212,14 @@ impl Widget for ToggleSwitch {
         &mut self.children
     }
 
+    #[cfg(feature = "reflect")]
+    fn as_reflect(&self) -> Option<&dyn bevy_reflect::Reflect> {
+        Some(&self.props)
+    }
+    #[cfg(feature = "reflect")]
+    fn as_reflect_mut(&mut self) -> Option<&mut dyn bevy_reflect::Reflect> {
+        Some(&mut self.props)
+    }
     fn is_focusable(&self) -> bool {
         true
     }
