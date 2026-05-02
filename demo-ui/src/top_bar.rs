@@ -60,6 +60,8 @@ impl ThemeToggle {
     const BTN_W: f64 = 68.0;
     const BTN_H: f64 = 24.0;
     const GAP_X: f64 = 8.0;
+    // Gap between adjacent buttons — baked into position math, not a widget margin property.
+    const INNER_GAP: f64 = 2.0;
 
     fn new(
         font: Arc<Font>,
@@ -118,13 +120,15 @@ impl Widget for ThemeToggle {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        let natural_w = (3.0 * Self::BTN_W + Self::GAP_X * 2.0).min(available.width);
+        let step = Self::BTN_W + Self::INNER_GAP;
+        let natural_w =
+            (3.0 * Self::BTN_W + Self::INNER_GAP * 2.0 + Self::GAP_X * 2.0).min(available.width);
         self.bounds = Rect::new(0.0, 0.0, natural_w, available.height);
         let gy = ((available.height - Self::BTN_H) * 0.5).max(0.0);
         for (i, child) in self.children.iter_mut().enumerate() {
             child.layout(Size::new(Self::BTN_W, Self::BTN_H));
             child.set_bounds(Rect::new(
-                Self::GAP_X + i as f64 * Self::BTN_W,
+                Self::GAP_X + i as f64 * step,
                 gy,
                 Self::BTN_W,
                 Self::BTN_H,

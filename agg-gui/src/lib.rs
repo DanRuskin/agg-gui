@@ -113,13 +113,13 @@ pub use widget::{
 };
 pub use widgets::{
     current_scroll_style, current_scroll_visibility, set_scroll_style, set_scroll_visibility,
-    Button, Checkbox, CollapsingHeader, ColorPicker, ComboBox, Container, DragValue, FlexColumn,
-    FlexRow, Hyperlink, ImageView, InspectorPanel, InspectorSavedState, Label, LabelAlign,
+    Button, Checkbox, CollapsingHeader, ColorPicker, ComboBox, Conditional, Container, DragValue,
+    FlexColumn, FlexRow, Hyperlink, ImageView, InspectorPanel, InspectorSavedState, Label, LabelAlign,
     MarkdownView, MenuBar, MenuEntry, MenuItem, MenuResponse, MenuSelection, MenuShortcut,
     NodeIcon, Padding, PopupMenu, ProgressBar, RadioGroup, Resize, ScrollBarColor, ScrollBarKind,
     ScrollBarStyle, ScrollBarVisibility, ScrollView, Separator, ShortcutKey, SizedBox, Slider,
-    Spacer, Splitter, Stack, TabView, TextArea, TextField, ToggleSwitch, Tooltip, TopMenu,
-    TreeView, Window,
+    CellInfo, HeaderInfo, Spacer, Splitter, Stack, TabView, Table, TableBuilder, TableColumn,
+    TableRows, TextArea, TextField, ToggleSwitch, Tooltip, TopMenu, TreeView, Window,
 };
 
 // Re-export AGG types so callers don't need to import agg-rust directly.

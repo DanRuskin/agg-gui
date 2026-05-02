@@ -25,7 +25,7 @@ use crate::event::{Event, EventResult, Key, Modifiers, MouseButton};
 use crate::framebuffer::Framebuffer;
 use crate::geometry::{Point, Rect, Size};
 use crate::gfx_ctx::GfxCtx;
-use crate::layout_props::{HAnchor, Insets, VAnchor};
+use crate::layout_props::{HAnchor, Insets, VAnchor, WidgetBase};
 use crate::lcd_coverage::LcdBuffer;
 
 // ---------------------------------------------------------------------------
@@ -667,6 +667,24 @@ pub trait Widget {
     /// Default: [`Size::MAX`] (no maximum).
     fn max_size(&self) -> Size {
         Size::MAX
+    }
+
+    /// Direct read access to the widget's embedded [`WidgetBase`].
+    ///
+    /// Returns `Some` for every widget that embeds `WidgetBase` — effectively
+    /// all concrete widgets.  The inspector uses this to read margin, anchors,
+    /// and size constraints without going through the individual trait methods.
+    /// Default returns `None`; widgets that embed `WidgetBase` override.
+    fn widget_base(&self) -> Option<&WidgetBase> {
+        None
+    }
+
+    /// Mutable counterpart of [`widget_base`](Self::widget_base).
+    ///
+    /// The inspector calls this to apply live edits to margin, h_anchor,
+    /// v_anchor, min_size, and max_size from the properties pane.
+    fn widget_base_mut(&mut self) -> Option<&mut WidgetBase> {
+        None
     }
 
     /// Whether [`paint_subtree`] should snap this widget's incoming

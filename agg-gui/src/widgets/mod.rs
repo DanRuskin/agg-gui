@@ -22,6 +22,7 @@ pub(crate) mod scrollbar;
 pub mod slider;
 pub mod splitter;
 pub mod tab_view;
+pub mod table;
 pub mod text_area;
 pub mod text_field;
 pub mod text_field_core;
@@ -48,7 +49,7 @@ pub use menu::{
     MenuBar, MenuEntry, MenuItem, MenuResponse, MenuSelection, MenuShortcut, PopupMenu,
     ShortcutKey, TopMenu,
 };
-pub use primitives::{Padding, Separator, SizedBox, Spacer, Stack};
+pub use primitives::{Conditional, Padding, Separator, SizedBox, Spacer, Stack};
 pub use progress_bar::ProgressBar;
 pub use radio_group::RadioGroup;
 pub use resize::Resize;
@@ -59,6 +60,11 @@ pub use scroll_view::{
 pub use slider::Slider;
 pub use splitter::Splitter;
 pub use tab_view::TabView;
+pub use table::{
+    clip_text_to_width as table_clip_text_to_width, CellInfo, CellPainter, ColumnSize,
+    HeaderClick, HeaderInfo, HeaderPainter, RowPredicate, Table, TableBuilder, TableColumn,
+    TableRows,
+};
 pub use text_area::TextArea;
 pub use text_field::TextField;
 pub use toggle_switch::ToggleSwitch;

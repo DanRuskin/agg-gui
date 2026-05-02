@@ -18,6 +18,13 @@ use crate::widgets::label::Label;
 const DOT_R: f64 = 7.0; // outer circle radius
 const GAP: f64 = 8.0;
 const ROW_H: f64 = 22.0;
+/// Left/right slack reserved so the circle's 1.5-px stroke (and its AA
+/// fringe) and the focus-ring outline stay INSIDE the widget's bounds.
+/// Without it, the parent container's `clip_children_rect` (which
+/// defaults to the widget's bounds rect) chops the leftmost stroke
+/// pixel off whenever the RadioGroup is placed flush against a
+/// container edge — see `paint::paint_subtree_direct_inner`.
+const LEFT_INSET: f64 = 2.0;
 
 /// A group of mutually-exclusive radio options.
 ///
@@ -225,8 +232,11 @@ impl Widget for RadioGroup {
         }
         let h = self.options.len() as f64 * ROW_H;
         self.bounds = Rect::new(0.0, 0.0, available.width, h);
-        let label_avail_w = (available.width - DOT_R * 2.0 - GAP).max(0.0);
-        let lx = DOT_R * 2.0 + GAP;
+        // `LEFT_INSET` shifts the circle inward; the label moves the
+        // same amount so the visual gap between dot and label is preserved.
+        let circle_extent = LEFT_INSET + DOT_R * 2.0;
+        let label_avail_w = (available.width - circle_extent - GAP).max(0.0);
+        let lx = circle_extent + GAP;
         for (i, child) in self.children.iter_mut().enumerate() {
             let s = child.layout(Size::new(label_avail_w, ROW_H));
             // Position the label child in the row's vertical centre,
@@ -244,12 +254,14 @@ impl Widget for RadioGroup {
         let v = ctx.visuals();
         let h = self.bounds.height;
 
-        // Focus outline around whole widget.
+        // Focus outline around whole widget — drawn JUST INSIDE bounds so
+        // the parent's clip_children_rect (defaults to widget bounds)
+        // doesn't chop the leftmost stroke pixel.
         if self.focused {
             ctx.set_stroke_color(v.accent_focus);
             ctx.set_line_width(1.5);
             ctx.begin_path();
-            ctx.rounded_rect(-2.0, -2.0, self.bounds.width + 4.0, h + 4.0, 4.0);
+            ctx.rounded_rect(0.75, 0.75, self.bounds.width - 1.5, h - 1.5, 4.0);
             ctx.stroke();
         }
 
@@ -275,13 +287,13 @@ impl Widget for RadioGroup {
 
             ctx.set_fill_color(bg);
             ctx.begin_path();
-            ctx.circle(DOT_R, cy, DOT_R);
+            ctx.circle(LEFT_INSET + DOT_R, cy, DOT_R);
             ctx.fill();
 
             ctx.set_stroke_color(border);
             ctx.set_line_width(1.5);
             ctx.begin_path();
-            ctx.circle(DOT_R, cy, DOT_R);
+            ctx.circle(LEFT_INSET + DOT_R, cy, DOT_R);
             ctx.stroke();
 
             // Inner dot when checked — always widget_bg so it stays
@@ -289,7 +301,7 @@ impl Widget for RadioGroup {
             if checked {
                 ctx.set_fill_color(v.widget_bg);
                 ctx.begin_path();
-                ctx.circle(DOT_R, cy, DOT_R * 0.45);
+                ctx.circle(LEFT_INSET + DOT_R, cy, DOT_R * 0.45);
                 ctx.fill();
             }
 

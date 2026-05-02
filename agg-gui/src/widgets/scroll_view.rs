@@ -296,6 +296,19 @@ pub struct ScrollView {
     viewport_cell: Option<Rc<Cell<Rect>>>,
     painted_style_epoch: Cell<u64>,
 
+    /// Optional override for the edge-fade gradient colour.  When unset we
+    /// use `Visuals::window_fill`, which is correct for the **default**
+    /// case where the scroll view sits directly on a window.
+    ///
+    /// **TRAP:** when the `ScrollView` sits on top of a custom-coloured
+    /// container (e.g. a `FlexColumn::with_panel_bg()` panel, a
+    /// `Container::with_background(...)` card, a debug visualiser, or
+    /// any non-window background), the default fade looks like a bright
+    /// white halo against your panel.  Set this to the actual ancestor
+    /// background colour in that case.  See
+    /// [`ScrollView::with_fade_color`].
+    fade_color: Option<Color>,
+
     middle_dragging: bool,
     middle_start_world: Point,
     middle_start_v_offset: f64,
@@ -331,7 +344,33 @@ impl ScrollView {
             middle_start_world: Point::ORIGIN,
             middle_start_v_offset: 0.0,
             middle_start_h_offset: 0.0,
+            fade_color: None,
         }
+    }
+
+    /// Override the edge-fade colour the scrollbar gutter blends to.
+    ///
+    /// **READ THIS BEFORE PLACING A `ScrollView` ON ANY CUSTOM
+    /// BACKGROUND.**  The default fade colour is `Visuals::window_fill`
+    /// (the colour behind a plain window).  If the `ScrollView` sits
+    /// inside a `FlexColumn::with_panel_bg`, a coloured `Container`,
+    /// inside a tab body with a custom fill, or anywhere else where the
+    /// pixels behind the scrollbar are NOT `window_fill`, the fade
+    /// gradient will paint a bright halo of the WRONG colour because it
+    /// blends to the default rather than what's actually behind it.
+    ///
+    /// Pass the visible ancestor background here so the fade dissolves
+    /// invisibly into the panel.  Common idioms:
+    ///
+    /// ```ignore
+    /// // Sits on a panel:
+    /// ScrollView::new(child).with_fade_color(ctx.visuals().panel_fill)
+    /// // Sits on a coloured Container:
+    /// ScrollView::new(child).with_fade_color(my_container_bg)
+    /// ```
+    pub fn with_fade_color(mut self, c: Color) -> Self {
+        self.fade_color = Some(c);
+        self
     }
 
     // ── Axis enable ───────────────────────────────────────────────────────────

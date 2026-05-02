@@ -406,8 +406,12 @@ impl Widget for Button {
         // the accent surface — that's the existing primary-button look.
         let muted = self.subtle && !active;
 
-        // Focus ring (behind the button surface) — skipped when disabled
-        // because the disabled button never actually holds focus.
+        // Focus ring — drawn JUST INSIDE the button bounds so the parent's
+        // `clip_children_rect` (defaults to widget bounds) doesn't chop
+        // the leftmost stroke pixel when the button sits flush against
+        // a container edge.  Painting outside-bounds with negative
+        // coordinates was the long-standing cause of "the left edge of
+        // my button looks clipped" reports.
         if enabled && self.focused {
             let ring = self.theme.focus_ring_width;
             let focus_ring = if use_visuals {
@@ -418,7 +422,14 @@ impl Widget for Button {
             ctx.set_stroke_color(focus_ring);
             ctx.set_line_width(ring);
             ctx.begin_path();
-            ctx.rounded_rect(-ring * 0.5, -ring * 0.5, w + ring, h + ring, r + ring * 0.5);
+            let inset = ring * 0.5;
+            ctx.rounded_rect(
+                inset,
+                inset,
+                (w - ring).max(0.0),
+                (h - ring).max(0.0),
+                (r - inset).max(0.0),
+            );
             ctx.stroke();
         }
 
