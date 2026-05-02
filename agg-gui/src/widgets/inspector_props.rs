@@ -60,12 +60,22 @@ pub(super) fn paint_properties(
     ctx.fill_text(node.type_name, 10.0, available_h - 36.0);
 
     let b = &node.screen_bounds;
-    let rows: &[(&str, String)] = &[
+    let m = &node.margin;
+    let p = &node.padding;
+    let rows: Vec<(&str, String)> = vec![
         ("x", format!("{:.1}", b.x)),
         ("y", format!("{:.1}", b.y)),
         ("width", format!("{:.1}", b.width)),
         ("height", format!("{:.1}", b.height)),
         ("depth", format!("{}", node.depth)),
+        (
+            "margin",
+            format!("{:.1} {:.1} {:.1} {:.1}", m.left, m.top, m.right, m.bottom),
+        ),
+        (
+            "padding",
+            format!("{:.1} {:.1} {:.1} {:.1}", p.left, p.top, p.right, p.bottom),
+        ),
     ];
 
     ctx.set_font_size(FONT_SIZE);

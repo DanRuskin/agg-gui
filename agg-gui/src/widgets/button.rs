@@ -75,6 +75,19 @@ pub struct Button {
     /// selected MSAA differs from the running one") without rebuilding
     /// the widget tree.  `None` = always enabled.
     enabled_fn: Option<Rc<dyn Fn() -> bool>>,
+    /// Optional toggle: when `Some` and the closure returns `true`, the
+    /// button paints with the accent / selected appearance regardless of
+    /// hover / press state.  When the closure returns `false`, an active-
+    /// aware button uses the subtle (`widget_bg`) variant so segmented
+    /// selectors look right.  `None` = legacy behaviour: always painted as
+    /// the accent button.
+    active_fn: Option<Rc<dyn Fn() -> bool>>,
+    /// `true` selects the muted "secondary" visual style (theme widget_bg
+    /// + theme text colour) instead of the accent appearance.  Combined
+    /// with `active_fn`, this drives segmented toggles: each segment is a
+    /// subtle button that flips to the accent look when its `active_fn`
+    /// returns true.
+    subtle: bool,
 
     hovered: bool,
     pressed: bool,
@@ -98,6 +111,8 @@ impl Button {
             theme,
             on_click: None,
             enabled_fn: None,
+            active_fn: None,
+            subtle: false,
             hovered: false,
             pressed: false,
             focused: false,
@@ -129,8 +144,43 @@ impl Button {
         self
     }
 
+    /// Bind the button's "selected" state to a live predicate.  When the
+    /// closure returns `true`, the button paints with the accent surface
+    /// regardless of hover / press; when it returns `false`, an
+    /// active-aware button (i.e. `with_subtle()` is also set) reverts to
+    /// the muted `widget_bg` appearance.  Used to compose segmented
+    /// toggles out of plain `Button`s without hand-rolled paint code.
+    pub fn with_active_fn(mut self, f: impl Fn() -> bool + 'static) -> Self {
+        self.active_fn = Some(Rc::new(f));
+        self
+    }
+
+    /// Switch to the muted (secondary) visual style: theme `widget_bg`
+    /// fill, theme `text_color` label.  Pair with [`with_active_fn`] to
+    /// build segmented controls — inactive segments paint subtle, the
+    /// selected segment flips to the accent surface.
+    pub fn with_subtle(mut self) -> Self {
+        self.subtle = true;
+        // Subtle buttons use the theme's text colour, not the white-on-accent
+        // default.  Rebuild the label with the active visuals' text colour
+        // (the paint pass also retints each frame, so this just gives a
+        // sensible first-paint colour before the visuals are queried).
+        let theme_text = crate::theme::current_visuals().text_color;
+        self.children[0] = Self::build_label_with_color(
+            &self.label_text,
+            &self.font,
+            self.font_size,
+            theme_text,
+        );
+        self
+    }
+
     fn is_enabled(&self) -> bool {
         self.enabled_fn.as_ref().map(|f| f()).unwrap_or(true)
+    }
+
+    fn is_active(&self) -> bool {
+        self.active_fn.as_ref().map(|f| f()).unwrap_or(true)
     }
 
     pub fn with_margin(mut self, m: Insets) -> Self {
@@ -183,10 +233,19 @@ impl Button {
         font_size: f64,
         theme: &ButtonTheme,
     ) -> Box<dyn Widget> {
+        Self::build_label_with_color(text, font, font_size, theme.label_color)
+    }
+
+    fn build_label_with_color(
+        text: &str,
+        font: &Arc<Font>,
+        font_size: f64,
+        color: Color,
+    ) -> Box<dyn Widget> {
         Box::new(
             Label::new(text, Arc::clone(font))
                 .with_font_size(font_size)
-                .with_color(theme.label_color)
+                .with_color(color)
                 .with_align(LabelAlign::Center),
         )
     }
@@ -233,16 +292,23 @@ impl Widget for Button {
     fn layout(&mut self, available: Size) -> Size {
         let height = (self.font_size * 1.7).max(24.0);
         // Measure the label first so we can report a "fit" width — label
-        // width plus horizontal padding — instead of stretching to the whole
-        // available width.  This makes Buttons share horizontal space
-        // politely when placed inside a `FlexRow` next to other widgets.
-        // Parents that want a full-width button should wrap in a `SizedBox`
-        // with an explicit width, or set `HAnchor::FILL` — handled by the
-        // flex layout before this method is called.
+        // width plus horizontal padding — instead of stretching to the
+        // whole available width.  This keeps Buttons polite siblings in a
+        // `FlexRow`.  Parents that want a full-width button can:
+        //   - wrap it in a `SizedBox` with an explicit width, or
+        //   - apply `HAnchor::STRETCH`, or
+        //   - set `with_min_size(Size::new(width, _))` for a width floor.
         let pad_h = self.font_size * 1.2;
         let label_size = self.children[0].layout(Size::new(available.width, height));
-        let natural_w = (label_size.width + pad_h).max(48.0);
-        let width = natural_w.min(available.width);
+        let natural_w = (label_size.width + pad_h)
+            .max(48.0)
+            .max(self.base.min_size.width);
+        let width = if self.base.h_anchor.is_stretch() {
+            available.width.max(natural_w)
+        } else {
+            natural_w
+        }
+        .min(available.width);
         let size = Size::new(width, height);
         let label_x = ((size.width - label_size.width) * 0.5).max(0.0);
         let label_y = ((size.height - label_size.height) * 0.5).max(0.0);
@@ -262,6 +328,12 @@ impl Widget for Button {
         let enabled = self.is_enabled();
         let v = ctx.visuals();
         let use_visuals = self.theme == ButtonTheme::default();
+        let active = self.is_active();
+        // A subtle button paints in muted theme colours when inactive, and
+        // flips to the accent surface (white text on accent fill) when its
+        // `active_fn` returns true.  Plain (non-subtle) buttons always use
+        // the accent surface — that's the existing primary-button look.
+        let muted = self.subtle && !active;
 
         // Focus ring (behind the button surface) — skipped when disabled
         // because the disabled button never actually holds focus.
@@ -282,7 +354,11 @@ impl Widget for Button {
         // Background — color depends on interaction state. Disabled buttons
         // use neutral widget colors instead of a washed-out accent, so they
         // don't look like secondary active actions.
-        let base_bg = if use_visuals && self.pressed {
+        let base_bg = if muted && (self.pressed || self.hovered) {
+            v.widget_bg_hovered
+        } else if muted {
+            v.widget_bg
+        } else if use_visuals && self.pressed {
             v.accent_pressed
         } else if use_visuals && self.hovered {
             v.accent_hovered
@@ -301,6 +377,16 @@ impl Widget for Button {
         ctx.begin_path();
         ctx.rounded_rect(0.0, 0.0, w, h, r);
         ctx.fill();
+
+        // Retint the child label so subtle / active states show the right
+        // foreground colour without rebuilding the Label widget.  Calling
+        // through the dyn Widget keeps Button agnostic of the concrete
+        // Label type — `set_label_color` is a default no-op that Label
+        // overrides, see `Widget::set_label_color`.
+        let label_color = if muted { v.text_color } else { self.theme.label_color };
+        if let Some(child) = self.children.get_mut(0) {
+            child.set_label_color(label_color);
+        }
 
         if !enabled {
             ctx.set_stroke_color(disabled_stroke);

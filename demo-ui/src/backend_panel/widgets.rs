@@ -3,7 +3,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::widget::paint_subtree;
-use agg_gui::{Color, DrawCtx, Event, EventResult, Font, Label, Rect, Size, Widget};
+use agg_gui::{
+    Button, Color, DrawCtx, Event, EventResult, Font, HAnchor, Label, Rect, Size, Widget,
+};
 
 use super::{FrameHistory, RunMode};
 
@@ -243,44 +245,50 @@ impl Widget for ScreenSizeLabel {
 
 // ── Run mode row ─────────────────────────────────────────────────────────────
 
-/// Reactive / Continuous toggle.  Two segmented buttons, each with a
-/// backbuffered Label child.
+/// Reactive / Continuous selector built from two real `Button` children
+/// sharing a `Rc<Cell<RunMode>>`.  Each button uses
+/// [`Button::with_subtle`] + [`Button::with_active_fn`] — the inactive
+/// segment paints in muted theme colours and the selected segment flips
+/// to the accent surface.  The label glyph cache lives inside each
+/// Button's Label child, so font rendering stays backbuffered without
+/// any manual `paint_subtree` calls in this widget.
 pub(super) struct RunModeRow {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
-    run_mode: Rc<Cell<RunMode>>,
-    hovered: Option<usize>,
-    /// One Label per button.
-    labels: Vec<Label>,
 }
 
 impl RunModeRow {
     const BTN_W: f64 = 96.0;
     const BTN_H: f64 = 24.0;
-    const LABELS: &'static [&'static str] = &["Reactive", "Continuous"];
 
     pub(super) fn new(font: Arc<Font>, run_mode: Rc<Cell<RunMode>>) -> Self {
-        let labels = Self::LABELS
+        let segments: [(&'static str, RunMode); 2] = [
+            ("Reactive", RunMode::Reactive),
+            ("Continuous", RunMode::Continuous),
+        ];
+        let children: Vec<Box<dyn Widget>> = segments
             .iter()
-            .map(|text| Label::new(*text, Arc::clone(&font)).with_font_size(12.0))
+            .map(|(label, this_mode)| {
+                let mode_active = Rc::clone(&run_mode);
+                let mode_click = Rc::clone(&run_mode);
+                let this = *this_mode;
+                let btn = Button::new(*label, Arc::clone(&font))
+                    .with_font_size(12.0)
+                    .with_subtle()
+                    .with_active_fn(move || mode_active.get() == this)
+                    .on_click(move || {
+                        if mode_click.get() != this {
+                            mode_click.set(this);
+                            agg_gui::animation::request_draw();
+                        }
+                    });
+                Box::new(btn) as Box<dyn Widget>
+            })
             .collect();
         Self {
             bounds: Rect::default(),
-            children: Vec::new(),
-            run_mode,
-            hovered: None,
-            labels,
+            children,
         }
-    }
-
-    fn btn_rect(&self, i: usize) -> Rect {
-        let gy = (self.bounds.height - Self::BTN_H) * 0.5;
-        Rect::new(
-            12.0 + i as f64 * (Self::BTN_W + 4.0),
-            gy,
-            Self::BTN_W,
-            Self::BTN_H,
-        )
     }
 }
 
@@ -302,89 +310,27 @@ impl Widget for RunModeRow {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, available.width, Self::BTN_H + 8.0);
-        for i in 0..2 {
-            let r = self.btn_rect(i);
-            let s = self.labels[i].layout(Size::new(r.width, r.height));
-            self.labels[i].set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        let row_h = Self::BTN_H + 8.0;
+        self.bounds = Rect::new(0.0, 0.0, available.width, row_h);
+        let gy = (row_h - Self::BTN_H) * 0.5;
+        for (i, child) in self.children.iter_mut().enumerate() {
+            child.layout(Size::new(Self::BTN_W, Self::BTN_H));
+            child.set_bounds(Rect::new(
+                12.0 + i as f64 * (Self::BTN_W + 4.0),
+                gy,
+                Self::BTN_W,
+                Self::BTN_H,
+            ));
         }
-        Size::new(available.width, Self::BTN_H + 8.0)
+        Size::new(available.width, row_h)
     }
 
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v = ctx.visuals();
-        let current = self.run_mode.get();
-        let modes = [RunMode::Reactive, RunMode::Continuous];
-
-        for (i, (label_text, mode)) in Self::LABELS.iter().zip(modes.iter()).enumerate() {
-            let r = self.btn_rect(i);
-            let active = current == *mode;
-            let hovered = self.hovered == Some(i);
-
-            let bg = if active {
-                v.accent
-            } else if hovered {
-                v.widget_bg_hovered
-            } else {
-                v.widget_bg
-            };
-            ctx.set_fill_color(bg);
-            ctx.begin_path();
-            ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-            ctx.fill();
-
-            // Update label text + color.
-            self.labels[i].set_text(*label_text);
-            let text_color = if active { Color::white() } else { v.text_color };
-            self.labels[i].set_color(text_color);
-
-            // Center label within button.
-            let lw = self.labels[i].bounds().width;
-            let lh = self.labels[i].bounds().height;
-            let lx = r.x + (r.width - lw) * 0.5;
-            let ly = r.y + (r.height - lh) * 0.5;
-            self.labels[i].set_bounds(Rect::new(lx, ly, lw, lh));
-
-            ctx.save();
-            ctx.translate(lx, ly);
-            paint_subtree(&mut self.labels[i], ctx);
-            ctx.restore();
-        }
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
+        // Buttons paint themselves through the framework's tree walk.
     }
 
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        let hit = |p: agg_gui::Point| {
-            (0..2).find(|&i| {
-                let r = self.btn_rect(i);
-                p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-            })
-        };
-        match event {
-            Event::MouseMove { pos } => {
-                let was = self.hovered;
-                self.hovered = hit(*pos);
-                if was != self.hovered {
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            Event::MouseDown {
-                button: agg_gui::MouseButton::Left,
-                pos,
-                ..
-            } => {
-                if let Some(i) = hit(*pos) {
-                    let next = [RunMode::Reactive, RunMode::Continuous][i];
-                    if self.run_mode.get() != next {
-                        self.run_mode.set(next);
-                        agg_gui::animation::request_draw();
-                    }
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+    fn on_event(&mut self, _event: &Event) -> EventResult {
+        EventResult::Ignored
     }
 }
 
@@ -396,26 +342,34 @@ impl Widget for RunModeRow {
 /// otherwise).  Used for the "System" and "Inspector" entries in the
 /// Backend sidebar's "agg-gui windows" section so the sidebar's window
 /// togglers share the same look as the rest of the app's chrome.
+/// Sidebar pill that stretches to the full row width.  Wraps a real
+/// `Button` child sized to fill via `with_min_size`; styling driven by
+/// `with_subtle()` + `with_active_fn()` matches the rest of the demo's
+/// segmented-toggle look.
 pub(super) struct TogglePill {
     bounds: Rect,
-    children: Vec<Box<dyn Widget>>, // always empty — label stored separately
-    show: Rc<Cell<bool>>,
-    hovered: bool,
-    label: Label,
+    children: Vec<Box<dyn Widget>>,
 }
 
 impl TogglePill {
     const H: f64 = 26.0;
-    const LEFT_PAD: f64 = 12.0;
-    const RIGHT_PAD: f64 = 12.0;
+    const SIDE_GUTTER: f64 = 12.0;
 
     pub(super) fn new(font: Arc<Font>, label_text: &'static str, show: Rc<Cell<bool>>) -> Self {
+        let show_active = Rc::clone(&show);
+        let show_click = show;
+        let btn = Button::new(label_text, font)
+            .with_font_size(12.0)
+            .with_subtle()
+            .with_h_anchor(HAnchor::STRETCH)
+            .with_active_fn(move || show_active.get())
+            .on_click(move || {
+                show_click.set(!show_click.get());
+                agg_gui::animation::request_draw();
+            });
         Self {
             bounds: Rect::default(),
-            children: Vec::new(),
-            show,
-            hovered: false,
-            label: Label::new(label_text, font).with_font_size(12.0),
+            children: vec![Box::new(btn)],
         }
     }
 }
@@ -438,79 +392,24 @@ impl Widget for TogglePill {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, available.width, Self::H + 4.0);
-        let label_w = (available.width - Self::LEFT_PAD - Self::RIGHT_PAD).max(0.0);
-        let s = self.label.layout(Size::new(label_w, Self::H));
-        self.label
-            .set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
-        Size::new(available.width, Self::H + 4.0)
+        let total_h = Self::H + 4.0;
+        self.bounds = Rect::new(0.0, 0.0, available.width, total_h);
+        let pill_w = (available.width - Self::SIDE_GUTTER * 2.0).max(0.0);
+        let child = &mut self.children[0];
+        // Force the Button to fill the pill width by floor-clamping its
+        // natural width via min_size — the standard composition route for
+        // "stretch this widget to fill its row".
+        child.layout(Size::new(pill_w, Self::H));
+        child.set_bounds(Rect::new(Self::SIDE_GUTTER, 2.0, pill_w, Self::H));
+        Size::new(available.width, total_h)
     }
 
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v = ctx.visuals();
-        let active = self.show.get();
-
-        // Pill fills the full row width minus a small horizontal margin to
-        // match the 12-px gutter used elsewhere in the sidebar.
-        let gy = 2.0;
-        let r = Rect::new(12.0, gy, (self.bounds.width - 24.0).max(0.0), Self::H);
-
-        let bg = if active {
-            v.accent
-        } else if self.hovered {
-            v.widget_bg_hovered
-        } else {
-            v.widget_bg
-        };
-        ctx.set_fill_color(bg);
-        ctx.begin_path();
-        ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-        ctx.fill();
-
-        let text_color = if active { Color::white() } else { v.text_color };
-        self.label.set_color(text_color);
-
-        let lw = self.label.bounds().width;
-        let lh = self.label.bounds().height;
-        let lx = r.x + Self::LEFT_PAD;
-        let ly = r.y + (r.height - lh) * 0.5;
-        self.label.set_bounds(Rect::new(lx, ly, lw, lh));
-
-        ctx.save();
-        ctx.translate(lx, ly);
-        paint_subtree(&mut self.label, ctx);
-        ctx.restore();
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
+        // Button child paints itself via the framework's tree walk.
     }
 
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        let gy = 2.0;
-        let r = Rect::new(12.0, gy, (self.bounds.width - 24.0).max(0.0), Self::H);
-        let hit = |p: agg_gui::Point| {
-            p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-        };
-        match event {
-            Event::MouseMove { pos } => {
-                let was = self.hovered;
-                self.hovered = hit(*pos);
-                if was != self.hovered {
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            Event::MouseDown {
-                button: agg_gui::MouseButton::Left,
-                pos,
-                ..
-            } => {
-                if hit(*pos) {
-                    self.show.set(!self.show.get());
-                    agg_gui::animation::request_draw();
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+    fn on_event(&mut self, _event: &Event) -> EventResult {
+        EventResult::Ignored
     }
 }
 
@@ -523,12 +422,14 @@ impl Widget for TogglePill {
 ///
 /// Exposed to other crate modules (the System window's Render tab uses the
 /// same widget) via `pub(crate)`.
+/// MSAA sample-count selector — five segmented buttons (Off / 2× / 4× /
+/// 8× / 16×) composed from real `Button` children.  Each segment uses
+/// `with_subtle()` + `with_active_fn()` so the selected sample count
+/// flips to the accent surface and the others stay muted.  Matches the
+/// composition pattern used by `ThemeToggle` and `RunModeRow`.
 pub(crate) struct MsaaRow {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
-    samples: Rc<Cell<u8>>,
-    hovered: Option<usize>,
-    labels: Vec<Label>,
 }
 
 impl MsaaRow {
@@ -538,27 +439,30 @@ impl MsaaRow {
     const VALS: &'static [u8] = &[0, 2, 4, 8, 16];
 
     pub(crate) fn new(font: Arc<Font>, samples: Rc<Cell<u8>>) -> Self {
-        let labels = Self::TEXT
+        let children: Vec<Box<dyn Widget>> = Self::TEXT
             .iter()
-            .map(|t| Label::new(*t, Arc::clone(&font)).with_font_size(12.0))
+            .zip(Self::VALS.iter())
+            .map(|(label, val)| {
+                let samples_active = Rc::clone(&samples);
+                let samples_click = Rc::clone(&samples);
+                let this = *val;
+                let btn = Button::new(*label, Arc::clone(&font))
+                    .with_font_size(12.0)
+                    .with_subtle()
+                    .with_active_fn(move || samples_active.get() == this)
+                    .on_click(move || {
+                        if samples_click.get() != this {
+                            samples_click.set(this);
+                            agg_gui::animation::request_draw();
+                        }
+                    });
+                Box::new(btn) as Box<dyn Widget>
+            })
             .collect();
         Self {
             bounds: Rect::default(),
-            children: Vec::new(),
-            samples,
-            hovered: None,
-            labels,
+            children,
         }
-    }
-
-    fn btn_rect(&self, i: usize) -> Rect {
-        let gy = (self.bounds.height - Self::BTN_H) * 0.5;
-        Rect::new(
-            12.0 + i as f64 * (Self::BTN_W + 4.0),
-            gy,
-            Self::BTN_W,
-            Self::BTN_H,
-        )
     }
 }
 
@@ -580,85 +484,27 @@ impl Widget for MsaaRow {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, available.width, Self::BTN_H + 8.0);
-        for i in 0..Self::TEXT.len() {
-            let r = self.btn_rect(i);
-            let s = self.labels[i].layout(Size::new(r.width, r.height));
-            self.labels[i].set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        let row_h = Self::BTN_H + 8.0;
+        self.bounds = Rect::new(0.0, 0.0, available.width, row_h);
+        let gy = (row_h - Self::BTN_H) * 0.5;
+        for (i, child) in self.children.iter_mut().enumerate() {
+            child.layout(Size::new(Self::BTN_W, Self::BTN_H));
+            child.set_bounds(Rect::new(
+                12.0 + i as f64 * (Self::BTN_W + 4.0),
+                gy,
+                Self::BTN_W,
+                Self::BTN_H,
+            ));
         }
-        Size::new(available.width, Self::BTN_H + 8.0)
+        Size::new(available.width, row_h)
     }
 
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v = ctx.visuals();
-        let current = self.samples.get();
-
-        for i in 0..Self::TEXT.len() {
-            let r = self.btn_rect(i);
-            let active = current == Self::VALS[i];
-            let hovered = self.hovered == Some(i);
-
-            let bg = if active {
-                v.accent
-            } else if hovered {
-                v.widget_bg_hovered
-            } else {
-                v.widget_bg
-            };
-            ctx.set_fill_color(bg);
-            ctx.begin_path();
-            ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-            ctx.fill();
-
-            self.labels[i].set_text(Self::TEXT[i]);
-            let text_color = if active { Color::white() } else { v.text_color };
-            self.labels[i].set_color(text_color);
-
-            let lw = self.labels[i].bounds().width;
-            let lh = self.labels[i].bounds().height;
-            let lx = r.x + (r.width - lw) * 0.5;
-            let ly = r.y + (r.height - lh) * 0.5;
-            self.labels[i].set_bounds(Rect::new(lx, ly, lw, lh));
-
-            ctx.save();
-            ctx.translate(lx, ly);
-            paint_subtree(&mut self.labels[i], ctx);
-            ctx.restore();
-        }
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
+        // Buttons paint themselves through the framework's tree walk.
     }
 
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        let hit = |p: agg_gui::Point| {
-            (0..Self::TEXT.len()).find(|&i| {
-                let r = self.btn_rect(i);
-                p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-            })
-        };
-        match event {
-            Event::MouseMove { pos } => {
-                let was = self.hovered;
-                self.hovered = hit(*pos);
-                if was != self.hovered {
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            Event::MouseDown {
-                button: agg_gui::MouseButton::Left,
-                pos,
-                ..
-            } => {
-                if let Some(i) = hit(*pos) {
-                    if self.samples.get() != Self::VALS[i] {
-                        self.samples.set(Self::VALS[i]);
-                        agg_gui::animation::request_draw();
-                    }
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+    fn on_event(&mut self, _event: &Event) -> EventResult {
+        EventResult::Ignored
     }
 }
 

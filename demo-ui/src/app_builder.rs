@@ -496,6 +496,31 @@ pub fn build_demo_ui(
     }
     let inspector_snapshot_cell: Rc<RefCell<Option<agg_gui::InspectorSavedState>>> =
         Rc::new(RefCell::new(None));
+    // Inspector window geometry — persisted just like the demo windows.
+    // The position cell is mirrored back into the saved state via
+    // `inspector_snapshot` so size + position + maximize survive restarts.
+    const INSPECTOR_DEFAULT_BOUNDS: Rect = Rect {
+        x: 960.0,
+        y: 60.0,
+        width: 320.0,
+        height: 520.0,
+    };
+    let inspector_saved_window = initial_state
+        .as_ref()
+        .and_then(|s| s.inspector.as_ref())
+        .and_then(|i| i.window.clone())
+        .filter(|w| w.has_valid_bounds());
+    let inspector_initial_bounds = inspector_saved_window
+        .as_ref()
+        .map(|w| w.to_rect())
+        .unwrap_or(INSPECTOR_DEFAULT_BOUNDS);
+    let inspector_pos_cell = Rc::new(Cell::new(inspector_initial_bounds));
+    let inspector_max_cell = Rc::new(Cell::new(
+        inspector_saved_window
+            .as_ref()
+            .map(|w| w.maximized)
+            .unwrap_or(false),
+    ));
     {
         let mut inspector = InspectorPanel::new(
             Arc::clone(&font),
@@ -516,8 +541,10 @@ pub fn build_demo_ui(
         }
         let inspector_win =
             Window::new("\u{F188} Inspector", Arc::clone(&font), Box::new(inspector))
-                .with_bounds(Rect::new(960.0, 60.0, 320.0, 520.0))
+                .with_bounds(inspector_initial_bounds)
                 .with_visible_cell(Rc::clone(&show_inspector))
+                .with_position_cell(Rc::clone(&inspector_pos_cell))
+                .with_maximized_cell(Rc::clone(&inspector_max_cell))
                 .on_raised(make_on_raised());
         canvas = canvas.add(Box::new(inspector_win));
     }
@@ -687,14 +714,27 @@ pub fn build_demo_ui(
         inspector_snapshot: {
             let cell = Rc::clone(&inspector_snapshot_cell);
             let open_cell = Rc::clone(&show_inspector);
+            let pos_cell = Rc::clone(&inspector_pos_cell);
+            let max_cell = Rc::clone(&inspector_max_cell);
             Rc::new(move || {
                 cell.borrow()
                     .as_ref()
-                    .map(|s| crate::state::InspectorPersist {
-                        expanded: s.expanded.clone(),
-                        selected: s.selected,
-                        props_h: s.props_h,
-                        open: open_cell.get(),
+                    .map(|s| {
+                        let r = pos_cell.get();
+                        crate::state::InspectorPersist {
+                            expanded: s.expanded.clone(),
+                            selected: s.selected,
+                            props_h: s.props_h,
+                            open: open_cell.get(),
+                            window: Some(crate::state::WindowState {
+                                open: open_cell.get(),
+                                x: r.x,
+                                y: r.y,
+                                w: r.width,
+                                h: r.height,
+                                maximized: max_cell.get(),
+                            }),
+                        }
                     })
             })
         },

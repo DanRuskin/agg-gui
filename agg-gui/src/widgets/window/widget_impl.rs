@@ -198,6 +198,18 @@ impl Widget for Window {
         // and set `raise_request`, which the parent `Stack` drains on its
         // next layout (one-frame delay, invisible to the user).
         let now_visible = self.requested_visible();
+        // First-layout fit (visibility-cell-managed windows only):
+        // a window restored as already-visible via `visible_cell` misses
+        // the rising-edge branch below (last_visible was seeded to match
+        // the cell), so without this its persisted bounds can land
+        // outside the live viewport — the user sees the sidebar pill
+        // highlighted but no window.  Gating on `visible_cell.is_some()`
+        // keeps the auto-save invariant for plain `with_bounds(...)`
+        // windows whose layout must never mutate persisted state.
+        if now_visible && self.needs_initial_fit.get() && self.visible_cell.is_some() {
+            self.fit_fully_to_canvas(available);
+        }
+        self.needs_initial_fit.set(false);
         if now_visible && !self.last_visible.get() {
             self.raise_request.set(true);
             if let Some(cb) = self.on_raised.as_mut() {

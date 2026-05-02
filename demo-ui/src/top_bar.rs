@@ -14,8 +14,8 @@ use std::sync::Arc;
 use agg_gui::widget::paint_subtree;
 use agg_gui::widgets::label::Label;
 use agg_gui::{
-    set_visuals, AccentColor, Color, DrawCtx, Event, EventResult, FlexRow, Font, Hyperlink, Rect,
-    Size, SizedBox, ThemePreference, VAnchor, Visuals, Widget,
+    set_visuals, AccentColor, Button, Color, DrawCtx, Event, EventResult, FlexRow, Font, Hyperlink,
+    Rect, Size, SizedBox, ThemePreference, VAnchor, Visuals, Widget,
 };
 
 /// Detect OS colour scheme and return the matching `ThemePreference`.
@@ -41,67 +41,62 @@ pub fn apply_theme_visuals(pref: ThemePreference, accent: AccentColor) {
 
 // ── Theme toggle widget ────────────────────────────────────────────────────────
 
-/// Three-button toggle: Light / Dark / System.
-/// Writes the chosen `Visuals` via `set_visuals()` when clicked.
-/// Text is rendered through backbuffered Label children.
+/// Three-segment selector — Light / Dark / System — built out of three
+/// real `Button` children sharing a `Rc<Cell<ThemePreference>>`.  Each
+/// segment uses [`Button::with_subtle`] + [`Button::with_active_fn`] so
+/// the inactive segments paint in muted theme colours and the selected
+/// segment flips to the accent surface.  Glyphs are cached via the Label
+/// child every Button already wraps — no manual `paint_subtree` call,
+/// no separate label vector.
+///
+/// The widget keeps a thin wrapper struct so the inspector still shows
+/// "ThemeToggle" as a meaningful semantic node above its three buttons.
 struct ThemeToggle {
     bounds: Rect,
-    children: Vec<Box<dyn Widget>>, // always empty — labels are stored separately
-    pref: Rc<Cell<ThemePreference>>,
-    accent: Rc<Cell<AccentColor>>,
-    hovered: Option<usize>,
-    /// One Label per segment. Positioned and painted manually.
-    labels: Vec<Label>,
+    children: Vec<Box<dyn Widget>>,
 }
 
 impl ThemeToggle {
     const BTN_W: f64 = 68.0;
     const BTN_H: f64 = 24.0;
-    // Font Awesome 4 icon prefixes: sun-o, moon-o, desktop.
-    const LABELS: &'static [&'static str] = &["\u{F185} Light", "\u{F186} Dark", "\u{F108} System"];
-    const PREFS: [ThemePreference; 3] = [
-        ThemePreference::Light,
-        ThemePreference::Dark,
-        ThemePreference::System,
-    ];
+    const GAP_X: f64 = 8.0;
 
     fn new(
         font: Arc<Font>,
         pref: Rc<Cell<ThemePreference>>,
         accent: Rc<Cell<AccentColor>>,
     ) -> Self {
-        let labels = Self::LABELS
+        let segments: [(&'static str, ThemePreference); 3] = [
+            ("\u{F185} Light", ThemePreference::Light),
+            ("\u{F186} Dark", ThemePreference::Dark),
+            ("\u{F108} System", ThemePreference::System),
+        ];
+        let children: Vec<Box<dyn Widget>> = segments
             .iter()
-            .map(|text| Label::new(*text, Arc::clone(&font)).with_font_size(11.0))
+            .map(|(label, this_pref)| {
+                let pref_active = Rc::clone(&pref);
+                let pref_click = Rc::clone(&pref);
+                let accent_for_click = Rc::clone(&accent);
+                let this = *this_pref;
+                let btn = Button::new(*label, Arc::clone(&font))
+                    .with_font_size(11.0)
+                    .with_subtle()
+                    .with_active_fn(move || {
+                        std::mem::discriminant(&pref_active.get())
+                            == std::mem::discriminant(&this)
+                    })
+                    .on_click(move || {
+                        pref_click.set(this);
+                        apply_theme_visuals(this, accent_for_click.get());
+                        agg_gui::animation::request_draw();
+                    });
+                Box::new(btn) as Box<dyn Widget>
+            })
             .collect();
         Self {
             bounds: Rect::default(),
-            children: Vec::new(),
-            pref,
-            accent,
-            hovered: None,
-            labels,
+            children,
         }
-    }
-
-    fn group_x(&self) -> f64 {
-        8.0
-    }
-
-    fn btn_rect(&self, idx: usize) -> Rect {
-        let gx = self.group_x();
-        let gy = (self.bounds.height - Self::BTN_H) * 0.5;
-        Rect::new(gx + idx as f64 * Self::BTN_W, gy, Self::BTN_W, Self::BTN_H)
-    }
-
-    fn hit_idx(&self, pos: agg_gui::Point) -> Option<usize> {
-        for i in 0..3 {
-            let r = self.btn_rect(i);
-            if pos.x >= r.x && pos.x <= r.x + r.width && pos.y >= r.y && pos.y <= r.y + r.height {
-                return Some(i);
-            }
-        }
-        None
     }
 }
 
@@ -123,106 +118,44 @@ impl Widget for ThemeToggle {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        let natural_w = (3.0 * Self::BTN_W + 16.0).min(available.width);
+        let natural_w = (3.0 * Self::BTN_W + Self::GAP_X * 2.0).min(available.width);
         self.bounds = Rect::new(0.0, 0.0, natural_w, available.height);
-        // Layout each label to fill its button rect (for centered text).
-        for i in 0..3 {
-            let r = self.btn_rect(i);
-            let s = self.labels[i].layout(Size::new(r.width, r.height));
-            self.labels[i].set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        let gy = ((available.height - Self::BTN_H) * 0.5).max(0.0);
+        for (i, child) in self.children.iter_mut().enumerate() {
+            child.layout(Size::new(Self::BTN_W, Self::BTN_H));
+            child.set_bounds(Rect::new(
+                Self::GAP_X + i as f64 * Self::BTN_W,
+                gy,
+                Self::BTN_W,
+                Self::BTN_H,
+            ));
         }
         Size::new(natural_w, available.height)
     }
 
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v = ctx.visuals();
-        let current = self.pref.get();
-
-        for (i, pref) in Self::PREFS.iter().enumerate() {
-            let r = self.btn_rect(i);
-            let active = std::mem::discriminant(&current) == std::mem::discriminant(pref);
-            let hovered = self.hovered == Some(i);
-
-            let bg = if active {
-                v.accent
-            } else if hovered {
-                v.widget_bg_hovered
-            } else {
-                v.widget_bg
-            };
-            ctx.set_fill_color(bg);
-            ctx.begin_path();
-            let radius = if i == 0 || i == 2 { 4.0 } else { 0.0 };
-            ctx.rounded_rect(r.x, r.y, r.width, r.height, radius);
-            ctx.fill();
-
-            // Draw separator between buttons.
-            if i < 2 {
-                ctx.set_fill_color(v.widget_stroke);
-                ctx.begin_path();
-                ctx.rect(r.x + r.width - 1.0, r.y, 1.0, r.height);
-                ctx.fill();
-            }
-
-            // Active segment = accent blue → white for max contrast.
-            let text_color = if active { Color::white() } else { v.text_color };
-            self.labels[i].set_color(text_color);
-
-            // Reposition label centered within button rect.
-            let lw = self.labels[i].bounds().width;
-            let lh = self.labels[i].bounds().height;
-            let lx = r.x + (r.width - lw) * 0.5;
-            let ly = r.y + (r.height - lh) * 0.5;
-            self.labels[i].set_bounds(Rect::new(lx, ly, lw, lh));
-
-            // Paint the label (handles backbuffer caching internally).
-            ctx.save();
-            ctx.translate(lx, ly);
-            paint_subtree(&mut self.labels[i], ctx);
-            ctx.restore();
-        }
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
+        // All paint goes through the Button children via the framework's
+        // tree walk — `paint_subtree` recurses into `self.children` after
+        // this returns.
     }
 
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        match event {
-            Event::MouseMove { pos } => {
-                let was = self.hovered;
-                self.hovered = self.hit_idx(*pos);
-                if was != self.hovered {
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            Event::MouseDown {
-                button: agg_gui::MouseButton::Left,
-                pos,
-                ..
-            } => {
-                if let Some(idx) = self.hit_idx(*pos) {
-                    let pref = Self::PREFS[idx];
-                    self.pref.set(pref);
-                    apply_theme_visuals(pref, self.accent.get());
-                    // Theme change is global — every widget needs to re-paint.
-                    agg_gui::animation::request_draw();
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+    fn on_event(&mut self, _event: &Event) -> EventResult {
+        // Bubbling: events route to the hit-tested Button child by the
+        // standard tree-dispatch path; the wrapper itself has no
+        // behaviour of its own.
+        EventResult::Ignored
     }
 }
 
 // ── Backend toggle button ─────────────────────────────────────────────────────
 
-/// "💻 Backend" button — toggles the left-side backend panel.
-/// Text rendered through a backbuffered Label child.
+/// "Backend" button that toggles the left-side backend panel.  Wraps a
+/// real `Button` child sized to the top-bar slot — `with_subtle()` +
+/// `with_active_fn()` make it light up in the accent surface while the
+/// panel is open and stay muted otherwise.
 struct BackendButton {
     bounds: Rect,
-    children: Vec<Box<dyn Widget>>, // always empty — label stored separately
-    show: Rc<Cell<bool>>,
-    hovered: bool,
-    label: Label,
+    children: Vec<Box<dyn Widget>>,
 }
 
 impl BackendButton {
@@ -230,20 +163,20 @@ impl BackendButton {
     const H: f64 = 24.0;
 
     fn new(font: Arc<Font>, show: Rc<Cell<bool>>) -> Self {
-        // FA4 "laptop" icon prefix.
-        let label = Label::new("\u{F109} Backend", Arc::clone(&font)).with_font_size(12.0);
+        let show_active = Rc::clone(&show);
+        let show_click = show;
+        let btn = Button::new("\u{F109} Backend", font)
+            .with_font_size(12.0)
+            .with_subtle()
+            .with_active_fn(move || show_active.get())
+            .on_click(move || {
+                show_click.set(!show_click.get());
+                agg_gui::animation::request_draw();
+            });
         Self {
             bounds: Rect::default(),
-            children: Vec::new(),
-            show,
-            hovered: false,
-            label,
+            children: vec![Box::new(btn)],
         }
-    }
-
-    fn btn_rect(&self) -> Rect {
-        let gy = (self.bounds.height - Self::H) * 0.5;
-        Rect::new(4.0, gy, Self::W, Self::H)
     }
 }
 
@@ -267,86 +200,31 @@ impl Widget for BackendButton {
     fn layout(&mut self, available: Size) -> Size {
         let w = Self::W + 8.0;
         self.bounds = Rect::new(0.0, 0.0, w, available.height);
-        let s = self.label.layout(Size::new(Self::W, Self::H));
-        self.label
-            .set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
+        let gy = ((available.height - Self::H) * 0.5).max(0.0);
+        let child = &mut self.children[0];
+        child.layout(Size::new(Self::W, Self::H));
+        child.set_bounds(Rect::new(4.0, gy, Self::W, Self::H));
         Size::new(w, available.height)
     }
 
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v = ctx.visuals();
-        let r = self.btn_rect();
-        let active = self.show.get();
-
-        let bg = if active {
-            v.accent
-        } else if self.hovered {
-            v.widget_bg_hovered
-        } else {
-            v.widget_bg
-        };
-        ctx.set_fill_color(bg);
-        ctx.begin_path();
-        ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-        ctx.fill();
-
-        // Active state = accent blue → white text for contrast.
-        let text_color = if active { Color::white() } else { v.text_color };
-        self.label.set_color(text_color);
-
-        // Center label within button rect.
-        let lw = self.label.bounds().width;
-        let lh = self.label.bounds().height;
-        let lx = r.x + (r.width - lw) * 0.5;
-        let ly = r.y + (r.height - lh) * 0.5;
-        self.label.set_bounds(Rect::new(lx, ly, lw, lh));
-
-        ctx.save();
-        ctx.translate(lx, ly);
-        paint_subtree(&mut self.label, ctx);
-        ctx.restore();
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
+        // Button child paints itself via the framework's tree walk.
     }
 
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        let r = self.btn_rect();
-        let in_btn = |p: agg_gui::Point| {
-            p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-        };
-        match event {
-            Event::MouseMove { pos } => {
-                let was = self.hovered;
-                self.hovered = in_btn(*pos);
-                if was != self.hovered {
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            Event::MouseDown {
-                button: agg_gui::MouseButton::Left,
-                pos,
-                ..
-            } => {
-                if in_btn(*pos) {
-                    // Toggles backend-panel visibility — consumers read
-                    // `show` at layout/paint time, so request a frame.
-                    self.show.set(!self.show.get());
-                    agg_gui::animation::request_draw();
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+    fn on_event(&mut self, _event: &Event) -> EventResult {
+        EventResult::Ignored
     }
 }
 
+/// Mobile-only "Demos" hamburger that toggles the bottom-sheet menu.
+/// Hidden above the mobile breakpoint and rendered as a real `Button`
+/// child — the only thing this wrapper adds is the responsive
+/// breakpoint check and the breakpoint-driven `is_visible` gate that
+/// hides the button on desktop layouts.
 struct MenuButton {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
-    open: Rc<Cell<bool>>,
-    hovered: bool,
     visible: bool,
-    label: Label,
 }
 
 impl MenuButton {
@@ -355,18 +233,21 @@ impl MenuButton {
     const MOBILE_BREAKPOINT: f64 = 720.0;
 
     fn new(font: Arc<Font>, open: Rc<Cell<bool>>) -> Self {
+        let open_active = Rc::clone(&open);
+        let open_click = open;
+        let btn = Button::new("\u{F0C9} Demos", font)
+            .with_font_size(12.0)
+            .with_subtle()
+            .with_active_fn(move || open_active.get())
+            .on_click(move || {
+                open_click.set(!open_click.get());
+                agg_gui::animation::request_draw();
+            });
         Self {
             bounds: Rect::default(),
-            children: Vec::new(),
-            open,
-            hovered: false,
+            children: vec![Box::new(btn)],
             visible: false,
-            label: Label::new("\u{F0C9} Demos", font).with_font_size(12.0),
         }
-    }
-
-    fn btn_rect(&self) -> Rect {
-        Rect::new(4.0, (self.bounds.height - Self::H) * 0.5, Self::W, Self::H)
     }
 }
 
@@ -395,70 +276,19 @@ impl Widget for MenuButton {
             self.bounds = Rect::new(0.0, 0.0, 0.0, available.height);
             return Size::new(0.0, available.height);
         }
-        self.bounds = Rect::new(0.0, 0.0, Self::W + 8.0, available.height);
-        let s = self.label.layout(Size::new(Self::W, Self::H));
-        self.label
-            .set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
-        Size::new(Self::W + 8.0, available.height)
+        let w = Self::W + 8.0;
+        self.bounds = Rect::new(0.0, 0.0, w, available.height);
+        let gy = ((available.height - Self::H) * 0.5).max(0.0);
+        let child = &mut self.children[0];
+        child.layout(Size::new(Self::W, Self::H));
+        child.set_bounds(Rect::new(4.0, gy, Self::W, Self::H));
+        Size::new(w, available.height)
     }
-    fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        if !self.visible {
-            return;
-        }
-        let v = ctx.visuals();
-        let r = self.btn_rect();
-        let active = self.open.get();
-        let bg = if active {
-            v.accent
-        } else if self.hovered {
-            v.widget_bg_hovered
-        } else {
-            v.widget_bg
-        };
-        ctx.set_fill_color(bg);
-        ctx.begin_path();
-        ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-        ctx.fill();
-        self.label
-            .set_color(if active { Color::white() } else { v.text_color });
-        let lw = self.label.bounds().width;
-        let lh = self.label.bounds().height;
-        let lx = r.x + (r.width - lw) * 0.5;
-        let ly = r.y + (r.height - lh) * 0.5;
-        self.label.set_bounds(Rect::new(lx, ly, lw, lh));
-        ctx.save();
-        ctx.translate(lx, ly);
-        paint_subtree(&mut self.label, ctx);
-        ctx.restore();
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
+        // Button child paints itself via the framework's tree walk.
     }
-    fn on_event(&mut self, event: &Event) -> EventResult {
-        if !self.visible {
-            return EventResult::Ignored;
-        }
-        let r = self.btn_rect();
-        let hit = |p: agg_gui::Point| {
-            p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-        };
-        match event {
-            Event::MouseMove { pos } => {
-                let was = self.hovered;
-                self.hovered = hit(*pos);
-                if was != self.hovered {
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            Event::MouseDown {
-                button: agg_gui::MouseButton::Left,
-                pos,
-                ..
-            } if hit(*pos) => {
-                self.open.set(!self.open.get());
-                agg_gui::animation::request_draw();
-                EventResult::Consumed
-            }
-            _ => EventResult::Ignored,
-        }
+    fn on_event(&mut self, _event: &Event) -> EventResult {
+        EventResult::Ignored
     }
 }
 

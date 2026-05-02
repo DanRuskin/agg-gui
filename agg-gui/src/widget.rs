@@ -398,6 +398,13 @@ pub trait Widget {
         vec![]
     }
 
+    /// If this widget is text-bearing (e.g. `Label`), update its foreground
+    /// colour.  Default is a no-op.  Composite widgets call this on their
+    /// children to retint labels without rebuilding them — used by `Button`
+    /// when toggling between active (white text on accent) and inactive
+    /// (theme text on subtle bg) appearances.
+    fn set_label_color(&mut self, _color: crate::color::Color) {}
+
     /// Opt-in reflection accessor for the inspector's typed property editors.
     ///
     /// Widgets that derive [`bevy_reflect::Reflect`] (via the `reflect`

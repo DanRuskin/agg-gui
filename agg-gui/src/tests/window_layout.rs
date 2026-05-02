@@ -89,3 +89,42 @@ fn test_top_pinned_window_content_relayouts_to_final_height() {
         "top-pinned content must receive a final layout pass at its actual height"
     );
 }
+
+/// A window restored as already-visible (e.g. the Inspector reopening
+/// because saved state had `inspector.open = true`) must clamp its bounds
+/// into the live viewport on first layout.  Otherwise the persisted
+/// "open" flag highlights the sidebar pill but the window itself
+/// paints off-screen — particularly noticeable on mobile, where the
+/// fixed default position (x=960) sits beyond the viewport's right
+/// edge.
+#[test]
+fn test_window_restored_visible_clamps_into_small_viewport_on_first_layout() {
+    use crate::text::Font;
+    use crate::widgets::window::Window;
+    use crate::{Label, Widget};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    const FONT_BYTES: &[u8] = include_bytes!("../../../demo/assets/CascadiaCode.ttf");
+    let font = Arc::new(Font::from_slice(FONT_BYTES).expect("font"));
+    let content: Box<dyn Widget> = Box::new(Label::new("content", Arc::clone(&font)));
+    let visible = Rc::new(Cell::new(true)); // restored from saved-state open=true
+    let mut win = Window::new("Inspector", Arc::clone(&font), content)
+        .with_bounds(crate::geometry::Rect::new(960.0, 60.0, 320.0, 520.0))
+        .with_visible_cell(Rc::clone(&visible));
+
+    let viewport = crate::geometry::Size::new(360.0, 640.0); // mobile portrait
+    <Window as Widget>::layout(&mut win, viewport);
+
+    let b = win.bounds();
+    assert!(
+        b.x + b.width <= viewport.width + 0.5,
+        "restored-visible window must be clamped horizontally; got bounds {b:?} for viewport {viewport:?}"
+    );
+    assert!(
+        b.y + b.height <= viewport.height + 0.5,
+        "restored-visible window must be clamped vertically; got bounds {b:?}"
+    );
+    assert!(b.x >= 0.0 && b.y >= 0.0, "bounds must stay non-negative");
+}

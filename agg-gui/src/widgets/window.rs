@@ -118,6 +118,14 @@ pub struct Window {
     /// to detect the false→true transition (demo toggled on in the
     /// sidebar) so we can request the parent `Stack` raise us to the top.
     last_visible: Cell<bool>,
+    /// `true` until the first `layout()` runs.  A window restored as
+    /// already-visible (e.g. saved-state inspector open) misses the
+    /// rising-edge fit-to-canvas pass, so without this one-shot trigger
+    /// its persisted bounds can land outside a smaller live viewport
+    /// (mobile portrait, resized window, etc.) and the user sees the
+    /// sidebar toggle highlighted but no window.  Cleared after the
+    /// first layout completes.
+    needs_initial_fit: Cell<bool>,
     /// Set to `true` on a visibility rising edge; read + cleared by
     /// `take_raise_request` on the next parent-layout pass.
     raise_request: Cell<bool>,
@@ -240,6 +248,7 @@ impl Window {
             // window that's open on first frame doesn't spuriously request
             // a raise before the user has interacted with it.
             last_visible: Cell::new(true),
+            needs_initial_fit: Cell::new(true),
             raise_request: Cell::new(false),
             collapsed: false,
             pre_collapse_h: 280.0,

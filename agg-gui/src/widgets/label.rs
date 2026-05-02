@@ -344,6 +344,10 @@ impl Widget for Label {
         self.lcd_pref
     }
 
+    fn set_label_color(&mut self, color: Color) {
+        self.set_color(color);
+    }
+
     fn backbuffer_cache_mut(&mut self) -> Option<&mut crate::widget::BackbufferCache> {
         // Cache always when `buffered`.  Mode is chosen by
         // `backbuffer_mode` below — LCD on → per-channel LcdCoverage

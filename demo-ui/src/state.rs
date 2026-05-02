@@ -114,7 +114,9 @@ pub struct SavedState {
 }
 
 /// Persisted inspector UI state.  Flat bit-vector of expanded nodes in DFS
-/// order + optional selected-node index + properties-pane height.
+/// order + optional selected-node index + properties-pane height + the
+/// outer Window's geometry, so re-opening the inspector lands it where
+/// the user last left it (matches the demo / test windows' restore).
 #[derive(Clone, Debug, Default)]
 pub struct InspectorPersist {
     pub expanded: Vec<bool>,
@@ -122,6 +124,11 @@ pub struct InspectorPersist {
     pub props_h: f64,
     /// Whether the Inspector window itself was visible at save time.
     pub open: bool,
+    /// Window bounds at save time (Y-up screen coords).  `None` = first
+    /// run / never moved — the harness falls back to the default
+    /// position.  `WindowState::has_valid_bounds` filters the never-laid-
+    /// out zero-rect case.
+    pub window: Option<WindowState>,
 }
 
 impl SavedState {
@@ -172,6 +179,17 @@ impl SavedState {
                 "inspector={},{},{};{}\n",
                 sel, insp.props_h, insp.open as u8, bits
             ));
+            // Window bounds + maximized flag, only when we have a real
+            // (non-zero) rect to persist — matches the per-window restore
+            // path the demos use.
+            if let Some(w) = &insp.window {
+                if w.has_valid_bounds() {
+                    out.push_str(&format!(
+                        "inspector_win={},{},{},{},{}\n",
+                        w.x, w.y, w.w, w.h, w.maximized as u8,
+                    ));
+                }
+            }
         }
         // System settings — each on its own key so the parser can add
         // future entries without breaking old state files.
@@ -337,7 +355,35 @@ impl SavedState {
                         selected,
                         props_h,
                         open: open_u8 != 0,
+                        window: None,
                     });
+                }
+                "inspector_win" => {
+                    // `inspector_win=x,y,w,h,maximized`.  Older state files
+                    // without this key keep `window: None` and the harness
+                    // falls back to the default Inspector position.
+                    let mut it = val.splitn(5, ',');
+                    let x: f64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                    let y: f64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                    let w: f64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                    let h: f64 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                    let mx_u8: u8 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let win = WindowState {
+                        open: true,
+                        x,
+                        y,
+                        w,
+                        h,
+                        maximized: mx_u8 != 0,
+                    };
+                    if let Some(insp) = inspector.as_mut() {
+                        insp.window = Some(win);
+                    } else {
+                        inspector = Some(InspectorPersist {
+                            window: Some(win),
+                            ..InspectorPersist::default()
+                        });
+                    }
                 }
                 k if k.starts_with('d') => {
                     let i: usize = k[1..].parse().ok()?;
