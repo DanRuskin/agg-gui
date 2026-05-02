@@ -22,7 +22,14 @@ pub(super) fn load_remote_image(url: String, state: Arc<Mutex<ImageState>>) {
         if let Ok(mut state) = state.lock() {
             *state = next;
         }
-        crate::animation::request_draw();
+        // Bump the async-state epoch so retained backbuffers
+        // (Window FBOs, in-process bitmap caches) re-rasterise on
+        // the next frame.  Without this, the freshly-decoded image's
+        // dimensions land in the markdown's next layout but the
+        // parent Window's cached FBO keeps compositing the previous
+        // frame's placeholder rendering — the SVG-badge "wrong
+        // scale until first re-draw" bug.
+        crate::animation::signal_async_state_change();
     });
 }
 

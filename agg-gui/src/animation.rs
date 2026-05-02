@@ -27,6 +27,17 @@ std::thread_local! {
     static NEEDS_DRAW:        Cell<bool>            = Cell::new(false);
     static NEXT_DRAW_AT:      Cell<Option<Instant>> = Cell::new(None);
     static INVALIDATION_EPOCH: Cell<u64>             = Cell::new(0);
+    /// Bumped whenever an async source (image fetch + decode, font
+    /// load, etc.) finishes outside the event-dispatch path.  Retained
+    /// backbuffers (Window FBOs, in-process bitmap caches) compare
+    /// their stored value against this epoch on each paint and force
+    /// a re-raster on mismatch — there is no widget reference at the
+    /// callback site to walk the ancestor chain via the usual
+    /// `mark_dirty` route, so without this signal a freshly-decoded
+    /// image draws into the placeholder-sized rect the previous
+    /// layout reserved (the user-visible "wrong scale on first
+    /// frame" bug).
+    static ASYNC_STATE_EPOCH: Cell<u64> = Cell::new(0);
 }
 
 /// Request that the host schedule another draw as soon as possible.
@@ -58,6 +69,23 @@ pub fn wants_draw() -> bool {
 /// Monotonic draw-request epoch used to detect visual changes during dispatch.
 pub fn invalidation_epoch() -> u64 {
     INVALIDATION_EPOCH.with(|c| c.get())
+}
+
+/// Note that an async-side state change happened (image loader finished,
+/// font loaded, etc.).  Calls `request_draw()` so the next frame fires,
+/// AND bumps the [`async_state_epoch`] so retained backbuffers
+/// re-rasterise — without the latter, the freshly-loaded data gets
+/// drawn into whatever placeholder rect the previous layout reserved
+/// (the markdown SVG-badge "wrong scale on first frame" bug).
+pub fn signal_async_state_change() {
+    request_draw();
+    ASYNC_STATE_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
+}
+
+/// Current async-state epoch.  Backbuffer caches store this and force
+/// a re-raster when it doesn't match.
+pub fn async_state_epoch() -> u64 {
+    ASYNC_STATE_EPOCH.with(|c| c.get())
 }
 
 /// Reset the per-frame draw flags.  The `App::paint` entry point calls

@@ -162,6 +162,13 @@ pub struct BackbufferCache {
     /// slider drag in the LCD Subpixel demo invalidate every cached
     /// `Label` bitmap without bespoke hooks per widget.
     pub typography_epoch: u64,
+    /// Async-state epoch (see
+    /// [`crate::animation::async_state_epoch`]) — bumped when an
+    /// off-thread / async source (e.g. an image fetch + decode)
+    /// finishes outside the normal event-dispatch path that would
+    /// otherwise mark widgets dirty.  Mismatch forces a re-raster
+    /// so freshly-loaded data lands in newly-laid-out bounds.
+    pub async_state_epoch: u64,
 }
 
 impl BackbufferCache {
@@ -174,6 +181,7 @@ impl BackbufferCache {
             dirty: true,
             theme_epoch: 0,
             typography_epoch: 0,
+            async_state_epoch: 0,
         }
     }
 
@@ -207,6 +215,11 @@ pub struct BackbufferState {
     /// repainted. Without this, a clean parent FBO can keep compositing old
     /// text after global font/LCD settings change.
     pub typography_epoch: u64,
+    /// Async-state epoch (see [`crate::animation::async_state_epoch`])
+    /// recorded the last paint.  Mismatch forces a re-raster so a
+    /// freshly-arrived async result (image fetch, font load) doesn't
+    /// composite the previous frame's stale FBO contents.
+    pub async_state_epoch: u64,
     pub repaint_count: u64,
     pub composite_count: u64,
 }
@@ -222,6 +235,7 @@ impl BackbufferState {
             spec_kind: BackbufferKind::None,
             theme_epoch: 0,
             typography_epoch: 0,
+            async_state_epoch: 0,
             repaint_count: 0,
             composite_count: 0,
         }
