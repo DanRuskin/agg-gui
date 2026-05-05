@@ -40,6 +40,7 @@ pub use frame::{begin_frame, render_app_frame};
 
 pub mod bar_grid;
 mod bar_grid_math;
+pub mod bar_grid_render;
 pub use bar_grid::{BarGridWgpuRenderer, WgpuCubeWidget, CUBE_SCREEN_RECT};
 
 pub mod custom_render;
