@@ -65,6 +65,22 @@ thread_local! {
     static AUTO_SAVE:         RefCell<agg_gui::persistence::AutoSave> = RefCell::new(agg_gui::persistence::AutoSave::new());
     static NEEDS_DRAW:        Cell<bool> = Cell::new(true);
     static CUBE_VISIBLE:      RefCell<Option<Rc<Cell<bool>>>> = RefCell::new(None);
+
+    // ── Screenshot handles ──────────────────────────────────────────────
+    /// Set by the screenshot-demo "Take Screenshot" button.  `render` picks
+    /// it up after the scene-buffer paint finishes and triggers a GPU-only
+    /// `copy_texture_to_texture(scene → capture)` via `capture_screenshot`.
+    static SCREENSHOT_REQUEST:        RefCell<Option<Rc<Cell<bool>>>> = RefCell::new(None);
+    /// Mirrored from the "Capture continuously" checkbox.  When set,
+    /// `render` re-arms `SCREENSHOT_REQUEST` every frame.
+    static SCREENSHOT_CONTINUOUS:     RefCell<Option<Rc<Cell<bool>>>> = RefCell::new(None);
+    /// Lights up the Save / Copy buttons after the first successful capture.
+    static SCREENSHOT_AVAILABLE:      RefCell<Option<Rc<Cell<bool>>>> = RefCell::new(None);
+    /// Click-deferred Save: button toggles this on; `render` drains it after
+    /// paint, runs `read_captured_screenshot`, encodes PNG, triggers download.
+    static SCREENSHOT_SAVE_PENDING:   RefCell<Option<Rc<Cell<bool>>>> = RefCell::new(None);
+    /// Click-deferred Copy: same pattern, pipes bytes to the system clipboard.
+    static SCREENSHOT_COPY_PENDING:   RefCell<Option<Rc<Cell<bool>>>> = RefCell::new(None);
     /// Intermediate "scene" framebuffer that rendering targets every frame
     /// before being blit-displayed onto the real swap-chain surface.
     /// Required because WebGL2 surfaces only advertise `COLOR_TARGET` —
@@ -268,6 +284,16 @@ fn ensure_demo_app() {
             FRAME_HISTORY.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.frame_history)));
             RUN_MODE.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.run_mode)));
             CUBE_VISIBLE.with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.cube_visible)));
+            SCREENSHOT_REQUEST
+                .with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_request)));
+            SCREENSHOT_CONTINUOUS
+                .with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_continuous)));
+            SCREENSHOT_AVAILABLE
+                .with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_available)));
+            SCREENSHOT_SAVE_PENDING
+                .with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_save_pending)));
+            SCREENSHOT_COPY_PENDING
+                .with(|c| *c.borrow_mut() = Some(Rc::clone(&handles.screenshot_copy_pending)));
             STATE_ACCESSOR.with(|c| *c.borrow_mut() = Some(handles.state));
             *cell.borrow_mut() = Some(app);
         }
@@ -370,6 +396,21 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
     });
     CUBE_SCREEN_RECT.with(|r| r.set(agg_gui::Rect::default()));
 
+    // Continuous capture: while the screenshot demo's checkbox is on,
+    // re-arm the request every frame and force another draw.  Mirrors the
+    // demo-native AboutToWait branch so the WASM and native screenshot
+    // demos behave identically.
+    let continuous_on = SCREENSHOT_CONTINUOUS
+        .with(|c| c.borrow().as_ref().map(|r| r.get()).unwrap_or(false));
+    if continuous_on {
+        SCREENSHOT_REQUEST.with(|c| {
+            if let Some(ref rc) = *c.borrow() {
+                rc.set(true);
+            }
+        });
+        mark_dirty();
+    }
+
     let show_inspector =
         SHOW_INSPECTOR.with(|c| c.borrow().as_ref().map(|r| r.get()).unwrap_or(false));
     let inspector_nodes_rc = INSPECTOR_NODES.with(|c| c.borrow().as_ref().map(Rc::clone));
@@ -441,6 +482,69 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
                         }
                     });
                     wgpu_ctx.end_frame();
+
+                    // GPU-direct screenshot: AFTER `end_frame` (so the
+                    // scene texture has the rendered content), if a
+                    // capture was requested do the cheap
+                    // `copy_texture_to_texture(scene → capture)`.  Pixels
+                    // stay on the GPU; the screenshot demo's preview pane
+                    // samples the capture texture directly via
+                    // `DrawCtx::draw_captured_screenshot`.
+                    let want_capture = SCREENSHOT_REQUEST
+                        .with(|c| c.borrow().as_ref().map(|r| r.get()).unwrap_or(false));
+                    if want_capture {
+                        use agg_gui::DrawCtx;
+                        if wgpu_ctx.capture_screenshot() {
+                            SCREENSHOT_REQUEST.with(|c| {
+                                if let Some(ref rc) = *c.borrow() {
+                                    rc.set(false);
+                                }
+                            });
+                            SCREENSHOT_AVAILABLE.with(|c| {
+                                if let Some(ref rc) = *c.borrow() {
+                                    rc.set(true);
+                                }
+                            });
+                        }
+                    }
+
+                    // Drain deferred Save / Copy.  Click handlers can't
+                    // read pixels themselves (no `DrawCtx` access in event
+                    // dispatch); they flip a pending flag and we
+                    // round-trip pixels through `read_captured_screenshot`
+                    // here, then hand the bytes to the cross-platform
+                    // download / clipboard helpers.
+                    let save_pending = SCREENSHOT_SAVE_PENDING
+                        .with(|c| c.borrow().as_ref().map(|r| r.replace(false)).unwrap_or(false));
+                    let copy_pending = SCREENSHOT_COPY_PENDING
+                        .with(|c| c.borrow().as_ref().map(|r| r.replace(false)).unwrap_or(false));
+                    if save_pending || copy_pending {
+                        use agg_gui::DrawCtx;
+                        let (rgba, sw, sh) = wgpu_ctx.read_captured_screenshot();
+                        if !rgba.is_empty() {
+                            if save_pending {
+                                if let Err(err) = agg_gui::screenshot::download_rgba_as_png(
+                                    &rgba,
+                                    sw,
+                                    sh,
+                                    "agg-gui-screenshot.png",
+                                ) {
+                                    web_sys::console::error_1(&JsValue::from_str(&format!(
+                                        "screenshot save failed: {err}"
+                                    )));
+                                }
+                            }
+                            if copy_pending {
+                                if let Err(err) =
+                                    agg_gui::screenshot::copy_rgba_to_clipboard(&rgba, sw, sh)
+                                {
+                                    web_sys::console::error_1(&JsValue::from_str(&format!(
+                                        "screenshot copy failed: {err}"
+                                    )));
+                                }
+                            }
+                        }
+                    }
 
                     // Display: blit the scene onto the actual surface
                     // through the shared 2-D textured-quad pipeline.

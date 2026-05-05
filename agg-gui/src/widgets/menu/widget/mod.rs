@@ -118,6 +118,12 @@ pub struct MenuBar {
     /// selected" to the user.  Cleared in `set_hover_index` when the
     /// hovered idx changes to anything else.
     suppress_hover_for: Option<usize>,
+    /// When `true`, [`Widget::layout`] returns the tight content width
+    /// (sum of menu-button widths) instead of the full available width.
+    /// Set via [`MenuBar::with_fit_width`] when the bar shares a FlexRow
+    /// with right-aligned chrome (e.g. project title, About button) and
+    /// shouldn't claim every spare pixel.
+    fit_width: bool,
 }
 
 pub struct TopMenu {
@@ -153,7 +159,18 @@ impl MenuBar {
             popup: PopupMenu::new(Vec::new()),
             on_action: Box::new(on_action),
             suppress_hover_for: None,
+            fit_width: false,
         }
+    }
+
+    /// Opt into tight-width sizing — `Widget::layout` will report the
+    /// summed menu-button width rather than the full available width.
+    /// Use when the MenuBar is hosted inside a `FlexRow` with sibling
+    /// chrome on the right (project title, status indicators, etc.)
+    /// that needs to share the same row.
+    pub fn with_fit_width(mut self, fit: bool) -> Self {
+        self.fit_width = fit;
+        self
     }
 
     pub fn with_font_size(mut self, font_size: f64) -> Self {
@@ -274,7 +291,12 @@ impl Widget for MenuBar {
             menu.rect = Rect::new(x, 0.0, width, BAR_H);
             x += width;
         }
-        Size::new(available.width, BAR_H)
+        // `fit_width` mode reports the tight content width so a parent
+        // FlexRow can place sibling widgets to the right of the bar.
+        // Default mode keeps the historical behaviour (full available
+        // width — the bar paints its background across the whole row).
+        let report_w = if self.fit_width { x } else { available.width };
+        Size::new(report_w, BAR_H)
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
