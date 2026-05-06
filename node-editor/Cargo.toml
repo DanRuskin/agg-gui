@@ -1,0 +1,18 @@
+[package]
+name = "agg-gui-node-editor"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "A reusable, model-agnostic node-graph editor widget for agg-gui."
+authors = ["Lars Brubaker <larsbrubaker@matterhackers.com>"]
+repository = "https://github.com/larsbrubaker/agg-gui"
+readme = "README.md"
+keywords = ["agg-gui", "node-graph", "visual-programming", "editor", "widget"]
+categories = ["gui"]
+
+[lib]
+name = "agg_gui_node_editor"
+path = "src/lib.rs"
+
+[dependencies]
+agg-gui = { path = "../agg-gui" }
