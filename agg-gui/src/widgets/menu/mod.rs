@@ -13,7 +13,7 @@ pub use geometry::{BAR_H as MENU_BAR_H, MENU_W, ROW_H};
 pub use model::{MenuEntry, MenuItem, MenuSelection, MenuShortcut, ShortcutKey};
 pub use paint::MenuStyle;
 pub use state::{MenuAnchorKind, MenuResponse, PopupMenuState};
-pub use widget::{MenuBar, PopupMenu, TopMenu};
+pub use widget::{MenuBar, MenuOrientation, PopupMenu, TopMenu, VERTICAL_ROW_H};
 
 #[cfg(test)]
 mod tests {

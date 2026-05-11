@@ -17,6 +17,21 @@ use super::model::MenuEntry;
 use super::paint::{paint_menu_bar_button, paint_popup_stack, MenuStyle};
 use super::state::{MenuAnchorKind, MenuResponse, PopupMenuState};
 
+/// Layout direction for `MenuBar`. Horizontal is the desktop default — a
+/// strip of top-level menu buttons across a fixed-height bar with
+/// popups opening DOWN. Vertical stacks the buttons in a tall+narrow
+/// strip (e.g. a left-side mobile sidebar) with popups opening to the
+/// RIGHT, at the same vertical level as the clicked button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuOrientation {
+    Horizontal,
+    Vertical,
+}
+
+/// Height of each row in `MenuOrientation::Vertical` mode. Larger than
+/// `BAR_H` so the buttons make comfortable touch targets on phones.
+pub const VERTICAL_ROW_H: f64 = 36.0;
+
 /// Mouse events synthesised from a touch tap arrive within a few
 /// milliseconds of the corresponding `touchstart`/`touchend`.  Allow a
 /// generous window (50 ms) so a busy frame doesn't accidentally
@@ -124,6 +139,7 @@ pub struct MenuBar {
     /// with right-aligned chrome (e.g. project title, About button) and
     /// shouldn't claim every spare pixel.
     fit_width: bool,
+    orientation: MenuOrientation,
 }
 
 pub struct TopMenu {
@@ -160,7 +176,17 @@ impl MenuBar {
             on_action: Box::new(on_action),
             suppress_hover_for: None,
             fit_width: false,
+            orientation: MenuOrientation::Horizontal,
         }
+    }
+
+    /// Use a vertical layout — the bar stacks its menu buttons top-to-
+    /// bottom (Y-up: highest local Y first) and opens popups to the
+    /// RIGHT of each button. Intended for narrow, tall chrome strips
+    /// such as a left-side mobile sidebar.
+    pub fn with_orientation(mut self, orientation: MenuOrientation) -> Self {
+        self.orientation = orientation;
+        self
     }
 
     /// Opt into tight-width sizing — `Widget::layout` will report the
@@ -193,9 +219,22 @@ impl MenuBar {
     fn open_menu(&mut self, idx: usize) {
         let rect = self.menus[idx].rect;
         self.popup.items = self.menus[idx].items.clone();
-        self.popup
-            .state
-            .open_at(Point::new(rect.x, rect.y), MenuAnchorKind::Bar);
+        // Horizontal: anchor at the BAR'S bottom-left (rect.x, rect.y)
+        // — popup opens straight DOWN under the bar item, allowed to
+        // extend off-bar via the `Bar` kind's negative-y clamp.
+        //
+        // Vertical: anchor at the BUTTON'S top-right corner — popup
+        // opens to the RIGHT of the button with its top aligned to the
+        // button's top. `Context` kind clamps the popup inside the
+        // viewport so we don't trail off the top.
+        let (anchor, kind) = match self.orientation {
+            MenuOrientation::Horizontal => (Point::new(rect.x, rect.y), MenuAnchorKind::Bar),
+            MenuOrientation::Vertical => (
+                Point::new(rect.x + rect.width, rect.y + rect.height),
+                MenuAnchorKind::Context,
+            ),
+        };
+        self.popup.state.open_at(anchor, kind);
         self.open_index = Some(idx);
         self.hover_index = Some(idx);
         crate::animation::request_draw();
@@ -285,18 +324,35 @@ impl Widget for MenuBar {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        let mut x = 0.0;
-        for menu in &mut self.menus {
-            let width = (menu.label.chars().count() as f64 * 8.0 + 22.0).max(52.0);
-            menu.rect = Rect::new(x, 0.0, width, BAR_H);
-            x += width;
+        match self.orientation {
+            MenuOrientation::Horizontal => {
+                let mut x = 0.0;
+                for menu in &mut self.menus {
+                    let width = (menu.label.chars().count() as f64 * 8.0 + 22.0).max(52.0);
+                    menu.rect = Rect::new(x, 0.0, width, BAR_H);
+                    x += width;
+                }
+                // `fit_width` mode reports the tight content width so a
+                // parent FlexRow can place sibling widgets to the right
+                // of the bar. Default mode keeps the historical
+                // behaviour (full available width — the bar paints its
+                // background across the whole row).
+                let report_w = if self.fit_width { x } else { available.width };
+                Size::new(report_w, BAR_H)
+            }
+            MenuOrientation::Vertical => {
+                // Stack top-to-bottom. Y-up: the FIRST menu sits at the
+                // highest local Y (top of the strip), each subsequent
+                // entry drops by VERTICAL_ROW_H.
+                let mut y = available.height;
+                for menu in &mut self.menus {
+                    y -= VERTICAL_ROW_H;
+                    menu.rect = Rect::new(0.0, y, available.width, VERTICAL_ROW_H);
+                }
+                let used_h = self.menus.len() as f64 * VERTICAL_ROW_H;
+                Size::new(available.width, used_h)
+            }
         }
-        // `fit_width` mode reports the tight content width so a parent
-        // FlexRow can place sibling widgets to the right of the bar.
-        // Default mode keeps the historical behaviour (full available
-        // width — the bar paints its background across the whole row).
-        let report_w = if self.fit_width { x } else { available.width };
-        Size::new(report_w, BAR_H)
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
@@ -305,7 +361,11 @@ impl Widget for MenuBar {
         let v = ctx.visuals();
         ctx.set_fill_color(v.top_bar_bg);
         ctx.begin_path();
-        ctx.rect(0.0, 0.0, self.bounds.width, BAR_H);
+        let bg_h = match self.orientation {
+            MenuOrientation::Horizontal => BAR_H,
+            MenuOrientation::Vertical => self.bounds.height,
+        };
+        ctx.rect(0.0, 0.0, self.bounds.width, bg_h);
         ctx.fill();
         for (idx, menu) in self.menus.iter().enumerate() {
             // After a click-to-close-toggle, the cursor is still over
