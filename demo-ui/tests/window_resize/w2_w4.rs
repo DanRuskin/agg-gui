@@ -187,7 +187,11 @@ fn w2_mouse_wheel_advances_scroll_offset() {
 
     let before = read_offset(&app);
     app.on_mouse_move(cx, cy_dn); // prime hover so the wheel routes here
-    app.on_mouse_wheel(cx, cy_dn, 3.0); // 3 notches "down"
+                                  // App convention (matches winit / WheelEvent): positive delta_y =
+                                  // user wants to see content ABOVE = offset DECREASES. To scroll
+                                  // DOWN the window (advance offset toward max_scroll) we send a
+                                  // NEGATIVE delta_y.
+    app.on_mouse_wheel(cx, cy_dn, -3.0); // 3 notches scroll-down
     app.layout(Size::new(CANVAS_W, CANVAS_H));
     let after = read_offset(&app);
     assert!(

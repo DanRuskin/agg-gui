@@ -60,10 +60,14 @@ impl MarkdownView {
             } => {
                 if let Some((block_idx, viewport, content)) = self.point_over_scrollable_block(*pos)
                 {
+                    // Convention: positive delta_x = wheel-left =
+                    // see content to the LEFT = DECREASE offset.
+                    // Shift+wheel-y maps to horizontal with the same
+                    // sign rule.
                     let delta = if delta_x.abs() > 1e-6 {
-                        delta_x * 40.0
+                        -delta_x * 40.0
                     } else if modifiers.shift {
-                        delta_y * 40.0
+                        -delta_y * 40.0
                     } else {
                         0.0
                     };

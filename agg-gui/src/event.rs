@@ -83,11 +83,16 @@ pub enum Event {
     FocusGained,
     /// Sent by the framework when this widget loses keyboard focus.
     FocusLost,
-    /// Mouse wheel scrolled.  `delta_y` is in logical pixels; positive =
-    /// scroll up (content moves up, typical "natural" scroll direction).
-    /// `delta_x` is horizontal wheel / trackpad input in the same units;
-    /// positive = content moves right.  `pos` is the cursor location at the
-    /// time of the scroll.
+    /// Mouse wheel scrolled.  Convention matches `winit` /
+    /// `WheelEvent` after the OS applies its natural-scroll
+    /// preference: **positive `delta_y` means the user wants to see
+    /// content ABOVE the current view** (wheel rotated forward on
+    /// Windows / wheel forward + natural-scroll on macOS).  Scroll
+    /// containers should DECREASE their scroll offset when `delta_y`
+    /// is positive.  `delta_x` follows the same sign rule for
+    /// horizontal scroll (positive = see content to the LEFT).
+    /// Magnitude is in logical pixels; line deltas should be
+    /// pre-scaled by the platform shell (~40 px per line).
     MouseWheel {
         pos: Point,
         delta_y: f64,

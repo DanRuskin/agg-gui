@@ -212,13 +212,16 @@ impl Widget for ScrollView {
             Event::MouseWheel {
                 delta_y, delta_x, ..
             } => {
+                // Convention: positive delta_y = user wants to see
+                // content ABOVE = DECREASE offset (offset 0 = top of
+                // content). Same sign for horizontal.
                 let mut consumed = false;
                 if self.v.enabled {
-                    self.v.offset = self.v.offset + delta_y * 40.0;
+                    self.v.offset = self.v.offset - delta_y * 40.0;
                     consumed = true;
                 }
                 if self.h.enabled {
-                    self.h.offset = self.h.offset + delta_x * 40.0;
+                    self.h.offset = self.h.offset - delta_x * 40.0;
                     consumed = true;
                 }
                 self.clamp_offsets();

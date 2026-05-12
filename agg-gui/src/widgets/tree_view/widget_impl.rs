@@ -261,10 +261,11 @@ impl Widget for TreeView {
             }
 
             Event::MouseWheel { delta_y, .. } => {
-                // Convention: delta_y > 0 = user scrolled DOWN (wants to see content below).
-                // Increasing scroll_offset shifts content UP → reveals lower rows. ✓
+                // Convention (matches winit / WheelEvent after OS
+                // natural-scroll): positive delta_y = user wants to
+                // see content ABOVE = DECREASE scroll_offset.
                 self.scroll_offset =
-                    (self.scroll_offset + delta_y * 40.0).clamp(0.0, self.max_scroll());
+                    (self.scroll_offset - delta_y * 40.0).clamp(0.0, self.max_scroll());
                 self.hovered_row = None;
                 EventResult::Consumed
             }

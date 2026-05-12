@@ -611,9 +611,12 @@ impl Widget for ComboBox {
             Event::MouseWheel { delta_y, .. } => {
                 if self.open && self.options.len() > self.popup_visible_count {
                     self.sync_scrollbar_from_rows();
+                    // Negate delta_y so positive (= wheel forward,
+                    // see content above) DECREASES the scrollbar
+                    // offset, matching ScrollView and TreeView.
                     if self
                         .scrollbar
-                        .scroll_by(delta_y * 40.0, self.popup_scroll_viewport())
+                        .scroll_by(-delta_y * 40.0, self.popup_scroll_viewport())
                     {
                         self.sync_rows_from_scrollbar();
                         self.hovered_item = None;

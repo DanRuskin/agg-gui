@@ -139,16 +139,18 @@ fn test_combo_popup_wheel_uses_system_scroll_direction() {
         Some("true".to_string())
     );
 
-    // App convention: positive delta_y means content moves up. The popup now
-    // routes wheel input through the same scrollbar axis as ScrollView, so one
-    // wheel tick moves by the shared 40 px scroll step.
+    // App convention (matches winit / WheelEvent after OS natural-scroll):
+    // positive delta_y = see content ABOVE. To scroll the popup DOWN through
+    // the list (revealing items below the visible window), send a NEGATIVE
+    // delta_y. The popup routes wheel input through the same scrollbar axis
+    // as ScrollView, so one wheel tick moves by the shared 40 px scroll step.
     let top_popup_row_y_up = 101.0;
     assert!(
         app.root()
             .hit_test(crate::Point::new(12.0, top_popup_row_y_up)),
         "open ComboBox popup should be hittable in the space above the button"
     );
-    app.on_mouse_wheel(12.0, viewport.height - top_popup_row_y_up, 44.0);
+    app.on_mouse_wheel(12.0, viewport.height - top_popup_row_y_up, -44.0);
     app.on_mouse_down(
         12.0,
         viewport.height - top_popup_row_y_up,

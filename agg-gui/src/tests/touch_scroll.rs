@@ -112,3 +112,33 @@ fn middle_drag_scroll_uses_mouse_down_as_stable_anchor() {
     assert_eq!(v_offset.get(), 50.0);
     assert_eq!(h_offset.get(), 40.0);
 }
+
+/// Regression: positive wheel `delta_y` DECREASES scroll offset (the
+/// user wants to see content ABOVE), and negative INCREASES it.
+/// Matches winit / `WheelEvent` after the OS applies natural-scroll —
+/// see the `Event::MouseWheel` doc.
+#[test]
+fn test_scroll_view_wheel_direction_matches_system_convention() {
+    use crate::Point;
+    use crate::SizedBox;
+    let v = Rc::new(Cell::new(200.0));
+    let mut sv = ScrollView::new(Box::new(SizedBox::new().with_height(2000.0)))
+        .with_offset_cell(Rc::clone(&v));
+    sv.layout(Size::new(200.0, 200.0));
+    let wheel = |dy: f64| Event::MouseWheel {
+        pos: Point::new(100.0, 100.0),
+        delta_y: dy,
+        delta_x: 0.0,
+        modifiers: Modifiers::default(),
+    };
+    let before = v.get();
+    sv.on_event(&wheel(1.0));
+    assert!(
+        v.get() < before,
+        "+y must scroll up; {before} → {}",
+        v.get()
+    );
+    let mid = v.get();
+    sv.on_event(&wheel(-1.0));
+    assert!(v.get() > mid, "-y must scroll down; {mid} → {}", v.get());
+}

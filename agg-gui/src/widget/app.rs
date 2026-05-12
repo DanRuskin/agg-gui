@@ -369,8 +369,11 @@ impl App {
         }
     }
 
-    /// Mouse wheel scrolled. `screen_y` is Y-down. `delta_y` positive = scroll up.
-    /// `delta_x` positive = content moves right.
+    /// Mouse wheel scrolled. `screen_y` is Y-down. Convention matches
+    /// `winit` / `WheelEvent`: positive `delta_y` = wheel rotated
+    /// forward = user wants to see content ABOVE the current view.
+    /// Scroll containers DECREASE their offset when `delta_y` is
+    /// positive. Positive `delta_x` = see content to the LEFT.
     pub fn on_mouse_wheel(&mut self, screen_x: f64, screen_y: f64, delta_y: f64) {
         self.on_mouse_wheel_xy_mods(screen_x, screen_y, 0.0, delta_y, Modifiers::default());
     }
