@@ -76,7 +76,16 @@ pub fn stack_layout(
         prefix.push(next_idx);
         items = &item.submenu;
         x = (rect.x + rect.width - 2.0).min(viewport.width - MENU_W - MARGIN);
-        y_top = row.rect.y + row.rect.height;
+        // For top/context popups (open downward) the cascade
+        // anchors at the row's TOP so the submenu's top edge
+        // aligns with the parent row's top. For BottomBar popups
+        // (open upward) the cascade anchors at the row's BOTTOM
+        // so the submenu's bottom edge aligns with the parent
+        // row's bottom — visually symmetric.
+        y_top = match anchor_kind {
+            MenuAnchorKind::BottomBar => row.rect.y,
+            _ => row.rect.y + row.rect.height,
+        };
     }
 
     layouts
