@@ -373,31 +373,28 @@ impl Button {
         )
     }
 
-    /// Render the configured icon glyph at the same baseline as
-    /// the button's text label. We deliberately use the LABEL
-    /// font's metrics for centring (not the icon font's) because
-    /// FA-style icon fonts report an em-box ascent much taller
-    /// than the actual glyph; using their metrics would float the
-    /// icon to the top of the button instead of aligning with text.
+    /// Render the configured icon glyph centred vertically in the
+    /// button. Icon-only fonts (FA Free Solid in particular)
+    /// report a font-wide ascender close to the full em-size, so
+    /// neither the icon font's nor the label font's
+    /// `centered_baseline_y` lands the glyph at the visual midline.
+    ///
+    /// Treat the icon as occupying its em-box (`font_size` tall,
+    /// glyph sitting on the baseline) and centre that box in the
+    /// button: `baseline = (button_h - icon.font_size) * 0.5`. FA
+    /// glyphs paint almost flush to the baseline so this matches
+    /// what the eye reads as centred.
     fn paint_icon(
         ctx: &mut dyn DrawCtx,
         icon: &Option<ButtonIcon>,
-        label_font: &Arc<Font>,
-        label_font_size: f64,
+        _label_font: &Arc<Font>,
+        _label_font_size: f64,
         x: f64,
         button_h: f64,
         color: Color,
     ) {
         let Some(icon) = icon else { return };
-        // Measure label font ("Ag" gives ascender+descender) to
-        // pick the baseline, then switch to icon font for paint.
-        ctx.set_font(Arc::clone(label_font));
-        ctx.set_font_size(label_font_size);
-        let baseline_y = ctx
-            .measure_text("Ag")
-            .map(|m| m.centered_baseline_y(button_h))
-            .unwrap_or((button_h - label_font_size) * 0.5)
-            .max(0.0);
+        let baseline_y = ((button_h - icon.font_size) * 0.5).max(0.0);
         ctx.set_font(Arc::clone(&icon.font));
         ctx.set_font_size(icon.font_size);
         ctx.set_fill_color(color);
