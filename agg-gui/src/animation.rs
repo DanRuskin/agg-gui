@@ -20,6 +20,7 @@
 //! Between draws it idles; no frames are drawn while nothing has changed.
 
 use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use web_time::Instant;
 
@@ -38,6 +39,49 @@ std::thread_local! {
     /// layout reserved (the user-visible "wrong scale on first
     /// frame" bug).
     static ASYNC_STATE_EPOCH: Cell<u64> = Cell::new(0);
+    /// Per-thread snapshot of `ASYNC_WAKEUP_COUNTER` last observed by
+    /// [`pump_async_wakeup`].  When the global atomic is ahead of this,
+    /// the current thread's [`NEEDS_DRAW`], [`INVALIDATION_EPOCH`] and
+    /// [`ASYNC_STATE_EPOCH`] are bumped — see the module docs above
+    /// `ASYNC_WAKEUP_COUNTER` for why this indirection is required.
+    static LAST_SEEN_ASYNC_WAKEUP: Cell<u64> = Cell::new(0);
+}
+
+/// Process-global counter bumped by [`signal_async_state_change`] from
+/// any thread.  The async fetch / decode runs on a background worker
+/// (e.g. ehttp's `std::thread::spawn`), so thread-locals it sets are
+/// invisible to the main event loop.  The main thread pumps this
+/// atomic into its own thread-local epochs on every
+/// `wants_draw` / `invalidation_epoch` / `async_state_epoch` read —
+/// see [`pump_async_wakeup`].
+static ASYNC_WAKEUP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Merge any pending cross-thread async-wakeup bumps into the calling
+/// thread's draw/invalidation/async-state state.
+///
+/// Without this, an ehttp callback completing on a background thread
+/// bumps thread-locals the main event loop never reads — the markdown
+/// SVG-badge "wrong scale until any other event" bug, where the loop
+/// keeps polling (`needs_draw=true` while `ImageState::Loading`) but
+/// `invalidation_epoch` never changes, so `render_app_frame` skips
+/// the layout pass and paints the freshly-decoded SVG into the
+/// previous layout's placeholder rect.
+fn pump_async_wakeup() {
+    let current = ASYNC_WAKEUP_COUNTER.load(Ordering::Acquire);
+    let changed = LAST_SEEN_ASYNC_WAKEUP.with(|c| {
+        let prev = c.get();
+        if prev == current {
+            false
+        } else {
+            c.set(current);
+            true
+        }
+    });
+    if changed {
+        NEEDS_DRAW.with(|c| c.set(true));
+        INVALIDATION_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
+        ASYNC_STATE_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
+    }
 }
 
 /// Request that the host schedule another draw as soon as possible.
@@ -89,29 +133,56 @@ pub fn request_draw_without_invalidation() {
 
 /// Non-destructive read.  Hosts call this after drawing to decide control-flow
 /// for the next loop iteration.
+///
+/// Pumps any pending cross-thread async-wakeup bumps first, so a fetch
+/// callback that finished on a worker thread between frames is reflected
+/// in the result.
 pub fn wants_draw() -> bool {
+    pump_async_wakeup();
     NEEDS_DRAW.with(|c| c.get())
 }
 
 /// Monotonic draw-request epoch used to detect visual changes during dispatch.
+///
+/// Pumps cross-thread wakeups first so a background-thread
+/// [`signal_async_state_change`] is observed here on the next read,
+/// causing layout-key caches keyed on this epoch to re-layout.
 pub fn invalidation_epoch() -> u64 {
+    pump_async_wakeup();
     INVALIDATION_EPOCH.with(|c| c.get())
 }
 
 /// Note that an async-side state change happened (image loader finished,
-/// font loaded, etc.).  Calls `request_draw()` so the next frame fires,
-/// AND bumps the [`async_state_epoch`] so retained backbuffers
-/// re-rasterise — without the latter, the freshly-loaded data gets
-/// drawn into whatever placeholder rect the previous layout reserved
-/// (the markdown SVG-badge "wrong scale on first frame" bug).
+/// font loaded, etc.).  Safe to call from any thread; the main event
+/// loop observes the bump via [`pump_async_wakeup`] on its next
+/// `wants_draw` / `invalidation_epoch` / `async_state_epoch` read.
+///
+/// This used to only bump thread-local epochs, which silently broke
+/// when callers ran on background threads (ehttp spawns its own
+/// `std::thread`) — the main thread never observed the change and
+/// `render_app_frame`'s layout-key cache skipped the layout pass that
+/// would have given freshly-decoded SVG badges their natural
+/// dimensions (the user-visible "wrong scale until any other event"
+/// bug).
 pub fn signal_async_state_change() {
-    request_draw();
+    // Cross-thread visible bump.  Main thread merges via pump_async_wakeup.
+    ASYNC_WAKEUP_COUNTER.fetch_add(1, Ordering::AcqRel);
+    // Best-effort thread-local bump for same-thread callers (most
+    // hosts / tests).  Background threads only set their own
+    // thread-locals here, which is harmless — the atomic above is
+    // what the main thread actually consumes.
+    NEEDS_DRAW.with(|c| c.set(true));
+    INVALIDATION_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
     ASYNC_STATE_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
 }
 
 /// Current async-state epoch.  Backbuffer caches store this and force
 /// a re-raster when it doesn't match.
+///
+/// Pumps cross-thread wakeups first so a worker-thread
+/// [`signal_async_state_change`] surfaces on the next read.
 pub fn async_state_epoch() -> u64 {
+    pump_async_wakeup();
     ASYNC_STATE_EPOCH.with(|c| c.get())
 }
 
@@ -119,9 +190,17 @@ pub fn async_state_epoch() -> u64 {
 /// this before delegating to the root widget so each frame starts fresh —
 /// widgets that still need a draw (animation in flight, focus blink, etc.)
 /// must re-arm during their draw, otherwise the loop goes idle.
+///
+/// Also syncs this thread's cross-thread async-wakeup bookkeeping so a
+/// stale bump from before this clear cannot reappear on the next
+/// `wants_draw` read.  Without that sync, parallel tests calling
+/// [`signal_async_state_change`] would leak wakeups into unrelated
+/// tests that rely on `wants_draw()` returning `false` after a clear.
 pub fn clear_draw_request() {
     NEEDS_DRAW.with(|c| c.set(false));
     NEXT_DRAW_AT.with(|c| c.set(None));
+    let current = ASYNC_WAKEUP_COUNTER.load(Ordering::Acquire);
+    LAST_SEEN_ASYNC_WAKEUP.with(|c| c.set(current));
 }
 
 /// Schedule a future draw.  Keeps the EARLIEST pending deadline, so multiple
@@ -227,3 +306,4 @@ impl Default for Tween {
         Self::new(0.0, 0.12)
     }
 }
+
