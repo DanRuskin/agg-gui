@@ -188,6 +188,7 @@ impl PopupLabels {
     /// Background, icon, check / radio glyph, and submenu chevron are
     /// painted by the caller.  `color` is applied to BOTH the label and
     /// the shortcut so a hover / open state change retints in one shot.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint_row(
         &mut self,
         ctx: &mut dyn DrawCtx,

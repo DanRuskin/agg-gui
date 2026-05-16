@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::event::{Event, EventResult, Key, Modifiers, MouseButton};
+use crate::event::{Event, Key, Modifiers, MouseButton};
 use crate::geometry::{Point, Size};
 use crate::text::Font;
 use crate::widget::Widget;
