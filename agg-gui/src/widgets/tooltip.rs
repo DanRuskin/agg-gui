@@ -18,6 +18,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::color::Color;
 use crate::draw_ctx::DrawCtx;
@@ -27,13 +29,19 @@ use crate::layout_props::{HAnchor, Insets, VAnchor, WidgetBase};
 use crate::text::Font;
 use crate::widget::{current_mouse_world, Widget};
 
-/// Number of consecutive hovered frames before the tooltip appears.
-/// At ~60 fps this gives an egui-like short hover delay.
-const HOVER_DELAY_FRAMES: u32 = 18;
+/// Standard initial hover delay before the tooltip appears.
+///
+/// Windows common controls default to roughly 500ms. MatterCAD uses
+/// 0.6s. Use 500ms and make it wall-clock based so the delay is not
+/// dependent on redraw frequency.
+const TOOLTIP_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const TOOLTIP_FONT_SIZE: f64 = 12.0;
 const TOOLTIP_PAD_X: f64 = 8.0;
 const TOOLTIP_PAD_Y: f64 = 6.0;
 const TOOLTIP_GAP: f64 = 4.0;
+/// Extra vertical offset for pointer-anchored tooltips.  They should
+/// read as attached below the cursor rather than hugging it.
+const POINTER_TOOLTIP_EXTRA_DROP: f64 = 10.0;
 const SCREEN_MARGIN: f64 = 4.0;
 
 #[derive(Clone)]
@@ -67,10 +75,16 @@ pub struct Tooltip {
     children: Vec<Box<dyn Widget>>,
     base: WidgetBase,
 
-    /// Hover-frame counter: increments while cursor is over the child.
-    hover_frames: u32,
+    /// Time when the pointer entered the widget.  `None` when the
+    /// pointer is outside. Wall-clock timing gives consistent tooltip
+    /// latency even when the app is not repainting continuously.
+    hover_started_at: Option<Instant>,
     /// Whether the cursor is currently inside the widget bounds.
     hovered: bool,
+    /// Whether this tooltip was visible on the previous paint. Used
+    /// to invalidate when the delayed tooltip appears or disappears,
+    /// not just when hover state changes.
+    tooltip_visible: bool,
     /// Last known cursor position in local coordinates.
     cursor: Point,
 
@@ -88,14 +102,15 @@ impl Tooltip {
             bounds: Rect::default(),
             children: vec![child],
             base: WidgetBase::new(),
-            hover_frames: 0,
+            hover_started_at: None,
             hovered: false,
+            tooltip_visible: false,
             cursor: Point::ORIGIN,
             font,
             lines: text_to_lines(text),
             disabled_lines: Vec::new(),
             disabled_when: None,
-            at_pointer: false,
+            at_pointer: true,
         }
     }
 
@@ -127,8 +142,16 @@ impl Tooltip {
     }
 
     /// Place the tooltip relative to the mouse cursor instead of the widget.
+    /// This is the default; kept for call-site clarity.
     pub fn at_pointer(mut self) -> Self {
         self.at_pointer = true;
+        self
+    }
+
+    /// Place the tooltip relative to the wrapped widget instead of the
+    /// mouse cursor.
+    pub fn at_widget(mut self) -> Self {
+        self.at_pointer = false;
         self
     }
 
@@ -157,7 +180,19 @@ impl Tooltip {
     }
 
     fn show_tip(&self) -> bool {
-        self.hovered && self.hover_frames >= HOVER_DELAY_FRAMES
+        self.hovered
+            && self
+                .hover_started_at
+                .map(|started| started.elapsed() >= TOOLTIP_INITIAL_DELAY)
+                .unwrap_or(false)
+    }
+
+    fn remaining_delay(&self) -> Option<Duration> {
+        if !self.hovered {
+            return None;
+        }
+        let elapsed = self.hover_started_at?.elapsed();
+        Some(TOOLTIP_INITIAL_DELAY.saturating_sub(elapsed))
     }
 
     fn active_lines(&self) -> Vec<TooltipLine> {
@@ -227,6 +262,22 @@ mod tests {
         assert_eq!(tooltip.on_event(&event), EventResult::Consumed);
         assert_eq!(clicks.load(Ordering::SeqCst), 1);
     }
+
+    #[test]
+    fn tooltip_defaults_to_pointer_anchored() {
+        let clicks = Arc::new(AtomicUsize::new(0));
+        let font = Arc::new(Font::from_bytes(FONT_BYTES.to_vec()).expect("bundled font"));
+        let tooltip = Tooltip::new(Box::new(ClickChild::new(clicks)), "tip", font);
+        assert!(tooltip.at_pointer);
+    }
+
+    #[test]
+    fn tooltip_can_opt_into_widget_anchor() {
+        let clicks = Arc::new(AtomicUsize::new(0));
+        let font = Arc::new(Font::from_bytes(FONT_BYTES.to_vec()).expect("bundled font"));
+        let tooltip = Tooltip::new(Box::new(ClickChild::new(clicks)), "tip", font).at_widget();
+        assert!(!tooltip.at_pointer);
+    }
 }
 
 impl Widget for Tooltip {
@@ -284,30 +335,45 @@ impl Widget for Tooltip {
     fn paint(&mut self, _: &mut dyn DrawCtx) {}
 
     fn paint_overlay(&mut self, ctx: &mut dyn DrawCtx) {
-        if self.hovered {
-            self.hover_frames = self.hover_frames.saturating_add(1);
-            if !self.show_tip() {
-                crate::animation::request_draw();
+        let should_show = self.show_tip();
+
+        if self.hovered && !should_show {
+            if let Some(remaining) = self.remaining_delay() {
+                if remaining.is_zero() {
+                    crate::animation::request_draw();
+                } else {
+                    crate::animation::request_draw_after(remaining);
+                }
             }
         }
 
-        if !self.show_tip() {
+        if should_show != self.tooltip_visible {
+            self.tooltip_visible = should_show;
+            // The visible tooltip is a global overlay, but the request
+            // is produced by this widget during paint.  Bump the normal
+            // invalidation path so retained ancestors and the global
+            // tooltip queue redraw when the delayed tooltip appears or
+            // disappears.
+            crate::animation::request_draw();
+        }
+
+        if !should_show {
             return;
         }
 
-        let mut anchor = if self.at_pointer {
+        let anchor = if self.at_pointer {
             current_mouse_world().unwrap_or(self.cursor)
         } else {
             let mut x = self.bounds.width * 0.5;
-            let mut y = self.bounds.height;
+            // Widget-anchored tooltips should appear below the
+            // hovered widget by default (MatterCAD-style). In
+            // agg-gui's Y-up coords, the bottom edge is y=0; the
+            // global paint step will offset the panel by
+            // `TOOLTIP_GAP` from this anchor.
+            let mut y = 0.0;
             ctx.root_transform().transform(&mut x, &mut y);
             Point::new(x, y)
         };
-        if self.at_pointer {
-            anchor.x += 14.0;
-            anchor.y += 14.0;
-        }
-
         submit_tooltip(TooltipRequest {
             font: Arc::clone(&self.font),
             lines: self.active_lines(),
@@ -322,8 +388,15 @@ impl Widget for Tooltip {
                 let was = self.hovered;
                 self.hovered = self.hit_test(*pos);
                 self.cursor = *pos;
-                if !self.hovered {
-                    self.hover_frames = 0;
+                if self.hovered && !was {
+                    self.hover_started_at = Some(Instant::now());
+                    crate::animation::request_draw_after(TOOLTIP_INITIAL_DELAY);
+                } else if !self.hovered {
+                    self.hover_started_at = None;
+                    if self.tooltip_visible {
+                        self.tooltip_visible = false;
+                        crate::animation::request_draw();
+                    }
                 }
                 if self.hovered != was {
                     crate::animation::request_draw();
@@ -335,7 +408,11 @@ impl Widget for Tooltip {
             }
             Event::MouseWheel { .. } => {
                 self.hovered = false;
-                self.hover_frames = 0;
+                self.hover_started_at = None;
+                if self.tooltip_visible {
+                    self.tooltip_visible = false;
+                    crate::animation::request_draw();
+                }
                 self.children
                     .first_mut()
                     .map(|child| child.on_event(event))
@@ -406,13 +483,18 @@ fn paint_request(ctx: &mut dyn DrawCtx, viewport: Size, request: TooltipRequest)
     } else {
         request.anchor.x - panel_w * 0.5
     };
-    let mut panel_y = request.anchor.y + TOOLTIP_GAP;
+    let mut panel_y = request.anchor.y - panel_h - TOOLTIP_GAP;
+    if request.at_pointer {
+        panel_y -= POINTER_TOOLTIP_EXTRA_DROP;
+    }
 
     if panel_x + panel_w > viewport.width - SCREEN_MARGIN {
         panel_x = viewport.width - panel_w - SCREEN_MARGIN;
     }
-    if panel_y + panel_h > viewport.height - SCREEN_MARGIN {
-        panel_y = request.anchor.y - panel_h - TOOLTIP_GAP * 3.0;
+    if panel_y < SCREEN_MARGIN {
+        // If there is not enough room below, fall back above the
+        // cursor / widget, mirroring viewport-edge avoidance.
+        panel_y = request.anchor.y + TOOLTIP_GAP;
     }
     panel_x = panel_x.clamp(
         SCREEN_MARGIN,
