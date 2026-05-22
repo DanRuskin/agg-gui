@@ -19,7 +19,43 @@ use std::sync::Arc;
 
 use crate::end_frame_prepare::prepare_all;
 use crate::pipelines::WgpuPipelines;
-use crate::WgpuGfxCtx;
+use crate::{LastEndFrameStats, WgpuGfxCtx};
+
+/// One `(buffer, offset, size)` allocation from the per-frame arena pool.
+/// Stored inside [`Prepared`] variants and read by `execute_one` to produce
+/// a `wgpu::BufferSlice` for vertex / index binding, or a
+/// `wgpu::BufferBinding` for a uniform bind group.
+///
+/// Holding the `Arc<wgpu::Buffer>` here keeps the underlying chunk alive
+/// even if the arena later advances to a different chunk in the same frame
+/// (see `buffer_arena` module docs).
+#[derive(Clone)]
+pub(crate) struct PreparedSlice {
+    pub buf: Arc<wgpu::Buffer>,
+    pub offset: u64,
+    pub size: u64,
+}
+
+impl PreparedSlice {
+    /// Sub-slice of the underlying buffer covering exactly `size` bytes
+    /// starting at `offset`.  Used for `set_vertex_buffer` / `set_index_buffer`.
+    #[inline]
+    pub fn wgpu_slice(&self) -> wgpu::BufferSlice<'_> {
+        self.buf.slice(self.offset..self.offset + self.size)
+    }
+
+    /// Binding descriptor for a uniform bind group.  `size = None` would
+    /// mean "rest of buffer" — we always want the exact uniform-struct size
+    /// because the arena packs multiple uniforms back-to-back into one chunk.
+    #[inline]
+    pub fn uniform_binding(&self) -> wgpu::BufferBinding<'_> {
+        wgpu::BufferBinding {
+            buffer: &self.buf,
+            offset: self.offset,
+            size: std::num::NonZeroU64::new(self.size),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Per-command prepared GPU resources
@@ -30,29 +66,26 @@ pub(crate) enum Prepared {
     Clear(wgpu::Color),
     /// Solid colour (no AA).
     Solid {
-        _ub: wgpu::Buffer,
-        vb: wgpu::Buffer,
-        ib: wgpu::Buffer,
+        vb: PreparedSlice,
+        ib: PreparedSlice,
         index_count: u32,
         bg0: wgpu::BindGroup,
         clip: Option<[i32; 4]>,
     },
     /// AA solid (per-vertex alpha from tess2 halo strips).
     AaSolid {
-        _ub: wgpu::Buffer,
-        vb: wgpu::Buffer,
-        ib: wgpu::Buffer,
+        vb: PreparedSlice,
+        ib: PreparedSlice,
         index_count: u32,
         bg0: wgpu::BindGroup,
         clip: Option<[i32; 4]>,
     },
     /// Linear or radial gradient.
     Gradient {
-        _ub: wgpu::Buffer,
         _ramp_tex: wgpu::Texture,
         _ramp_view: wgpu::TextureView,
-        vb: wgpu::Buffer,
-        ib: wgpu::Buffer,
+        vb: PreparedSlice,
+        ib: PreparedSlice,
         index_count: u32,
         bg0: wgpu::BindGroup,
         bg1: wgpu::BindGroup,
@@ -60,34 +93,31 @@ pub(crate) enum Prepared {
     },
     /// Textured quad (image blit).
     Textured {
-        _ub: wgpu::Buffer,
         _texture: Arc<wgpu::Texture>,
         _view: wgpu::TextureView,
-        vb: wgpu::Buffer,
+        vb: PreparedSlice,
         bg0: wgpu::BindGroup,
         bg1: wgpu::BindGroup,
         clip: Option<[i32; 4]>,
     },
     /// LCD subpixel mask (3-pass).
     LcdMask {
-        _ubs: [wgpu::Buffer; 3],
         _texture: Arc<wgpu::Texture>,
         _view: wgpu::TextureView,
-        vb: wgpu::Buffer,
-        ib: wgpu::Buffer,
+        vb: PreparedSlice,
+        ib: PreparedSlice,
         bg0s: [wgpu::BindGroup; 3],
         bg1: wgpu::BindGroup,
         clip: Option<[i32; 4]>,
     },
     /// LCD backbuffer (3-pass, two-plane input).
     LcbMask {
-        _ubs: [wgpu::Buffer; 3],
         _color_tex: Arc<wgpu::Texture>,
         _color_view: wgpu::TextureView,
         _alpha_tex: Arc<wgpu::Texture>,
         _alpha_view: wgpu::TextureView,
-        vb: wgpu::Buffer,
-        ib: wgpu::Buffer,
+        vb: PreparedSlice,
+        ib: PreparedSlice,
         bg0s: [wgpu::BindGroup; 3],
         bg1: wgpu::BindGroup,
         clip: Option<[i32; 4]>,
@@ -100,20 +130,18 @@ pub(crate) enum Prepared {
     },
     /// End layer rendering and composite onto the parent target.
     PopLayer {
-        _ub: wgpu::Buffer,
         _texture: Arc<wgpu::Texture>,
         _view: wgpu::TextureView,
-        vb: wgpu::Buffer,
+        vb: PreparedSlice,
         bg0: wgpu::BindGroup,
         bg1: wgpu::BindGroup,
     },
     /// Composite a retained layer onto the current target — no layer-stack
     /// change.
     CompositeLayer {
-        _ub: wgpu::Buffer,
         _texture: Arc<wgpu::Texture>,
         _view: wgpu::TextureView,
-        vb: wgpu::Buffer,
+        vb: PreparedSlice,
         bg0: wgpu::BindGroup,
         bg1: wgpu::BindGroup,
     },
@@ -142,14 +170,30 @@ pub(crate) enum Prepared {
 impl WgpuGfxCtx {
     pub(crate) fn flush_to_surface(&mut self, surface_view: &wgpu::TextureView) {
         let commands = std::mem::take(&mut self.commands);
+        let command_count = commands.len() as u32;
 
+        // Rewind the per-frame buffer pool to chunk 0 / offset 0. Last
+        // frame's `Prepared` Vec was dropped at the end of the previous
+        // `flush_to_surface`, so nothing external still references the
+        // chunks; the wgpu::Buffers themselves are kept and overwritten via
+        // `queue.write_buffer` instead of being reallocated.
+        self.frame_arenas.begin_frame();
+
+        // Wall-clock split of the three phases. We deliberately keep this
+        // measurement in-renderer (vs. having the shell measure end_frame as
+        // a whole) so consumers see prepare-vs-execute-vs-submit separately —
+        // those three have very different optimisation strategies (CPU-side
+        // buffer allocation, render-pass batching, driver/GPU sync).
+        let t_prepare = web_time::Instant::now();
         let prepared = prepare_all(
             &self.device,
             &self.queue,
             &self.pipelines,
+            &mut self.frame_arenas,
             &commands,
             self.viewport,
         );
+        let prepare_us = t_prepare.elapsed().as_micros().min(u32::MAX as u128) as u32;
 
         let mut encoder = self
             .device
@@ -157,6 +201,7 @@ impl WgpuGfxCtx {
                 label: Some("frame"),
             });
 
+        let t_execute = web_time::Instant::now();
         execute_prepared(
             &self.device,
             &self.queue,
@@ -167,8 +212,18 @@ impl WgpuGfxCtx {
             &prepared,
             self.viewport,
         );
+        let execute_us = t_execute.elapsed().as_micros().min(u32::MAX as u128) as u32;
 
+        let t_submit = web_time::Instant::now();
         self.queue.submit(std::iter::once(encoder.finish()));
+        let submit_us = t_submit.elapsed().as_micros().min(u32::MAX as u128) as u32;
+
+        self.last_end_frame_stats = LastEndFrameStats {
+            prepare_us,
+            execute_us,
+            submit_us,
+            command_count,
+        };
     }
 }
 // ---------------------------------------------------------------------------
@@ -206,7 +261,7 @@ fn execute_prepared<'a>(
     // resumed pass — captured here between the closed layer pass and the reopened
     // parent pass.  The references point into `prepared`.
     let mut pending_composite: Option<(
-        &'a wgpu::Buffer,
+        &'a PreparedSlice,
         &'a wgpu::BindGroup,
         &'a wgpu::BindGroup,
     )> = None;
@@ -229,7 +284,7 @@ fn execute_prepared<'a>(
                 pass.set_pipeline(&pipelines.layer_pipeline);
                 pass.set_bind_group(0, bg0, &[]);
                 pass.set_bind_group(1, bg1, &[]);
-                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_vertex_buffer(0, vb.wgpu_slice());
                 pass.draw(0..6, 0..1);
             }
 
@@ -338,15 +393,14 @@ fn execute_one(
             index_count,
             bg0,
             clip,
-            ..
         } => {
             if !apply_clip(pass, *clip, vp) {
                 return;
             }
             pass.set_pipeline(&pipelines.solid_pipeline);
             pass.set_bind_group(0, bg0, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, vb.wgpu_slice());
+            pass.set_index_buffer(ib.wgpu_slice(), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..*index_count, 0, 0..1);
         }
         Prepared::AaSolid {
@@ -355,15 +409,14 @@ fn execute_one(
             index_count,
             bg0,
             clip,
-            ..
         } => {
             if !apply_clip(pass, *clip, vp) {
                 return;
             }
             pass.set_pipeline(&pipelines.aa_solid_pipeline);
             pass.set_bind_group(0, bg0, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, vb.wgpu_slice());
+            pass.set_index_buffer(ib.wgpu_slice(), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..*index_count, 0, 0..1);
         }
         Prepared::Gradient {
@@ -381,8 +434,8 @@ fn execute_one(
             pass.set_pipeline(&pipelines.gradient_pipeline);
             pass.set_bind_group(0, bg0, &[]);
             pass.set_bind_group(1, bg1, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, vb.wgpu_slice());
+            pass.set_index_buffer(ib.wgpu_slice(), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..*index_count, 0, 0..1);
         }
         Prepared::Textured {
@@ -394,7 +447,7 @@ fn execute_one(
             pass.set_pipeline(&pipelines.tex_pipeline);
             pass.set_bind_group(0, bg0, &[]);
             pass.set_bind_group(1, bg1, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_vertex_buffer(0, vb.wgpu_slice());
             pass.draw(0..6, 0..1);
         }
         Prepared::LcdMask {
@@ -409,8 +462,8 @@ fn execute_one(
                 return;
             }
             pass.set_bind_group(1, bg1, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, vb.wgpu_slice());
+            pass.set_index_buffer(ib.wgpu_slice(), wgpu::IndexFormat::Uint32);
             let lcd_pipelines = [&pipelines.lcd_r, &pipelines.lcd_g, &pipelines.lcd_b];
             for ch in 0..3 {
                 pass.set_pipeline(lcd_pipelines[ch]);
@@ -430,8 +483,8 @@ fn execute_one(
                 return;
             }
             pass.set_bind_group(1, bg1, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, vb.wgpu_slice());
+            pass.set_index_buffer(ib.wgpu_slice(), wgpu::IndexFormat::Uint32);
             let lcb_pipelines = [&pipelines.lcb_r, &pipelines.lcb_g, &pipelines.lcb_b];
             for ch in 0..3 {
                 pass.set_pipeline(lcb_pipelines[ch]);
@@ -446,7 +499,7 @@ fn execute_one(
             pass.set_pipeline(&pipelines.layer_pipeline);
             pass.set_bind_group(0, bg0, &[]);
             pass.set_bind_group(1, bg1, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_vertex_buffer(0, vb.wgpu_slice());
             pass.draw(0..6, 0..1);
         }
         // Pass-boundary commands are handled in the outer driver, not here.

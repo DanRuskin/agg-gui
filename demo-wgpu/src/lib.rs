@@ -75,6 +75,7 @@ pub struct WgpuPaintContext {
     pub target_size: (u32, u32),
 }
 
+mod buffer_arena;
 mod ctx_core;
 mod draw_ctx_impl;
 mod end_frame;
@@ -278,6 +279,34 @@ pub struct WgpuGfxCtx {
     /// Pixels are pulled back to system memory only when the user clicks
     /// Save or Copy — see [`DrawCtx::read_captured_screenshot`].
     pub(crate) capture_texture: Option<(Arc<wgpu::Texture>, wgpu::TextureView, u32, u32)>,
+
+    /// Per-frame chunked buffer pool — see [`buffer_arena`] module docs.
+    /// All `DrawCommand`s in a single flush share these three buffers
+    /// instead of allocating their own, which is the single biggest lever
+    /// against the per-command `create_buffer_init` cost.
+    pub(crate) frame_arenas: buffer_arena::FrameArenas,
+
+    /// Per-phase wall-clock timings from the most recent `end_frame`. Populated
+    /// inside `flush_to_surface` so platform shells (atomartist, marbles) can
+    /// surface a true breakdown of where wgpu-side time goes without needing
+    /// to fork the renderer for instrumentation. All numbers are wall-clock
+    /// microseconds; `command_count` is the number of `DrawCommand`s walked.
+    pub(crate) last_end_frame_stats: LastEndFrameStats,
+}
+
+/// Wall-clock breakdown of the most recent `WgpuGfxCtx::end_frame` call.
+///
+/// `prepare_us` is the per-command CPU walk that allocates wgpu buffers and
+/// bind groups (often the dominant cost for command-heavy scenes).
+/// `execute_us` is the render-pass walk that issues draw calls into the
+/// command encoder. `submit_us` is the `queue.submit` cost — usually tiny on
+/// native, occasionally large on WebGPU or when the driver is back-pressured.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LastEndFrameStats {
+    pub prepare_us: u32,
+    pub execute_us: u32,
+    pub submit_us: u32,
+    pub command_count: u32,
 }
 
 impl WgpuGfxCtx {
@@ -302,6 +331,7 @@ impl WgpuGfxCtx {
         // scoped to the bar-grid renderer, which manages its own multi-sample
         // attachments and resolves into the active 1-sample target view.
         let pipelines = WgpuPipelines::new(&device, surface_format, 1);
+        let frame_arenas = buffer_arena::FrameArenas::new(&device);
         Self {
             device,
             queue,
@@ -339,7 +369,17 @@ impl WgpuGfxCtx {
             surface_texture: None,
             pending_screenshot: None,
             capture_texture: None,
+            frame_arenas,
+            last_end_frame_stats: LastEndFrameStats::default(),
         }
+    }
+
+    /// Wall-clock breakdown of the most recent `end_frame` flush. Returns
+    /// zeroes until the first frame has been flushed. Designed for live perf
+    /// HUDs in platform shells — see atomartist's `record_frame_timings` for
+    /// an example consumer.
+    pub fn last_end_frame_stats(&self) -> LastEndFrameStats {
+        self.last_end_frame_stats
     }
 
     /// Reset drawing state for a new frame.  Preserves GPU resources.
