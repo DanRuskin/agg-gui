@@ -12,20 +12,23 @@
 //! 800-line guardrail.
 
 mod events;
+pub mod nodes;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
+use agg_gui::widget::paint_subtree;
 use agg_gui::{
     DrawCtx, Event, EventResult, HAnchor, MenuEntry, MenuItem, MenuResponse, PopupMenu, Rect, Size,
     VAnchor, Widget, WidgetBase,
 };
 
 use crate::draw::{
-    draw_bezier_connection, draw_canvas_grid, draw_node, layout_node_with_connections,
-    CanvasPalette, NodeLayoutInfo, PropLayout, SocketLayout, SocketSide,
+    draw_bezier_connection, draw_canvas_grid, layout_node_with_connections, CanvasPalette,
+    NodeLayoutInfo, PropLayout, SocketLayout, SocketSide,
 };
 use crate::model::{NodeGraphModel, NodeId, SocketTypeId};
+use crate::widget::nodes::{NodePaintContext, NodeWidget};
 
 const ZOOM_MIN: f64 = 0.15;
 const ZOOM_MAX: f64 = 3.0;
@@ -382,11 +385,25 @@ impl Widget for NodeEditor {
         }
 
         let ext_sel = model.primary_selection();
+        // Build a fresh paint context (snapshots colours so the
+        // composed sub-widgets don't have to lock the model later).
+        let node_ctx =
+            NodePaintContext::from_model(CanvasPalette::from_visuals(&visuals), &*model);
+        drop(model);
+
         for l in &layouts {
             let selected = self.selected.contains(&l.node_id) || ext_sel == Some(l.node_id);
-            draw_node(ctx, l, selected, &self.palette, &*model);
+            let mut node_widget = NodeWidget::from_layout(l, selected, node_ctx.clone());
+            // `paint_subtree` expects the ctx already translated so that
+            // (0, 0) maps to the widget's bottom-left.  Our ctx is at
+            // canvas-space origin, so translate by the node widget's
+            // bounds (which are canvas-space) before recursing.
+            let b = node_widget.bounds();
+            ctx.save();
+            ctx.translate(b.x, b.y);
+            paint_subtree(&mut node_widget, ctx);
+            ctx.restore();
         }
-        drop(model);
 
         ctx.restore(); // pop pan/zoom transform
 
