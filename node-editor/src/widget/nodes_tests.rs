@@ -13,7 +13,7 @@ impl NodeGraphModel for DummyModel {
     fn nodes(&self) -> Vec<NodeView> {
         vec![]
     }
-    fn edges(&self) -> Vec<crate::model::EdgeView> {
+    fn noodles(&self) -> Vec<crate::model::NoodleView> {
         vec![]
     }
     fn node_types_by_category(&self) -> Vec<(String, Vec<crate::model::NodeTypeView>)> {
@@ -24,14 +24,14 @@ impl NodeGraphModel for DummyModel {
         None
     }
     fn remove_node(&mut self, _: NodeId) {}
-    fn try_add_edge(
+    fn try_add_noodle(
         &mut self,
         _: NodeId,
         _: &str,
         _: NodeId,
         _: &str,
-    ) -> crate::model::EdgeResult {
-        crate::model::EdgeResult::Rejected
+    ) -> crate::model::NoodleResult {
+        crate::model::NoodleResult::Rejected
     }
     fn set_property(&mut self, _: NodeId, _: &str, _: PropertyValue) {}
 }

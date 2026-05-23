@@ -70,7 +70,7 @@ impl PropertyValue {
 /// Description of one socket (input or output) on a node.
 #[derive(Clone, Debug)]
 pub struct SocketView {
-    /// Stable name — must round-trip through `try_add_edge` /
+    /// Stable name — must round-trip through `try_add_noodle` /
     /// `remove_edges_to`.  Typically a `&'static str` interned by the
     /// host's node-type registry.
     pub name: String,
@@ -157,7 +157,7 @@ pub struct NodeView {
 
 /// Snapshot of one edge.
 #[derive(Clone, Debug)]
-pub struct EdgeView {
+pub struct NoodleView {
     pub from_node: NodeId,
     pub from_socket: String,
     pub to_node: NodeId,
@@ -174,17 +174,17 @@ pub struct NodeTypeView {
     pub category: String,
 }
 
-/// Outcome of an attempted edge connection.
+/// Outcome of an attempted noodle connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EdgeResult {
-    /// Edge was added cleanly.
+pub enum NoodleResult {
+    /// Noodle was added cleanly.
     Connected,
     /// The target input was already connected; the host removed the
-    /// existing edge and added the new one (hosts that don't allow
+    /// existing noodle and added the new one (hosts that don't allow
     /// multi-input or want different replacement semantics return
     /// `Rejected` and let the user disconnect manually).
     Replaced,
-    /// Edge was rejected — incompatible socket types, would create a
+    /// Noodle was rejected — incompatible socket types, would create a
     /// cycle, or any other host-defined reason.
     Rejected,
 }
@@ -204,7 +204,7 @@ pub trait NodeGraphModel {
     fn nodes(&self) -> Vec<NodeView>;
 
     /// Snapshot every edge between visible nodes — used for paint.
-    fn edges(&self) -> Vec<EdgeView>;
+    fn noodles(&self) -> Vec<NoodleView>;
 
     /// Right-click "Add Node" menu source — categories with the types
     /// that belong to each. Order is preserved in the menu.
@@ -255,13 +255,13 @@ pub trait NodeGraphModel {
     /// Try to add an edge. The widget calls this on connection-drag
     /// release; it's responsible for socket-direction inference (the
     /// caller passes producer-first / consumer-second).
-    fn try_add_edge(
+    fn try_add_noodle(
         &mut self,
         from_node: NodeId,
         from_socket: &str,
         to_node: NodeId,
         to_socket: &str,
-    ) -> EdgeResult;
+    ) -> NoodleResult;
 
     /// Update a property value (only invoked for `Number` / `Bool`).
     fn set_property(&mut self, id: NodeId, name: &str, value: PropertyValue);

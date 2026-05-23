@@ -24,7 +24,7 @@
 //! # Architecture
 //!
 //! - [`NodeGraphModel`] — the trait the widget reads/writes through.
-//! - [`NodeView`], [`EdgeView`], [`NodeTypeView`], [`PropertyView`] —
+//! - [`NodeView`], [`NoodleView`], [`NodeTypeView`], [`PropertyView`] —
 //!   owned data the model returns from snapshot calls. The widget
 //!   never holds a long-lived borrow into the host graph.
 //! - [`NodeEditor`] — the widget itself. Implements `agg_gui::Widget`.
@@ -43,7 +43,7 @@ pub mod widget;
 
 pub use draw::CanvasPalette;
 pub use model::{
-    EdgeResult, EdgeView, EditorHint, NodeGraphModel, NodeId, NodeTypeView, NodeView,
+    NoodleResult, NoodleView, EditorHint, NodeGraphModel, NodeId, NodeTypeView, NodeView,
     PropertyValue, PropertyView, SocketTypeId, SocketView,
 };
 pub use widget::{NodeEditor, SharedModel};

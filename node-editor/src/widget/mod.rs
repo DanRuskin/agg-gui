@@ -262,11 +262,11 @@ impl NodeEditor {
     fn snapshot_layouts(&self) -> Vec<NodeLayoutInfo> {
         let model = self.model.lock().unwrap();
         let nodes = model.nodes();
-        let edges = model.edges();
+        let noodles = model.noodles();
         let ext_sel = model.primary_selection();
         drop(model);
         // Index of connected input sockets keyed by `(node_id, socket_name)`.
-        let connected: std::collections::HashSet<(NodeId, String)> = edges
+        let connected: std::collections::HashSet<(NodeId, String)> = noodles
             .iter()
             .map(|e| (e.to_node, e.to_socket.clone()))
             .collect();
@@ -545,16 +545,16 @@ impl Widget for NodeEditor {
         // result anyway, so paint runs once per real change.
         let layouts = self.snapshot_layouts();
         let model = self.model.lock().unwrap();
-        let edges = model.edges();
-        for edge in &edges {
+        let noodles = model.noodles();
+        for noodle in &noodles {
             let from = layouts
                 .iter()
-                .find(|l| l.node_id == edge.from_node)
-                .and_then(|l| l.sockets().find(|s| s.name == edge.from_socket));
+                .find(|l| l.node_id == noodle.from_node)
+                .and_then(|l| l.sockets().find(|s| s.name == noodle.from_socket));
             let to = layouts
                 .iter()
-                .find(|l| l.node_id == edge.to_node)
-                .and_then(|l| l.sockets().find(|s| s.name == edge.to_socket));
+                .find(|l| l.node_id == noodle.to_node)
+                .and_then(|l| l.sockets().find(|s| s.name == noodle.to_socket));
             if let (Some(f), Some(t)) = (from, to) {
                 let col = model.socket_color(f.socket_type);
                 draw_bezier_connection(ctx, f.center, t.center, col, 2.0);

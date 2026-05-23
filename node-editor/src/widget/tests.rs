@@ -4,14 +4,14 @@
 //! local_to_canvas) the way the inline tests did.
 
 use super::*;
-use crate::model::{EdgeResult, EdgeView, NodeTypeView, NodeView, PropertyValue};
+use crate::model::{NoodleResult, NoodleView, NodeTypeView, NodeView, PropertyValue};
 use agg_gui::Point;
 
 /// Trivial in-memory model for unit tests.
 #[derive(Default)]
 struct Memory {
     nodes: Vec<NodeView>,
-    edges: Vec<EdgeView>,
+    noodles: Vec<NoodleView>,
     zoom: f64,
     last_selection: Option<NodeId>,
 }
@@ -20,8 +20,8 @@ impl NodeGraphModel for Memory {
     fn nodes(&self) -> Vec<NodeView> {
         self.nodes.clone()
     }
-    fn edges(&self) -> Vec<EdgeView> {
-        self.edges.clone()
+    fn noodles(&self) -> Vec<NoodleView> {
+        self.noodles.clone()
     }
     fn node_types_by_category(&self) -> Vec<(String, Vec<NodeTypeView>)> {
         vec![]
@@ -37,20 +37,20 @@ impl NodeGraphModel for Memory {
     fn remove_node(&mut self, id: NodeId) {
         self.nodes.retain(|n| n.id != id);
     }
-    fn try_add_edge(
+    fn try_add_noodle(
         &mut self,
         from_node: NodeId,
         from_socket: &str,
         to_node: NodeId,
         to_socket: &str,
-    ) -> EdgeResult {
-        self.edges.push(EdgeView {
+    ) -> NoodleResult {
+        self.noodles.push(NoodleView {
             from_node,
             from_socket: from_socket.into(),
             to_node,
             to_socket: to_socket.into(),
         });
-        EdgeResult::Connected
+        NoodleResult::Connected
     }
     fn set_property(&mut self, _id: NodeId, _name: &str, _value: PropertyValue) {}
     fn on_canvas_zoom_changed(&mut self, zoom: f64) {

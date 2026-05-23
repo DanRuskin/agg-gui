@@ -247,7 +247,7 @@ impl NodeEditor {
                             .model
                             .lock()
                             .unwrap()
-                            .try_add_edge(out_node, &out_sock, in_node, &in_sock);
+                            .try_add_noodle(out_node, &out_sock, in_node, &in_sock);
                     }
                 }
                 EventResult::Consumed
