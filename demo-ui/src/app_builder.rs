@@ -4,14 +4,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agg_gui::{
-    AccentColor, App, FlexColumn, FlexRow, Font, InspectorNode, InspectorPanel, Key, Modifiers,
-    Rect, Size, Stack, ThemePreference, Widget, Window,
+    AccentColor, App, FlexColumn, FlexRow, Font, InspectorNode, InspectorPanel, Key, MenuBarStrip,
+    Modifiers, Rect, Size, Stack, ThemePreference, Widget, Window,
 };
 
 use crate::api::{DemoHandles, PlatformHooks};
 use crate::backend_panel::{build_backend_panel, FrameHistory, RunMode};
 use crate::content::build_demo_content;
-use crate::shell::{BackendPane, CanvasBg, SidebarPane, TopMenuBar};
+use crate::shell::{BackendPane, CanvasBg, SidebarPane};
 use crate::sidebar::{build_sidebar, SidebarEntry, SidebarGroup};
 use crate::specs::{find_cube_idx, tile_rect, DEMOS, TESTS};
 use crate::state::{SavedState, StateAccessor};
@@ -675,7 +675,7 @@ pub fn build_demo_ui(
     );
     let root = FlexColumn::new()
         .with_gap(0.0)
-        .add(Box::new(TopMenuBar::new(top_bar_inner)))
+        .add(Box::new(MenuBarStrip::new(top_bar_inner)))
         .add_flex(Box::new(demos_body), 1.0);
     let mut app = App::new(Box::new(root));
     let on_organize_key = {

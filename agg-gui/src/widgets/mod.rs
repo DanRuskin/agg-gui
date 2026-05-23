@@ -51,8 +51,8 @@ pub use inspector::{InspectorPanel, InspectorSavedState};
 pub use label::{Label, LabelAlign};
 pub use markdown::MarkdownView;
 pub use menu::{
-    MenuBar, MenuEntry, MenuItem, MenuResponse, MenuSelection, MenuShortcut, PopupMenu,
-    ShortcutKey, TopMenu,
+    MenuBar, MenuBarStrip, MenuEntry, MenuItem, MenuResponse, MenuSelection, MenuShortcut,
+    PopupMenu, ShortcutKey, TopMenu,
 };
 pub use performance::{
     paint_sparkline, shared_frame_history, shared_run_mode, FrameHistory, PerformanceView,

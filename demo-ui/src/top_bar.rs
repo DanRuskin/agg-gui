@@ -1,22 +1,33 @@
-//! Top-bar widgets: theme toggle and backend toggle button.
+//! Top-bar chrome: a real menu bar (View / Help) plus the mobile-only
+//! Demos hamburger.
 //!
-//! All text in this module is rendered through `Label` children with
-//! `buffered = true` (the default), so glyph rasterization is cached to an
-//! offscreen framebuffer and only repeated when the text or color changes.
+//! Replaces the older row of inline chrome buttons (Backend / Theme
+//! toggle / Color dropdown / "View on GitHub") with a desktop-style
+//! `MenuBar`.  All those controls now live inside the View and Help
+//! menus.  The mobile hamburger that opens the demos sidebar is kept
+//! separate — it's a navigation drawer trigger, not chrome, and folding
+//! it into a menu makes the mobile flow noticeably worse.
 //!
 //! Exports:
-//! - `build_top_bar_inner` — builds the FlexRow that fills the `TopMenuBar`
+//! - `detect_system_theme` / `apply_theme_visuals` — unchanged helpers
+//!   called by `app_builder.rs` during startup.
+//! - `build_top_bar_inner` — builds the FlexRow that fills the
+//!   `TopMenuBar`.  Signature kept identical to the previous
+//!   implementation so `app_builder.rs` doesn't need to change.
 
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::widget::paint_subtree;
-use agg_gui::widgets::label::Label;
+use agg_gui::widget::{BackbufferCache, BackbufferMode};
+use agg_gui::widgets::menu::MenuStyle;
 use agg_gui::{
-    set_visuals, AccentColor, Button, Color, DrawCtx, Event, EventResult, FlexRow, Font, Hyperlink,
-    Rect, Size, SizedBox, ThemePreference, VAnchor, Visuals, Widget,
+    set_visuals, AccentColor, DrawCtx, Event, EventResult, FlexRow, Font, Key,
+    MenuBar, MenuEntry, MenuItem, Modifiers, Rect, Size, SizedBox, ThemePreference, TopMenu,
+    Visuals, Widget,
 };
+
+// ── Theme helpers (re-exported from the previous module) ─────────────────────
 
 /// Detect OS colour scheme and return the matching `ThemePreference`.
 pub fn detect_system_theme() -> ThemePreference {
@@ -39,193 +50,14 @@ pub fn apply_theme_visuals(pref: ThemePreference, accent: AccentColor) {
     set_visuals(base.with_accent_color(accent));
 }
 
-// ── Theme toggle widget ────────────────────────────────────────────────────────
+// ── Mobile-only "Demos" hamburger button ─────────────────────────────────────
+//
+// Identical in behaviour to the prior `MenuButton` (same name, same
+// breakpoint, same toggle target).  Kept as a separate inline widget
+// instead of being folded into the menu bar because mobile users expect
+// a one-tap hamburger to reveal the demos sidebar — burying it under a
+// menu would add a step every time they switch demos.
 
-/// Three-segment selector — Light / Dark / System — built out of three
-/// real `Button` children sharing a `Rc<Cell<ThemePreference>>`.  Each
-/// segment uses [`Button::with_subtle`] + [`Button::with_active_fn`] so
-/// the inactive segments paint in muted theme colours and the selected
-/// segment flips to the accent surface.  Glyphs are cached via the Label
-/// child every Button already wraps — no manual `paint_subtree` call,
-/// no separate label vector.
-///
-/// The widget keeps a thin wrapper struct so the inspector still shows
-/// "ThemeToggle" as a meaningful semantic node above its three buttons.
-struct ThemeToggle {
-    bounds: Rect,
-    children: Vec<Box<dyn Widget>>,
-}
-
-impl ThemeToggle {
-    const BTN_W: f64 = 68.0;
-    const BTN_H: f64 = 24.0;
-    const GAP_X: f64 = 8.0;
-    // Gap between adjacent buttons — baked into position math, not a widget margin property.
-    const INNER_GAP: f64 = 2.0;
-
-    fn new(
-        font: Arc<Font>,
-        pref: Rc<Cell<ThemePreference>>,
-        accent: Rc<Cell<AccentColor>>,
-    ) -> Self {
-        let segments: [(&'static str, ThemePreference); 3] = [
-            ("\u{F185} Light", ThemePreference::Light),
-            ("\u{F186} Dark", ThemePreference::Dark),
-            ("\u{F108} System", ThemePreference::System),
-        ];
-        let children: Vec<Box<dyn Widget>> = segments
-            .iter()
-            .map(|(label, this_pref)| {
-                let pref_active = Rc::clone(&pref);
-                let pref_click = Rc::clone(&pref);
-                let accent_for_click = Rc::clone(&accent);
-                let this = *this_pref;
-                let btn = Button::new(*label, Arc::clone(&font))
-                    .with_font_size(11.0)
-                    .with_subtle()
-                    .with_outlined()
-                    .with_active_fn(move || {
-                        std::mem::discriminant(&pref_active.get()) == std::mem::discriminant(&this)
-                    })
-                    .on_click(move || {
-                        pref_click.set(this);
-                        apply_theme_visuals(this, accent_for_click.get());
-                        agg_gui::animation::request_draw();
-                    });
-                Box::new(btn) as Box<dyn Widget>
-            })
-            .collect();
-        Self {
-            bounds: Rect::default(),
-            children,
-        }
-    }
-}
-
-impl Widget for ThemeToggle {
-    fn type_name(&self) -> &'static str {
-        "ThemeToggle"
-    }
-    fn bounds(&self) -> Rect {
-        self.bounds
-    }
-    fn set_bounds(&mut self, b: Rect) {
-        self.bounds = b;
-    }
-    fn children(&self) -> &[Box<dyn Widget>] {
-        &self.children
-    }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
-        &mut self.children
-    }
-
-    fn layout(&mut self, available: Size) -> Size {
-        let step = Self::BTN_W + Self::INNER_GAP;
-        let natural_w =
-            (3.0 * Self::BTN_W + Self::INNER_GAP * 2.0 + Self::GAP_X * 2.0).min(available.width);
-        self.bounds = Rect::new(0.0, 0.0, natural_w, available.height);
-        let gy = ((available.height - Self::BTN_H) * 0.5).max(0.0);
-        for (i, child) in self.children.iter_mut().enumerate() {
-            child.layout(Size::new(Self::BTN_W, Self::BTN_H));
-            child.set_bounds(Rect::new(
-                Self::GAP_X + i as f64 * step,
-                gy,
-                Self::BTN_W,
-                Self::BTN_H,
-            ));
-        }
-        Size::new(natural_w, available.height)
-    }
-
-    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
-        // All paint goes through the Button children via the framework's
-        // tree walk — `paint_subtree` recurses into `self.children` after
-        // this returns.
-    }
-
-    fn on_event(&mut self, _event: &Event) -> EventResult {
-        // Bubbling: events route to the hit-tested Button child by the
-        // standard tree-dispatch path; the wrapper itself has no
-        // behaviour of its own.
-        EventResult::Ignored
-    }
-}
-
-// ── Backend toggle button ─────────────────────────────────────────────────────
-
-/// "Backend" button that toggles the left-side backend panel.  Wraps a
-/// real `Button` child sized to the top-bar slot — `with_subtle()` +
-/// `with_active_fn()` make it light up in the accent surface while the
-/// panel is open and stay muted otherwise.
-struct BackendButton {
-    bounds: Rect,
-    children: Vec<Box<dyn Widget>>,
-}
-
-impl BackendButton {
-    const W: f64 = 112.0;
-    const H: f64 = 24.0;
-
-    fn new(font: Arc<Font>, show: Rc<Cell<bool>>) -> Self {
-        let show_active = Rc::clone(&show);
-        let show_click = show;
-        let btn = Button::new("\u{F109} Backend", font)
-            .with_font_size(12.0)
-            .with_subtle()
-            .with_outlined()
-            .with_active_fn(move || show_active.get())
-            .on_click(move || {
-                show_click.set(!show_click.get());
-                agg_gui::animation::request_draw();
-            });
-        Self {
-            bounds: Rect::default(),
-            children: vec![Box::new(btn)],
-        }
-    }
-}
-
-impl Widget for BackendButton {
-    fn type_name(&self) -> &'static str {
-        "BackendButton"
-    }
-    fn bounds(&self) -> Rect {
-        self.bounds
-    }
-    fn set_bounds(&mut self, b: Rect) {
-        self.bounds = b;
-    }
-    fn children(&self) -> &[Box<dyn Widget>] {
-        &self.children
-    }
-    fn children_mut(&mut self) -> &mut Vec<Box<dyn Widget>> {
-        &mut self.children
-    }
-
-    fn layout(&mut self, available: Size) -> Size {
-        let w = Self::W + 8.0;
-        self.bounds = Rect::new(0.0, 0.0, w, available.height);
-        let gy = ((available.height - Self::H) * 0.5).max(0.0);
-        let child = &mut self.children[0];
-        child.layout(Size::new(Self::W, Self::H));
-        child.set_bounds(Rect::new(4.0, gy, Self::W, Self::H));
-        Size::new(w, available.height)
-    }
-
-    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
-        // Button child paints itself via the framework's tree walk.
-    }
-
-    fn on_event(&mut self, _event: &Event) -> EventResult {
-        EventResult::Ignored
-    }
-}
-
-/// Mobile-only "Demos" hamburger that toggles the bottom-sheet menu.
-/// Hidden above the mobile breakpoint and rendered as a real `Button`
-/// child — the only thing this wrapper adds is the responsive
-/// breakpoint check and the breakpoint-driven `is_visible` gate that
-/// hides the button on desktop layouts.
 struct MenuButton {
     bounds: Rect,
     children: Vec<Box<dyn Widget>>,
@@ -240,7 +72,7 @@ impl MenuButton {
     fn new(font: Arc<Font>, open: Rc<Cell<bool>>) -> Self {
         let open_active = Rc::clone(&open);
         let open_click = open;
-        let btn = Button::new("\u{F0C9} Demos", font)
+        let btn = agg_gui::Button::new("\u{F0C9} Demos", font)
             .with_font_size(12.0)
             .with_subtle()
             .with_outlined()
@@ -277,107 +109,150 @@ impl Widget for MenuButton {
         &mut self.children
     }
     fn layout(&mut self, available: Size) -> Size {
+        // Report the button's INTRINSIC height (button H + a couple of
+        // pixels of breathing room), not `available.height`.  Reporting
+        // `available.height` made the row claim the parent's full
+        // height — fine when the parent capped that at 36, but
+        // `MenuBarStrip` passes the full window height down, and a
+        // button claiming the whole window would push the strip's
+        // size-to-content logic to fill the screen.
+        let intrinsic_h = Self::H + 4.0;
+        let slot_h = available.height.min(intrinsic_h);
         self.visible = available.width > 0.0 && available.width < Self::MOBILE_BREAKPOINT;
         if !self.visible {
-            self.bounds = Rect::new(0.0, 0.0, 0.0, available.height);
-            return Size::new(0.0, available.height);
+            self.bounds = Rect::new(0.0, 0.0, 0.0, intrinsic_h);
+            return Size::new(0.0, intrinsic_h);
         }
         let w = Self::W + 8.0;
-        self.bounds = Rect::new(0.0, 0.0, w, available.height);
-        let gy = ((available.height - Self::H) * 0.5).max(0.0);
+        self.bounds = Rect::new(0.0, 0.0, w, intrinsic_h);
+        let gy = ((slot_h - Self::H) * 0.5).max(0.0);
         let child = &mut self.children[0];
         child.layout(Size::new(Self::W, Self::H));
         child.set_bounds(Rect::new(4.0, gy, Self::W, Self::H));
-        Size::new(w, available.height)
+        Size::new(w, intrinsic_h)
     }
-    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {
-        // Button child paints itself via the framework's tree walk.
-    }
+    fn paint(&mut self, _ctx: &mut dyn DrawCtx) {}
     fn on_event(&mut self, _event: &Event) -> EventResult {
         EventResult::Ignored
     }
 }
 
-// ── Accent colour dropdown ────────────────────────────────────────────────────
+// ── Menu chrome wrapper ──────────────────────────────────────────────────────
 
-struct AccentDropdown {
+/// URL of the project on GitHub — opened by the Help → "View on GitHub" action.
+/// Single source of truth so the README badge and the in-app link stay in
+/// sync.
+const GITHUB_URL: &str = "https://github.com/larsbrubaker/agg-gui";
+
+/// Wraps an `agg_gui::MenuBar` so it can be hosted directly in the top bar
+/// while its menus are kept in lock-step with the canonical app-state
+/// cells (`show_backend`, `theme_pref`, `accent_color`).
+///
+/// Why a wrapper instead of putting `MenuBar` straight into the FlexRow:
+/// `MenuItem::checked` / `MenuItem::radio` are baked into the item tree
+/// at construction time.  When the user picks a theme, only the app
+/// state changes — the popup's check/radio marks would lag behind until
+/// the bar was rebuilt.  This wrapper diffs the cells against a cached
+/// snapshot in `layout` and calls [`MenuBar::set_menus`] whenever the
+/// snapshot moves, so the popup always paints the current selection.
+///
+/// The inner bar is held as a concrete field (not as a child in the
+/// widget tree) so we can call `set_menus` on it; in exchange the
+/// wrapper forwards every Widget hook the menu bar relies on
+/// (`layout` / `paint` / events / global overlay / shortcuts / cache).
+struct MenuChrome {
     bounds: Rect,
-    children: Vec<Box<dyn Widget>>,
-    pref: Rc<Cell<ThemePreference>>,
-    accent: Rc<Cell<AccentColor>>,
-    open: bool,
-    hovered_button: bool,
-    hovered_swatch: Option<usize>,
-    label: Label,
+    children: Vec<Box<dyn Widget>>, // intentionally empty — see struct comment
+    bar: MenuBar,
+    show_backend: Rc<Cell<bool>>,
+    theme_pref: Rc<Cell<ThemePreference>>,
+    accent_color: Rc<Cell<AccentColor>>,
+    last_snapshot: Cell<Option<(bool, ThemePreference, AccentColor)>>,
 }
 
-impl AccentDropdown {
-    const W: f64 = 86.0;
-    const H: f64 = 24.0;
-    const SWATCH: f64 = 18.0;
-    const GAP: f64 = 6.0;
-    const POPUP_PAD: f64 = 8.0;
-
+impl MenuChrome {
     fn new(
         font: Arc<Font>,
-        pref: Rc<Cell<ThemePreference>>,
-        accent: Rc<Cell<AccentColor>>,
+        show_backend: Rc<Cell<bool>>,
+        theme_pref: Rc<Cell<ThemePreference>>,
+        accent_color: Rc<Cell<AccentColor>>,
     ) -> Self {
+        // Action handler captures clones of every state cell so it can
+        // mutate the canonical state without any borrow back to the bar
+        // itself.  The visual refresh (radio marks etc.) happens on the
+        // next `layout()` pass via the snapshot-diff in `refresh_menus`.
+        let on_action = {
+            let show_backend = Rc::clone(&show_backend);
+            let theme_pref = Rc::clone(&theme_pref);
+            let accent_color = Rc::clone(&accent_color);
+            move |action: &str| {
+                handle_action(action, &show_backend, &theme_pref, &accent_color);
+                agg_gui::animation::request_draw();
+            }
+        };
+        let initial_menus = build_menus(
+            show_backend.get(),
+            theme_pref.get(),
+            accent_color.get(),
+        );
+        // CLAUDE.md mandates Font Awesome glyphs throughout the UI.
+        // The framework's default `MenuStyle` ships portable Unicode
+        // characters (\u{25B8}, \u{2713}, \u{25CF}) for hosts that
+        // don't bundle FA; here we swap in the matching FA glyphs so
+        // the submenu chevron, checks, and radio marks visually
+        // belong with every other icon in the demo.
+        let fa_menu_style = MenuStyle {
+            submenu_chevron: '\u{F054}',
+            check_glyph: '\u{F00C}',
+            radio_glyph: '\u{F111}',
+            ..MenuStyle::default()
+        };
+        let bar = MenuBar::new(Arc::clone(&font), initial_menus, on_action)
+            .with_font_size(13.0)
+            .with_menu_style(fa_menu_style)
+            // Tight width — the FlexRow that hosts us spans the whole
+            // top bar and has a flexing spacer plus the mobile Demos
+            // button on its right; without this the bar would claim
+            // every spare pixel and squash its siblings.
+            .with_fit_width(true);
         Self {
             bounds: Rect::default(),
             children: Vec::new(),
-            pref,
-            accent,
-            open: false,
-            hovered_button: false,
-            hovered_swatch: None,
-            label: Label::new("Color", font).with_font_size(11.0),
+            bar,
+            show_backend,
+            theme_pref,
+            accent_color,
+            last_snapshot: Cell::new(None),
         }
     }
 
-    fn btn_rect(&self) -> Rect {
-        Rect::new(0.0, (self.bounds.height - Self::H) * 0.5, Self::W, Self::H)
-    }
-
-    fn popup_rect(&self) -> Rect {
-        let w = Self::POPUP_PAD * 2.0
-            + AccentColor::ALL.len() as f64 * Self::SWATCH
-            + (AccentColor::ALL.len() - 1) as f64 * Self::GAP;
-        let h = Self::POPUP_PAD * 2.0 + Self::SWATCH;
-        Rect::new(Self::W - w, -h - 4.0, w, h)
-    }
-
-    fn contains(r: Rect, p: agg_gui::Point) -> bool {
-        p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
-    }
-
-    fn swatch_rect(&self, idx: usize) -> Rect {
-        let p = self.popup_rect();
-        Rect::new(
-            p.x + Self::POPUP_PAD + idx as f64 * (Self::SWATCH + Self::GAP),
-            p.y + Self::POPUP_PAD,
-            Self::SWATCH,
-            Self::SWATCH,
-        )
-    }
-
-    fn hit_swatch(&self, pos: agg_gui::Point) -> Option<usize> {
-        AccentColor::ALL
-            .iter()
-            .enumerate()
-            .find_map(|(i, _)| Self::contains(self.swatch_rect(i), pos).then_some(i))
+    /// Rebuild the menu list if any backing cell changed since the last
+    /// rebuild.  Cheap: when nothing changed, just an early return.
+    fn refresh_menus(&mut self) {
+        let snapshot = (
+            self.show_backend.get(),
+            self.theme_pref.get(),
+            self.accent_color.get(),
+        );
+        if self.last_snapshot.get() == Some(snapshot) {
+            return;
+        }
+        self.last_snapshot.set(Some(snapshot));
+        let menus = build_menus(snapshot.0, snapshot.1, snapshot.2);
+        self.bar.set_menus(menus);
     }
 }
 
-impl Widget for AccentDropdown {
+impl Widget for MenuChrome {
     fn type_name(&self) -> &'static str {
-        "AccentDropdown"
+        "MenuChrome"
     }
     fn bounds(&self) -> Rect {
         self.bounds
     }
     fn set_bounds(&mut self, b: Rect) {
         self.bounds = b;
+        self.bar.set_bounds(Rect::new(0.0, 0.0, b.width, b.height));
     }
     fn children(&self) -> &[Box<dyn Widget>] {
         &self.children
@@ -386,152 +261,161 @@ impl Widget for AccentDropdown {
         &mut self.children
     }
     fn layout(&mut self, available: Size) -> Size {
-        self.bounds = Rect::new(0.0, 0.0, Self::W, available.height);
-        let s = self.label.layout(Size::new(Self::W, Self::H));
-        self.label
-            .set_bounds(Rect::new(0.0, 0.0, s.width, s.height));
-        Size::new(Self::W, available.height)
+        self.refresh_menus();
+        let used = self.bar.layout(available);
+        self.bounds = Rect::new(0.0, 0.0, used.width, used.height);
+        self.bar
+            .set_bounds(Rect::new(0.0, 0.0, used.width, used.height));
+        used
     }
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        let v = ctx.visuals();
-        let r = self.btn_rect();
-        let fill = if self.open {
-            v.accent
-        } else if self.hovered_button {
-            v.widget_bg_hovered
-        } else {
-            v.widget_bg
-        };
-        ctx.set_fill_color(fill);
-        ctx.begin_path();
-        ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-        ctx.fill();
-        ctx.set_stroke_color(v.widget_stroke);
-        ctx.set_line_width(1.0);
-        ctx.begin_path();
-        ctx.rounded_rect(r.x + 0.5, r.y + 0.5, r.width - 1.0, r.height - 1.0, 4.0);
-        ctx.stroke();
-
-        let swatch = Rect::new(r.x + 7.0, r.y + 5.0, 14.0, 14.0);
-        ctx.set_fill_color(self.accent.get().color());
-        ctx.begin_path();
-        ctx.rounded_rect(swatch.x, swatch.y, swatch.width, swatch.height, 3.0);
-        ctx.fill();
-
-        self.label.set_color(if self.open {
-            Color::white()
-        } else {
-            v.text_color
-        });
-        let lx = r.x + 28.0;
-        let ly = r.y + (r.height - self.label.bounds().height) * 0.5;
-        self.label.set_bounds(Rect::new(
-            lx,
-            ly,
-            self.label.bounds().width,
-            self.label.bounds().height,
-        ));
-        ctx.save();
-        ctx.translate(lx, ly);
-        paint_subtree(&mut self.label, ctx);
-        ctx.restore();
-    }
-    fn hit_test_global_overlay(&self, local_pos: agg_gui::Point) -> bool {
-        self.open && Self::contains(self.popup_rect(), local_pos)
+        // The bar paints its own background + bar buttons at the
+        // wrapper's origin — wrapper bounds == bar bounds, so no
+        // translate needed.
+        self.bar.paint(ctx);
     }
     fn paint_global_overlay(&mut self, ctx: &mut dyn DrawCtx) {
-        if !self.open {
-            return;
-        }
-        let v = ctx.visuals();
-        let p = self.popup_rect();
-        ctx.set_fill_color(v.window_fill);
-        ctx.begin_path();
-        ctx.rounded_rect(p.x, p.y, p.width, p.height, 6.0);
-        ctx.fill();
-        ctx.set_stroke_color(v.window_stroke);
-        ctx.set_line_width(1.0);
-        ctx.begin_path();
-        ctx.rounded_rect(p.x + 0.5, p.y + 0.5, p.width - 1.0, p.height - 1.0, 6.0);
-        ctx.stroke();
-
-        for (i, accent) in AccentColor::ALL.iter().enumerate() {
-            let r = self.swatch_rect(i);
-            ctx.set_fill_color(accent.color());
-            ctx.begin_path();
-            ctx.rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-            ctx.fill();
-            let selected = self.accent.get() == *accent;
-            let hovered = self.hovered_swatch == Some(i);
-            if selected || hovered {
-                ctx.set_stroke_color(if selected {
-                    v.text_color
-                } else {
-                    v.widget_stroke
-                });
-                ctx.set_line_width(if selected { 2.0 } else { 1.0 });
-                ctx.begin_path();
-                ctx.rounded_rect(r.x - 2.0, r.y - 2.0, r.width + 4.0, r.height + 4.0, 5.0);
-                ctx.stroke();
-            }
-        }
+        self.bar.paint_global_overlay(ctx);
+    }
+    fn hit_test_global_overlay(&self, local_pos: agg_gui::Point) -> bool {
+        self.bar.hit_test_global_overlay(local_pos)
+    }
+    fn has_active_modal(&self) -> bool {
+        self.bar.has_active_modal()
     }
     fn on_event(&mut self, event: &Event) -> EventResult {
-        match event {
-            Event::MouseMove { pos } => {
-                let was_button = self.hovered_button;
-                let was_swatch = self.hovered_swatch;
-                self.hovered_button = Self::contains(self.btn_rect(), *pos);
-                self.hovered_swatch = if self.open {
-                    self.hit_swatch(*pos)
-                } else {
-                    None
-                };
-                if was_button != self.hovered_button || was_swatch != self.hovered_swatch {
-                    agg_gui::animation::request_draw();
-                }
-                EventResult::Ignored
-            }
-            Event::MouseDown {
-                button: agg_gui::MouseButton::Left,
-                pos,
-                ..
-            } => {
-                if self.open {
-                    if let Some(idx) = self.hit_swatch(*pos) {
-                        self.accent.set(AccentColor::ALL[idx]);
-                        apply_theme_visuals(self.pref.get(), self.accent.get());
-                        self.open = false;
-                        self.hovered_swatch = None;
-                        agg_gui::animation::request_draw();
-                        return EventResult::Consumed;
-                    }
-                }
-                if Self::contains(self.btn_rect(), *pos) {
-                    self.open = !self.open;
-                    agg_gui::animation::request_draw();
-                    return EventResult::Consumed;
-                }
-                EventResult::Ignored
-            }
-            _ => EventResult::Ignored,
-        }
+        self.bar.on_event(event)
     }
+    fn on_unconsumed_key(&mut self, key: &Key, modifiers: Modifiers) -> EventResult {
+        self.bar.on_unconsumed_key(key, modifiers)
+    }
+    fn backbuffer_cache_mut(&mut self) -> Option<&mut BackbufferCache> {
+        // Forward to the inner bar so the wrapper transparently
+        // inherits the bar's hover/open re-raster behaviour.
+        self.bar.backbuffer_cache_mut()
+    }
+    fn backbuffer_mode(&self) -> BackbufferMode {
+        // Mirror the bar's LCD-vs-RGBA decision.  See
+        // `MenuBar::backbuffer_mode`.
+        self.bar.backbuffer_mode()
+    }
+}
+
+// ── Menu list construction ───────────────────────────────────────────────────
+
+/// Build the `View` + `Help` top-level menu lists with check / radio
+/// marks set from the supplied state snapshot.
+///
+/// Action ids follow a `view.<group>.<value>` / `help.<value>` scheme
+/// — see `handle_action` for the routing table.
+fn build_menus(
+    backend_open: bool,
+    theme_pref: ThemePreference,
+    accent: AccentColor,
+) -> Vec<TopMenu> {
+    let theme_submenu = vec![
+        MenuItem::action("Light", "view.theme.light")
+            .icon('\u{F185}')
+            .radio(theme_pref == ThemePreference::Light)
+            .keep_open()
+            .into(),
+        MenuItem::action("Dark", "view.theme.dark")
+            .icon('\u{F186}')
+            .radio(theme_pref == ThemePreference::Dark)
+            .keep_open()
+            .into(),
+        MenuItem::action("System", "view.theme.system")
+            .icon('\u{F108}')
+            .radio(theme_pref == ThemePreference::System)
+            .keep_open()
+            .into(),
+    ];
+
+    let accent_submenu: Vec<MenuEntry> = AccentColor::ALL
+        .iter()
+        .map(|a| {
+            MenuItem::action(a.label(), format!("view.accent.{}", a.key()))
+                .swatch(a.color())
+                .radio(accent == *a)
+                .keep_open()
+                .into()
+        })
+        .collect();
+
+    let view_items = vec![
+        MenuItem::action("Backend Panel", "view.backend")
+            .icon('\u{F109}')
+            .checked(backend_open)
+            .keep_open()
+            .into(),
+        MenuEntry::Separator,
+        MenuItem::submenu("Theme", theme_submenu)
+            .icon('\u{F042}')
+            .into(),
+        MenuItem::submenu("Color", accent_submenu)
+            .icon('\u{F53F}')
+            .into(),
+    ];
+
+    let help_items = vec![
+        MenuItem::action("View on GitHub", "help.github")
+            .icon('\u{F09B}')
+            .into(),
+    ];
+
+    vec![
+        TopMenu::new("View", view_items),
+        TopMenu::new("Help", help_items),
+    ]
+}
+
+/// Dispatch a menu action id back into a mutation of the relevant state
+/// cell.  Unknown ids are ignored — the menu list is the only producer
+/// of these strings, so any miss is a build error rather than a runtime
+/// concern.
+fn handle_action(
+    action: &str,
+    show_backend: &Rc<Cell<bool>>,
+    theme_pref: &Rc<Cell<ThemePreference>>,
+    accent_color: &Rc<Cell<AccentColor>>,
+) {
+    match action {
+        "view.backend" => {
+            show_backend.set(!show_backend.get());
+        }
+        "view.theme.light" => set_theme(theme_pref, accent_color, ThemePreference::Light),
+        "view.theme.dark" => set_theme(theme_pref, accent_color, ThemePreference::Dark),
+        "view.theme.system" => set_theme(theme_pref, accent_color, ThemePreference::System),
+        "help.github" => crate::url::open_url(GITHUB_URL),
+        other if other.starts_with("view.accent.") => {
+            let key = &other["view.accent.".len()..];
+            if let Some(accent) = AccentColor::from_key(key) {
+                accent_color.set(accent);
+                apply_theme_visuals(theme_pref.get(), accent);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn set_theme(
+    theme_pref: &Rc<Cell<ThemePreference>>,
+    accent_color: &Rc<Cell<AccentColor>>,
+    pref: ThemePreference,
+) {
+    theme_pref.set(pref);
+    apply_theme_visuals(pref, accent_color.get());
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
-/// URL of the project on GitHub — opened by the "View on GitHub" link.
-/// Single source of truth so the README badge and the in-app link stay
-/// in sync.
-const GITHUB_URL: &str = "https://github.com/larsbrubaker/agg-gui";
-
 /// Build the FlexRow child for `TopMenuBar`.
 ///
-/// Layout: `[Backend button] [Demos button on mobile] [spacer] [flex(1.0)] [GitHub link] [gap] [ThemeToggle]`.
-/// The GitHub `Hyperlink` opens the project page in a new tab on both
-/// native (via the `webbrowser` crate) and WASM (via
-/// `window.open(_, "_blank")`).
+/// Layout: `[MenuChrome (View / Help)] [flex(1.0) spacer] [Demos hamburger on mobile]`.
+/// All chrome that used to live inline (Backend toggle, theme segmented
+/// control, "View on GitHub" link, accent dropdown) is now inside the
+/// View / Help menus.  The mobile Demos hamburger stays inline — it's a
+/// nav drawer trigger, not chrome.
 pub fn build_top_bar_inner(
     font: Arc<Font>,
     show_backend: Rc<Cell<bool>>,
@@ -539,59 +423,17 @@ pub fn build_top_bar_inner(
     theme_pref: Rc<Cell<ThemePreference>>,
     accent_color: Rc<Cell<AccentColor>>,
 ) -> Box<dyn Widget> {
-    let github_link = Hyperlink::new("View on GitHub", Arc::clone(&font))
-        .with_font_size(13.0)
-        // VAnchor::CENTER tells the wrapping `SizedBox` to vertically
-        // centre the link inside its 28-px-tall slot.  Default
-        // `VAnchor::FIT` would bottom-anchor it (Y-up convention),
-        // leaving it sitting low in the row instead of lined up with
-        // the theme toggle.
-        .with_v_anchor(VAnchor::CENTER)
-        .on_click(|| crate::url::open_url(GITHUB_URL));
-
-    // Sized box wraps the link so the FlexRow doesn't try to flex it
-    // — Hyperlink reports `available.width` as its natural width and
-    // would otherwise stretch across the bar.  `VAnchor::CENTER` on the
-    // box itself pulls it to the vertical centre of the top bar;
-    // without it FlexRow bottom-anchors the box (Y-up FIT default) and
-    // the link would sit low next to the ThemeToggle.
-    let github_widget: Box<dyn Widget> = Box::new(
-        SizedBox::new()
-            .with_width(110.0)
-            .with_height(28.0)
-            .with_v_anchor(VAnchor::CENTER)
-            .with_child(Box::new(github_link)),
+    let menu_chrome = MenuChrome::new(
+        Arc::clone(&font),
+        show_backend,
+        theme_pref,
+        accent_color,
     );
-
     Box::new(
         FlexRow::new()
             .with_gap(0.0)
-            .add(Box::new(BackendButton::new(
-                Arc::clone(&font),
-                show_backend,
-            )))
-            .add(Box::new(MenuButton::new(
-                Arc::clone(&font),
-                mobile_menu_open,
-            )))
-            .add(Box::new(SizedBox::new().with_width(8.0)))
+            .add(Box::new(menu_chrome))
             .add_flex(Box::new(SizedBox::new()), 1.0)
-            .add(github_widget)
-            .add(Box::new(SizedBox::new().with_width(12.0)))
-            .add(Box::new(ThemeToggle::new(
-                Arc::clone(&font),
-                Rc::clone(&theme_pref),
-                Rc::clone(&accent_color),
-            )))
-            .add(Box::new(SizedBox::new().with_width(6.0)))
-            .add(Box::new(AccentDropdown::new(
-                font,
-                theme_pref,
-                accent_color,
-            )))
-            // 3-px breathing room between the Color button and the window's
-            // right edge / native window-control buttons.  Without this the
-            // button's outer border touches the chrome and looks pinched.
-            .add(Box::new(SizedBox::new().with_width(3.0))),
+            .add(Box::new(MenuButton::new(font, mobile_menu_open))),
     )
 }

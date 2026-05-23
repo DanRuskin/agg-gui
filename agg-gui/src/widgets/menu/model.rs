@@ -3,6 +3,7 @@
 //! Menus are application-owned item trees. The widget layer interprets this
 //! model for painting, hit testing, keyboard navigation, and action dispatch.
 
+use crate::color::Color;
 use crate::event::{Key, Modifiers};
 use crate::platform;
 
@@ -16,6 +17,16 @@ pub enum MenuEntry {
 pub struct MenuItem {
     pub label: String,
     pub icon: Option<char>,
+    /// Colour swatch painted in the icon slot.  When `Some`, takes
+    /// precedence over `icon` and over the check / radio selection
+    /// glyph — the popup paints a rounded filled rect in the icon
+    /// column.  For radio-style rows the selected item gets a thin
+    /// stroke around the swatch instead of the usual `radio_glyph`,
+    /// so the colour itself remains the dominant cue.
+    ///
+    /// Intended for menus where each item represents a colour the
+    /// user is picking (accent palette, brush colour, etc.).
+    pub swatch: Option<Color>,
     pub shortcut: Option<String>,
     pub accelerator: Option<MenuShortcut>,
     pub enabled: bool,
@@ -37,6 +48,7 @@ impl MenuItem {
         Self {
             label: label.into(),
             icon: None,
+            swatch: None,
             shortcut: None,
             accelerator: None,
             enabled: true,
@@ -51,6 +63,7 @@ impl MenuItem {
         Self {
             label: label.into(),
             icon: None,
+            swatch: None,
             shortcut: None,
             accelerator: None,
             enabled: true,
@@ -88,6 +101,13 @@ impl MenuItem {
 
     pub fn icon(mut self, icon: char) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// Paint a colour swatch in the icon slot instead of a glyph.  See
+    /// [`MenuItem::swatch`] for behaviour details.
+    pub fn swatch(mut self, color: Color) -> Self {
+        self.swatch = Some(color);
         self
     }
 

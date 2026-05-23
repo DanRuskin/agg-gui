@@ -15,8 +15,15 @@ use super::geometry::SEP_H;
 
 /// Style values shared between the bar and popup painters.
 ///
-/// Geometry only.  Text colors are resolved per-`Label` from
+/// Geometry + the three inline-glyph characters (submenu chevron,
+/// check mark, radio mark).  Text colors are resolved per-`Label` from
 /// `ctx.visuals()` or set explicitly when a row is hovered / opened.
+///
+/// The glyph fields default to portable Unicode characters that are
+/// present in every general-purpose font.  Hosts that bundle Font
+/// Awesome — or any other icon font — can swap them for the matching
+/// FA glyphs (`\u{F054}` chevron-right, `\u{F00C}` check, `\u{F111}`
+/// circle) so the menu indicators match the rest of the UI.
 #[derive(Clone)]
 pub struct MenuStyle {
     pub radius: f64,
@@ -26,6 +33,17 @@ pub struct MenuStyle {
     pub icon_x: f64,
     pub label_x: f64,
     pub shortcut_right: f64,
+    /// Glyph painted at the right edge of any row whose item has a
+    /// submenu.  Default: U+25B8 BLACK RIGHT-POINTING SMALL TRIANGLE.
+    pub submenu_chevron: char,
+    /// Glyph painted in the icon slot of a checked
+    /// (`MenuSelection::Check { selected: true }`) row that has no
+    /// explicit icon.  Default: U+2713 CHECK MARK.
+    pub check_glyph: char,
+    /// Glyph painted in the icon slot of a selected
+    /// (`MenuSelection::Radio { selected: true }`) row that has no
+    /// explicit icon.  Default: U+25CF BLACK CIRCLE.
+    pub radio_glyph: char,
 }
 
 impl Default for MenuStyle {
@@ -38,6 +56,9 @@ impl Default for MenuStyle {
             icon_x: 14.0,
             label_x: 32.0,
             shortcut_right: 28.0,
+            submenu_chevron: '\u{25B8}',
+            check_glyph: '\u{2713}',
+            radio_glyph: '\u{25CF}',
         }
     }
 }

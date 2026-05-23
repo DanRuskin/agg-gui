@@ -165,52 +165,47 @@ fn continuous_mode_forces_host_redraw_after_idle_paint() {
 }
 
 #[test]
-fn top_bar_scrolls_horizontally_when_controls_overflow() {
+fn top_bar_height_matches_menu_bar_natural_height() {
+    // Regression: the old `TopMenuBar` hard-coded H=36 even though the
+    // `MenuBar` it hosted only needed ~26 px, leaving a visible chrome
+    // stripe below the menu.  `MenuBarStrip` sizes to its child's
+    // natural height, so the bar should now be exactly the menu's
+    // height — no more, no less.
     let font = Arc::new(Font::from_slice(TEST_FONT).expect("test font must load"));
     let (mut app, _handles) = build_test_app(font);
-    let viewport = Size::new(360.0, 640.0);
-    app.layout(viewport);
+    app.layout(Size::new(1200.0, 800.0));
 
-    let top_bar = find_widget_by_type(app.root(), "TopMenuBar").expect("top bar must exist");
-    let content = top_bar.children()[0].bounds();
+    let top_bar = find_widget_by_type(app.root(), "MenuBarStrip").expect("top bar must exist");
+    let inner = top_bar.children()[0].bounds();
     assert!(
-        content.width > top_bar.bounds().width,
-        "narrow top bar should keep overflow controls in horizontally scrollable content"
-    );
-    assert_eq!(content.x, 0.0);
-
-    app.on_mouse_wheel_xy(180.0, 18.0, 1.0, 0.0);
-    app.layout(viewport);
-
-    let top_bar = find_widget_by_type(app.root(), "TopMenuBar").expect("top bar must exist");
-    let content = top_bar.children()[0].bounds();
-    assert!(
-        content.x < 0.0,
-        "horizontal wheel over the top bar should pan overflow content into view"
+        (top_bar.bounds().height - inner.height).abs() < 0.5,
+        "menu bar strip height ({}) must match its inner content height ({})",
+        top_bar.bounds().height,
+        inner.height,
     );
 }
 
 #[test]
-fn mobile_top_bar_places_demos_button_after_backend() {
+fn mobile_top_bar_places_demos_button_after_menu_chrome() {
     let font = Arc::new(Font::from_slice(TEST_FONT).expect("test font must load"));
     let (mut app, _handles) = build_test_app(font);
     app.layout(Size::new(360.0, 640.0));
 
-    let top_bar = find_widget_by_type(app.root(), "TopMenuBar").expect("top bar must exist");
+    let top_bar = find_widget_by_type(app.root(), "MenuBarStrip").expect("top bar must exist");
     let row = top_bar.children()[0].as_ref();
     let row_children = row.children();
-    let backend = row_children
+    let menus = row_children
         .iter()
-        .find(|child| child.type_name() == "BackendButton")
-        .expect("backend button must exist");
+        .find(|child| child.type_name() == "MenuChrome")
+        .expect("menu chrome must exist");
     let demos = row_children
         .iter()
         .find(|child| child.type_name() == "MenuButton")
         .expect("demos button must exist");
 
     assert!(
-        backend.bounds().x < demos.bounds().x,
-        "mobile top bar should place Demos to the right of Backend"
+        menus.bounds().x < demos.bounds().x,
+        "mobile top bar should place Demos to the right of the View/Help menu bar"
     );
 }
 
@@ -220,7 +215,7 @@ fn desktop_top_bar_hides_demos_button() {
     let (mut app, _handles) = build_test_app(font);
     app.layout(Size::new(720.0, 640.0));
 
-    let top_bar = find_widget_by_type(app.root(), "TopMenuBar").expect("top bar must exist");
+    let top_bar = find_widget_by_type(app.root(), "MenuBarStrip").expect("top bar must exist");
     let row = top_bar.children()[0].as_ref();
     let demos = row
         .children()

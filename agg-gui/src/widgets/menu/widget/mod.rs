@@ -265,6 +265,34 @@ impl MenuBar {
         self
     }
 
+    /// Override the popup's [`MenuStyle`] — geometry and inline-glyph
+    /// characters (submenu chevron, check mark, radio mark).  Hosts
+    /// that bundle Font Awesome typically swap the default Unicode
+    /// chars for FA equivalents so the menu indicators visually match
+    /// the icons used everywhere else.
+    pub fn with_menu_style(mut self, style: MenuStyle) -> Self {
+        self.popup.style = style;
+        self.cache.invalidate();
+        self
+    }
+
+    /// Replace the bar's top-level menu list at runtime.  Used by callers
+    /// that derive menu contents from app state (e.g. radio-style theme
+    /// pickers) and need to refresh the items each frame so the popup's
+    /// check/radio marks reflect the canonical state.  Invalidates the
+    /// backbuffer cache so the next paint re-rasters bar labels.
+    pub fn set_menus(&mut self, menus: Vec<TopMenu>) {
+        self.menus = menus;
+        self.cache.invalidate();
+    }
+
+    /// Read-only access to the configured top-level menus.  Mainly for
+    /// tests that need to inspect labels / items without going through
+    /// the popup state machine.
+    pub fn menus(&self) -> &[TopMenu] {
+        &self.menus
+    }
+
     /// Resolve the font used for layout/paint.  Prefers the system-wide
     /// font override so the System window's font picker propagates live;
     /// falls back to the per-instance font otherwise.  Mirrors the
@@ -710,27 +738,51 @@ fn paint_popup_level(
         let inline_color =
             super::paint::popup_row_text_color(ctx, item.enabled, open && item.enabled);
         ctx.set_fill_color(inline_color);
-        if let Some(icon) = item.icon {
+        if let Some(color) = item.swatch {
+            // Colour-swatch row (e.g., an accent palette).  A small
+            // rounded filled rect in the icon slot, anchored
+            // vertically to the row centre.  The selected radio gets a
+            // thin stroke around the swatch instead of the usual radio
+            // glyph so the colour itself stays the dominant cue.
+            let size = 12.0;
+            let sx = row_layout.rect.x + style.icon_x - size * 0.5 + 4.0;
+            let sy = row_layout.rect.y + (row_layout.rect.height - size) * 0.5;
+            let fill = if item.enabled {
+                color
+            } else {
+                // Wash out disabled swatches so they read as "not
+                // pickable" without losing their identity.
+                color.with_alpha(0.45)
+            };
+            ctx.set_fill_color(fill);
+            ctx.begin_path();
+            ctx.rounded_rect(sx, sy, size, size, 3.0);
+            ctx.fill();
+            if matches!(item.selection, MenuSelection::Radio { selected: true }) {
+                ctx.set_stroke_color(inline_color);
+                ctx.set_line_width(1.5);
+                ctx.begin_path();
+                ctx.rounded_rect(sx - 2.0, sy - 2.0, size + 4.0, size + 4.0, 4.0);
+                ctx.stroke();
+            }
+        } else if let Some(icon) = item.icon {
             let icon = icon.to_string();
             ctx.fill_text(&icon, row_layout.rect.x + style.icon_x, row_layout.rect.y + 7.0);
         } else {
+            // Selection glyphs come from `MenuStyle` so hosts can swap
+            // the default Unicode marks for FA equivalents when they
+            // bundle the icon font — see `MenuStyle` docs for details.
             match item.selection {
                 MenuSelection::Check { selected: true } => {
-                    // U+2713 CHECK MARK — present in every general-purpose
-                    // font.  Was the Font Awesome `\u{f00c}` glyph, but
-                    // that requires bundling FA which not all consumers
-                    // do; Unicode keeps the menu working regardless.
                     ctx.fill_text(
-                        "\u{2713}",
+                        &style.check_glyph.to_string(),
                         row_layout.rect.x + style.icon_x,
                         row_layout.rect.y + 7.0,
                     );
                 }
                 MenuSelection::Radio { selected: true } => {
-                    // U+25CF BLACK CIRCLE — replaces FA `\u{f111}` for
-                    // the same plain-font reason.
                     ctx.fill_text(
-                        "\u{25CF}",
+                        &style.radio_glyph.to_string(),
                         row_layout.rect.x + style.icon_x,
                         row_layout.rect.y + 7.0,
                     );
@@ -741,10 +793,8 @@ fn paint_popup_level(
             }
         }
         if item.has_submenu() {
-            // U+25B8 BLACK RIGHT-POINTING SMALL TRIANGLE — Unicode-
-            // standard submenu indicator (FA replacement, same reason).
             ctx.fill_text(
-                "\u{25B8}",
+                &style.submenu_chevron.to_string(),
                 row_layout.rect.x + row_layout.rect.width - 18.0,
                 row_layout.rect.y + 7.0,
             );
