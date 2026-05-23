@@ -14,8 +14,6 @@ use std::rc::Rc;
 
 use agg_gui::{AccentColor, Rect, ThemePreference};
 
-// ── WindowState ───────────────────────────────────────────────────────────────
-
 #[derive(Clone, Debug)]
 pub struct WindowState {
     pub open: bool,
@@ -41,8 +39,6 @@ impl WindowState {
         self.w > 0.0 && self.h > 0.0
     }
 }
-
-// ── SavedState ────────────────────────────────────────────────────────────────
 
 pub struct SavedState {
     pub demos: Vec<WindowState>,
@@ -468,8 +464,6 @@ fn parse_window_state(s: &str) -> Option<WindowState> {
     })
 }
 
-// ── StateAccessor ─────────────────────────────────────────────────────────────
-
 /// Reads the current state of all demo windows from shared cells.
 ///
 /// Created by `build_demo_ui` and passed to the platform harness, which calls
@@ -620,8 +614,6 @@ impl StateAccessor {
         }
     }
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

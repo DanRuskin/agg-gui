@@ -7,7 +7,6 @@ use agg_gui::{
     AccentColor, App, FlexColumn, FlexRow, Font, InspectorNode, InspectorPanel, Key, MenuBarStrip,
     Modifiers, Rect, Size, Stack, ThemePreference, Widget, Window,
 };
-
 use crate::api::{DemoHandles, PlatformHooks};
 use crate::backend_panel::{build_backend_panel, FrameHistory, RunMode};
 use crate::content::build_demo_content;
@@ -76,17 +75,11 @@ pub fn build_demo_ui(
         .map(|st| st.backend_open)
         .unwrap_or(false);
     let show_backend = Rc::new(Cell::new(backend_initially_open));
-    // Default ON — window snapping is the more useful state for a
-    // fresh demo session.  Saved state still wins for returning
-    // users; only the first-run fallback flips.
     let snap_initially_enabled = initial_state
         .as_ref()
         .map(|st| st.snap_enabled)
         .unwrap_or(true);
-    // Mirror the persisted value into the framework-wide thread-local
-    // so Snappable widgets pick it up before any drag fires.  The
-    // cell stays the source of truth for the UI checkbox, the global
-    // for the snap engine.
+    // Mirror persisted state into the framework-wide snap engine.
     agg_gui::snap::set_enabled(snap_initially_enabled);
     let snap_enabled = Rc::new(Cell::new(snap_initially_enabled));
     let run_mode = Rc::new(Cell::new(RunMode::Reactive));
@@ -409,9 +402,6 @@ pub fn build_demo_ui(
             .filter(|ws| ws.has_valid_bounds())
             .map(|ws| ws.to_rect())
             .unwrap_or_else(|| tile_rect(cube_idx, default_canvas_h, spec.win_w, spec.win_h));
-        // Build the cube widget here, after the MSAA cell exists, so the
-        // widget and the toolbar inside `cube_content` can both bind to the
-        // same `Rc<Cell<u8>>` without an extra plumbing path.
         let cube_widget = cube_widget_factory(Rc::clone(&msaa_samples_cell));
         let content = windows::cube_content(
             Arc::clone(&font),
@@ -527,9 +517,7 @@ pub fn build_demo_ui(
     }
     let inspector_snapshot_cell: Rc<RefCell<Option<agg_gui::InspectorSavedState>>> =
         Rc::new(RefCell::new(None));
-    // Inspector window geometry — persisted just like the demo windows.
-    // The position cell is mirrored back into the saved state via
-    // `inspector_snapshot` so size + position + maximize survive restarts.
+    // Inspector window geometry is persisted just like the demo windows.
     const INSPECTOR_DEFAULT_BOUNDS: Rect = Rect {
         x: 960.0,
         y: 60.0,
@@ -592,12 +580,6 @@ pub fn build_demo_ui(
             }
         }
     }
-    // Snap-guide overlay sits in the SAME `Stack` as the windows so
-    // its local coordinate space matches the rect coordinates the
-    // snap engine sees.  An overlay parked one level up would paint
-    // guides offset by however wide the backend pane and sidebar
-    // happen to be when the user drags.  Pushed last so it paints
-    // on top of every window in the canvas.
     canvas.children_mut().push(Box::new(agg_gui::SnapOverlay::new()));
     let main_area = canvas;
     let on_reset_all = {
@@ -694,12 +676,6 @@ pub fn build_demo_ui(
         Rc::clone(&accent_color),
         Rc::clone(&snap_enabled),
     );
-    // Snap-guide overlay lives inside the `canvas` Stack (pushed
-    // above), where the windows themselves live — that's the only
-    // place where the overlay's local coordinate space matches the
-    // rects the snap engine works in.  Wrapping the body in an
-    // outer Stack here would paint guides offset by however wide
-    // the backend pane + sidebar happen to be.
     let root = FlexColumn::new()
         .with_gap(0.0)
         .add(Box::new(MenuBarStrip::new(top_bar_inner)))

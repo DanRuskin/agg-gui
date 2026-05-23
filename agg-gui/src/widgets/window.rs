@@ -69,26 +69,18 @@ fn snap(r: Rect) -> Rect {
 
 const TITLE_H: f64 = 28.0;
 const CORNER_R: f64 = 8.0;
-/// Shadow blur radius in pixels (egui default Shadow::blur is ≈16; we use 14
-/// for a slightly tighter falloff since windows live on a panel background).
 const SHADOW_BLUR: f64 = 14.0;
-/// Shadow offset from the window (Y-down visually → −y in Y-up space).
 const SHADOW_DX: f64 = 2.0;
 const SHADOW_DY: f64 = 6.0;
-/// Number of stacked layers approximating a Gaussian blur falloff.
 const SHADOW_STEPS: usize = 10;
 const VISIBILITY_FADE_SECS: f64 = 0.18;
 const CLOSE_R: f64 = 6.0;
 const CLOSE_PAD: f64 = 10.0;
-/// Horizontal distance from the right edge to the maximize button centre.
-/// = CLOSE_PAD + CLOSE_R*2 + 4 px gap
 const MAX_PAD: f64 = CLOSE_PAD + CLOSE_R * 2.0 + 4.0; // 26 px
 const RESIZE_EDGE: f64 = 6.0; // px from the edge that counts as a resize zone
 const MIN_W: f64 = 120.0;
 const MIN_H: f64 = 80.0;
 const DBL_CLICK_MS: u128 = 500; // double-click detection window
-
-// ── Resize direction ───────────────────────────────────────────────────────────
 
 /// Which edge(s) are being dragged during a resize operation.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,8 +94,6 @@ pub(crate) enum ResizeDir {
     W,
     NW,
 }
-
-// ── Window state ───────────────────────────────────────────────────────────────
 
 /// Interaction mode for the current drag.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -198,10 +188,7 @@ pub struct Window {
     /// `true` to preserve existing behaviour for call sites that don't
     /// explicitly opt out.
     resizable: bool,
-    /// Fine-grained axis control.  Both default to `true`; setting just
-    /// one to `false` produces an egui `.resizable([true, false])`-style
-    /// uni-axis resizable window.  Only consulted when `resizable` is
-    /// `true`.
+    /// Fine-grained axis control, used when `resizable` is `true`.
     resizable_h: bool,
     resizable_v: bool,
     /// Content-bound resize floor + ceiling.  When `true`, the
@@ -255,73 +242,9 @@ impl Window {
     /// Default position: `(60, 60)` with `size = (360, 280)`. Call
     /// [`with_bounds`] to override.
     ///
-    /// # ⚠ Live-data callers MUST invalidate manually
-    ///
-    /// **TL;DR:** Windows back-buffer.  Data changes outside widget setters
-    /// don't trigger redraws.  Either call [`Window::invalidate_backbuffer`]
-    /// from the data-arrival path, or use [`Window::with_live_content`] to
-    /// have the window self-invalidate every frame.
-    ///
-    /// ## Why
-    ///
-    /// `Window` retains its painted pixels in a backbuffer (a GL FBO on
-    /// the wgpu/GL backend, a CPU bitmap otherwise) and reuses them on
-    /// every subsequent frame.  The framework only re-rasterises when:
-    ///
-    /// - the window's own state changes (drag/resize/collapse/maximize),
-    /// - one of its descendant widgets invalidates **its** backbuffer
-    ///   (e.g. [`Label::set_text`](crate::widgets::Label) flipping the
-    ///   text, [`Button`](crate::widgets::Button) hover changing colour),
-    /// - a typography/visuals epoch changes globally,
-    /// - or someone explicitly calls [`Window::invalidate_backbuffer`]
-    ///   / sets [`with_live_content(true)`](Window::with_live_content).
-    ///
-    /// If your content widget paints **directly** to `DrawCtx` from
-    /// imperative code each frame — drawing a graph against a ring buffer
-    /// that the network thread is updating, plotting a live FPS curve,
-    /// rendering a custom inspector view — the framework has no way to
-    /// observe that the data changed.  The cached bitmap is *still
-    /// valid as far as the framework knows*, so it blits the stale pixels
-    /// and your custom paint code never runs.
-    ///
-    /// ## Wrong (silent failure)
-    ///
-    /// ```ignore
-    /// // Custom widget that draws a graph from a shared ring buffer.
-    /// // Model fills history from a network thread.  Window backbuffer
-    /// // is rasterised ONCE and then blitted forever — graphs freeze.
-    /// let diag = MyDiagnosticsWidget::new(model.clone());
-    /// let win = Window::new("Diagnostics", font, Box::new(diag))
-    ///     .with_visible_cell(vis);
-    /// ```
-    ///
-    /// ## Right — option A: declare the content live
-    ///
-    /// ```ignore
-    /// let win = Window::new("Diagnostics", font, Box::new(diag))
-    ///     .with_visible_cell(vis)
-    ///     .with_live_content(true);  // self-invalidate each frame
-    /// ```
-    ///
-    /// ## Right — option B: invalidate on data mutation
-    ///
-    /// ```ignore
-    /// // From the data-arrival path:
-    /// model.borrow_mut().record_sample(s);
-    /// diag_window.borrow_mut().invalidate_backbuffer();
-    /// ```
-    ///
-    /// ## Right — option C: compose from auto-invalidating widgets
-    ///
-    /// Build the live content out of `Label`s and call
-    /// [`Widget::set_label_text`](crate::widget::Widget::set_label_text)
-    /// /`set_label_color` on data change.  Setter calls bubble dirty
-    /// up to the window automatically.
-    ///
-    /// Failing to do any of these is the canonical "my widget updates
-    /// but nothing renders" agg-gui gotcha.  Audit any custom widget
-    /// that reads from a `Rc<RefCell<…>>` model and ask: where does its
-    /// invalidation come from?
+    /// Windows keep a retained backbuffer. Live content must either call
+    /// [`Window::invalidate_backbuffer`] when external data changes or use
+    /// [`Window::with_live_content`] to force repaint while visible.
     pub fn new(title: impl Into<String>, font: Arc<Font>, content: Box<dyn Widget>) -> Self {
         let font_size = 13.0;
         let title_str: String = title.into();
@@ -591,8 +514,6 @@ impl Window {
             cell.set(self.maximized);
         }
     }
-
-    // ── Resize zone detection ──────────────────────────────────────────────────
 
     /// Return the resize direction for `local`, or `None` if the point is in
     /// the interior (or the window is collapsed).

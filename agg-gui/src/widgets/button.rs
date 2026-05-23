@@ -1,21 +1,4 @@
-//! `Button` — a clickable button with hover, pressed, and focus states.
-//!
-//! # Composition
-//!
-//! Button is fully compositional: it always has exactly one child widget, a
-//! [`Label`], which is responsible for rendering the button's text.  The
-//! [`paint_subtree`] machinery handles the Label automatically after
-//! [`Button::paint`] draws the background.
-//!
-//! ```text
-//! Button (background + focus ring)
-//!   └── Label (text, tight bounds, centred within button)
-//! ```
-//!
-//! `Label::layout` returns tight text bounds.  `Button::layout` centres the
-//! label within the button area.  Because [`Label::hit_test`] returns `false`,
-//! the Label is invisible to the hit-test and event-routing system; the Button
-//! retains full ownership of focus and click events.
+//! `Button` — a clickable, compositional button with a `Label` child.
 
 use std::rc::Rc;
 use std::sync::Arc;

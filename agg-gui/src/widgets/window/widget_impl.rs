@@ -13,12 +13,7 @@ impl Widget for Window {
         self.requested_visible() || self.fade_out_active.get()
     }
 
-    /// A collapsed window paints only its title bar — nothing inside the
-    /// content area is visible, so no child can legitimately request a
-    /// repaint.  Closing (`is_visible` false) also short-circuits, matching
-    /// the default trait impl.  Without these overrides a cursor blink or
-    /// hover tween inside a collapsed/closed window would keep the host
-    /// loop awake despite being invisible.
+    /// Collapsed or closed windows should not keep the host loop awake.
     fn needs_draw(&self) -> bool {
         if !self.is_visible() || self.collapsed {
             return false;
@@ -205,10 +200,7 @@ impl Widget for Window {
     }
 
     fn layout(&mut self, available: Size) -> Size {
-        // Rising-edge visibility detection → request parent raise.  The
-        // sidebar toggles `visible_cell`; we observe the transition here
-        // and set `raise_request`, which the parent `Stack` drains on its
-        // next layout (one-frame delay, invisible to the user).
+        // Rising-edge visibility detection requests a parent raise.
         let now_visible = self.requested_visible();
         // First-layout fit (visibility-cell-managed windows only):
         // a window restored as already-visible via `visible_cell` misses
@@ -515,8 +507,7 @@ impl Widget for Window {
         paint_subtree(&mut self.title_bar, ctx);
         ctx.restore();
 
-        // Outer border — on top of the title bar so the rounded corners
-        // cleanly frame both body and title region.
+        // Outer border frames both body and title region.
         ctx.set_fill_color(v.window_fill); // restore default fill — stroke follows
         ctx.set_stroke_color(v.window_stroke);
         ctx.set_line_width(1.0);
@@ -693,14 +684,7 @@ impl Widget for Window {
                 if matches!(*button, MouseButton::Left | MouseButton::Middle) =>
             {
                 let is_left_click = *button == MouseButton::Left;
-                // Press-to-raise — any direct press that reaches this Window
-                // (hit-test routed it here in reverse paint order, so we
-                // ARE the topmost widget under the cursor in the stack
-                // sense) requests a raise.  Classic window-manager
-                // behaviour: clicking anywhere on a window pops it to the
-                // top of the z-order.  Consumed by `Stack::layout` on the
-                // next frame via `take_raise_request`; one-frame visual
-                // delay is invisible in practice.
+                // Press-to-raise: any direct press on this window brings it forward.
                 self.raise_request.set(true);
                 // Z-order changes are visible; repaint.
                 crate::animation::request_draw();

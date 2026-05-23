@@ -24,14 +24,7 @@ use labels::{BarLabels, PopupLabels};
 
 mod labels;
 
-/// Layout direction for `MenuBar`. Horizontal is the desktop default — a
-/// strip of top-level menu buttons across a fixed-height bar with
-/// popups opening DOWN. Vertical stacks the buttons in a tall+narrow
-/// strip (e.g. a left-side mobile sidebar) with popups opening to the
-/// RIGHT, at the same vertical level as the clicked button.
-/// HorizontalBottom matches Horizontal but flips popup direction so
-/// menus rise UPWARD — for bars pinned to the bottom of the
-/// viewport where opening downward would clip against the floor.
+/// Layout direction for `MenuBar`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuOrientation {
     Horizontal,
@@ -39,8 +32,6 @@ pub enum MenuOrientation {
     Vertical,
 }
 
-/// Height of each row in `MenuOrientation::Vertical` mode. Larger than
-/// `BAR_H` so the buttons make comfortable touch targets on phones.
 pub const VERTICAL_ROW_H: f64 = 36.0;
 
 /// Mouse events synthesised from a touch tap arrive within a few
@@ -60,12 +51,7 @@ pub struct PopupMenu {
     pub items: Vec<MenuEntry>,
     pub state: PopupMenuState,
     pub style: MenuStyle,
-    /// Cache of `Label` widgets used to render every row's display
-    /// text and shortcut.  Rebuilt lazily inside `paint(...)` whenever
-    /// the visible layout tree changes (open path or items mutate).
-    /// Stored on the popup so the per-Label backbuffer caches stay
-    /// warm across hovers — only the row whose colour actually flipped
-    /// re-rasterises, the rest blit.
+    /// Cached row labels for popup text and shortcuts.
     labels: PopupLabels,
 }
 
@@ -166,13 +152,7 @@ pub struct MenuBar {
     hover_index: Option<usize>,
     popup: PopupMenu,
     on_action: Box<dyn FnMut(&str)>,
-    /// Top-menu index whose hover highlight should NOT paint until the
-    /// cursor leaves it.  Set when the user closes a popup by clicking
-    /// the currently-open top menu's bar item — without this the bar
-    /// would keep showing the hover-tinted background after the close
-    /// (the cursor is still over the bar item) and read as "still
-    /// selected" to the user.  Cleared in `set_hover_index` when the
-    /// hovered idx changes to anything else.
+    /// Top-menu index whose hover highlight is suppressed until cursor exit.
     suppress_hover_for: Option<usize>,
     /// When `true`, [`Widget::layout`] returns the tight content width
     /// (sum of menu-button widths) instead of the full available width.
@@ -181,18 +161,9 @@ pub struct MenuBar {
     /// shouldn't claim every spare pixel.
     fit_width: bool,
     orientation: MenuOrientation,
-    /// CPU backbuffer cache.  The bar's pixels rarely change — only when
-    /// hover/open state flips, a menu list is rebuilt, or the bar resizes
-    /// — so caching the rasterised result and blitting it as a textured
-    /// quad sidesteps the hardware glyph-outline path that otherwise
-    /// produces visibly aliased text on direct-to-surface backends.
-    /// Mutators below explicitly invalidate this on every visual state
-    /// change so the next paint re-rasters.
+    /// CPU backbuffer cache for the mostly-static bar pixels.
     cache: BackbufferCache,
-    /// `Label` widgets for each top-menu bar button.  Painted from
-    /// `Widget::paint` via `paint_subtree` so glyphs flow through
-    /// Label's standard backbuffer + LCD path.  Kept in lock-step with
-    /// `self.menus` by `sync_bar_labels()`.
+    /// Cached labels for each top-menu bar button.
     bar_labels: BarLabels,
 }
 
@@ -236,11 +207,7 @@ impl MenuBar {
         }
     }
 
-    /// Refresh the bar's per-button `Label` cache so it matches
-    /// `self.menus`.  Cheap when nothing changed.  Called at the top
-    /// of `Widget::layout` and `Widget::paint` so a runtime mutation
-    /// of `menus` (e.g. dynamic menu reload) propagates without an
-    /// explicit invalidate.
+    /// Refresh the per-button label cache to match `self.menus`.
     fn sync_bar_labels(&mut self) {
         let labels: Vec<&str> = self.menus.iter().map(|m| m.label.as_str()).collect();
         self.bar_labels
@@ -465,18 +432,12 @@ impl Widget for MenuBar {
                     menu.rect = Rect::new(x, 0.0, width, BAR_H);
                     x += width;
                 }
-                // `fit_width` mode reports the tight content width so a
-                // parent FlexRow can place sibling widgets to the right
-                // of the bar. Default mode keeps the historical
-                // behaviour (full available width — the bar paints its
-                // background across the whole row).
+                // Fit-width mode leaves room for sibling chrome.
                 let report_w = if self.fit_width { x } else { available.width };
                 Size::new(report_w, BAR_H)
             }
             MenuOrientation::Vertical => {
-                // Stack top-to-bottom. Y-up: the FIRST menu sits at the
-                // highest local Y (top of the strip), each subsequent
-                // entry drops by VERTICAL_ROW_H.
+                // Stack top-to-bottom in Y-up coordinates.
                 let mut y = available.height;
                 for menu in &mut self.menus {
                     y -= VERTICAL_ROW_H;
@@ -489,9 +450,7 @@ impl Widget for MenuBar {
     }
 
     fn paint(&mut self, ctx: &mut dyn DrawCtx) {
-        // Belt-and-suspenders: re-sync bar Labels in case `paint` runs
-        // without a preceding `layout` (e.g. cache-only repaint after
-        // a state flip).  Cheap when text already matches.
+        // Re-sync in case paint runs without a preceding layout.
         self.sync_bar_labels();
         ctx.set_font(self.active_font());
         ctx.set_font_size(self.font_size);
@@ -504,8 +463,7 @@ impl Widget for MenuBar {
         };
         ctx.rect(0.0, 0.0, self.bounds.width, bg_h);
         ctx.fill();
-        // First pass: paint every button's chrome (hover / open
-        // background) so the rounded fills sit BENEATH the text.
+        // First pass: button chrome under the text.
         for (idx, menu) in self.menus.iter().enumerate() {
             // After a click-to-close-toggle, the cursor is still over
             // the bar item so `hover_index` still points at it —
