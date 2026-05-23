@@ -12,6 +12,7 @@
 //! 800-line guardrail.
 
 mod events;
+mod host_hooks;
 mod node_paint_context;
 pub mod nodes;
 mod value_editor_widget;
@@ -150,6 +151,16 @@ pub struct NodeEditor {
     /// sink fall back to the in-editor overlay (the legacy default).
     pub(crate) overlay_sink:
         Option<Box<dyn FnMut(Box<dyn Widget>, Rc<Cell<bool>>)>>,
+    /// Optional host hook fired when one or more files are dropped onto
+    /// the canvas. Receives the dropped paths and the canvas-space
+    /// position of the cursor at drop time — typically used to import
+    /// an asset and spawn a node at that location.
+    ///
+    /// AtomArtist's app shell installs this to turn `.stl`/`.obj`/`.3mf`
+    /// drops into `MeshNode`s. Hosts that don't care about file drops
+    /// leave the field `None` and the event is simply ignored.
+    pub(crate) file_drop_handler:
+        Option<Box<dyn FnMut(&[std::path::PathBuf], [f64; 2])>>,
 }
 
 impl NodeEditor {
@@ -179,28 +190,8 @@ impl NodeEditor {
             overlay: None,
             overlay_close_flag: None,
             overlay_sink: None,
+            file_drop_handler: None,
         }
-    }
-
-    /// Install a host-side sink that receives newly-constructed
-    /// floating dialogs (today: the `ColorWheelPicker` dialog) along
-    /// with their close-flag. When a sink is set the editor does NOT
-    /// keep the dialog as `self.overlay` — the host takes ownership
-    /// and is responsible for layout / paint / event dispatch.
-    ///
-    /// Designed for app shells (e.g. AtomArtist) that want the dialog
-    /// reparented to the top of the widget tree so the user can drag
-    /// it anywhere on screen rather than being confined to the
-    /// editor's pane. Without a sink the editor preserves its
-    /// historical "overlay-inside-the-editor" behaviour, which is
-    /// still the right default for the gallery demo and the
-    /// node-editor's own unit tests.
-    pub fn with_overlay_sink<F>(mut self, sink: F) -> Self
-    where
-        F: FnMut(Box<dyn Widget>, Rc<Cell<bool>>) + 'static,
-    {
-        self.overlay_sink = Some(Box::new(sink));
-        self
     }
 
     /// Take the overlay down (if any) and clear its close-flag.  Called
@@ -693,6 +684,19 @@ impl Widget for NodeEditor {
             } => self.on_wheel(*pos, *delta_y, *modifiers),
             Event::KeyDown { key, modifiers } => self.on_key_down(key, *modifiers),
             Event::KeyUp { key, modifiers } => self.on_key_up(key, *modifiers),
+            Event::FileDropped { pos, paths } => {
+                // Translate the drop position from widget-local to
+                // canvas-space so the host can place a node at the
+                // user's intended spot regardless of pan/zoom.
+                let canvas_pos = self.local_to_canvas(*pos);
+                if let Some(handler) = self.file_drop_handler.as_mut() {
+                    handler(paths, canvas_pos);
+                    agg_gui::animation::request_draw();
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
+            }
             _ => EventResult::Ignored,
         }
     }

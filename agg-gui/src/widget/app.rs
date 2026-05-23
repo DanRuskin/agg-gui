@@ -468,6 +468,37 @@ impl App {
         self.dispatch_mouse_move(Point::new(-1.0, -1.0));
     }
 
+    /// Native drag-and-drop landed `paths` on the window at the given
+    /// screen position. Dispatches an [`Event::FileDropped`] to the
+    /// widget under the cursor (same hit-test path as `on_mouse_down`),
+    /// so a widget can opt in by handling the event in `on_event`.
+    ///
+    /// Native shells typically receive one path per `DroppedFile` event
+    /// from winit; they may forward each separately, or batch a single
+    /// drag gesture into one call. The widget receives `paths` as-is.
+    pub fn on_file_dropped(
+        &mut self,
+        screen_x: f64,
+        screen_y: f64,
+        paths: Vec<std::path::PathBuf>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        let pos = self.flip_y(screen_x, screen_y);
+        let event = Event::FileDropped { pos, paths };
+        let hit = self.compute_hit(pos);
+        if let Some(path) = hit {
+            dispatch_event(&mut self.root, &path, &event, pos);
+        } else {
+            // No hit target: dispatch to the root anyway so app-level
+            // handlers (e.g. "open the dropped .atmr project") can run
+            // even when the user drops on chrome rather than canvas.
+            dispatch_event(&mut self.root, &[], &event, pos);
+        }
+        crate::animation::request_draw();
+    }
+
     // --- Touch ingestion ---
     //
     // Raw touches go into the multi-touch gesture recogniser; widgets

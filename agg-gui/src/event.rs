@@ -99,6 +99,21 @@ pub enum Event {
         delta_x: f64,
         modifiers: Modifiers,
     },
+    /// One or more files were dropped onto the window at `pos`.
+    ///
+    /// `paths` is non-empty. Native windowing layers (winit) typically
+    /// emit one path per `WindowEvent::DroppedFile` — the framework
+    /// either forwards each as its own `FileDropped` event, or batches
+    /// drops within a single gesture into one event. Receivers should
+    /// not rely on batching behaviour: handle each path in the vec.
+    ///
+    /// Coordinates follow the same convention as `MouseMove`/`MouseDown`:
+    /// widget-local Y-up. The cursor lives at `pos` at the moment of
+    /// drop, so widgets can spawn objects under the user's intent.
+    FileDropped {
+        pos: Point,
+        paths: Vec<std::path::PathBuf>,
+    },
 }
 
 /// What a widget returns from [`crate::widget::Widget::on_event`].
