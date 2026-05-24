@@ -242,8 +242,11 @@ impl Widget for NodeWidget {
         };
         // Selected nodes wear the accent colour as their border so the
         // theme's swatch picker has an immediately-visible payoff.
+        // Sourced from live visuals so accent changes flow through
+        // without waiting for a layout-fingerprint rebuild of the
+        // cached `NodePaintContext::palette`.
         style.border_color = if self.selected {
-            self.ctx.palette.node_border_selected
+            v.accent
         } else {
             self.ctx.palette.node_border
         };
@@ -258,7 +261,7 @@ impl Widget for NodeWidget {
         // unselected border with just a colour shift.
         if self.selected {
             let r = NODE_RADIUS * s;
-            ctx.set_stroke_color(self.ctx.palette.node_border_selected);
+            ctx.set_stroke_color(v.accent);
             ctx.set_line_width(2.0);
             ctx.begin_path();
             ctx.rounded_rect(1.0, 1.0, (w - 2.0).max(0.0), (h - 2.0).max(0.0), r);
