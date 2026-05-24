@@ -24,6 +24,7 @@ const EXCLUDED_DIRS: &[&str] = &[
     "agg-gui/reference-egui-main",
     "cpp-reference",
     "demo/dist",
+    "demo/node_modules",
     "demo/public/pkg",
     "tests/resvg-test-suite",
 ];
