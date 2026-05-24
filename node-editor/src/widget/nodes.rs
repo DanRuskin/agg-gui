@@ -240,13 +240,30 @@ impl Widget for NodeWidget {
         } else {
             self.ctx.palette.node_body
         };
-        style.border_color = self.ctx.palette.node_border;
+        // Selected nodes wear the accent colour as their border so the
+        // theme's swatch picker has an immediately-visible payoff.
+        style.border_color = if self.selected {
+            self.ctx.palette.node_border_selected
+        } else {
+            self.ctx.palette.node_border
+        };
 
         agg_gui::widgets::window::paint_chrome_shadow(ctx, w, h, &style);
         agg_gui::widgets::window::paint_chrome_body(ctx, w, h, &style, self.collapsed);
         // Header paints its own bar fill on top of the body — chrome_body
         // leaves the title strip empty so the header colour wins cleanly.
         agg_gui::widgets::window::paint_chrome_border(ctx, w, h, &style);
+        // Thicker stroke when selected so the accent ring reads at a
+        // glance — single thin border looks identical to the normal
+        // unselected border with just a colour shift.
+        if self.selected {
+            let r = NODE_RADIUS * s;
+            ctx.set_stroke_color(self.ctx.palette.node_border_selected);
+            ctx.set_line_width(2.0);
+            ctx.begin_path();
+            ctx.rounded_rect(1.0, 1.0, (w - 2.0).max(0.0), (h - 2.0).max(0.0), r);
+            ctx.stroke();
+        }
     }
 
     fn on_event(&mut self, _: &Event) -> EventResult {

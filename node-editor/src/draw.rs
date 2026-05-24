@@ -399,6 +399,10 @@ pub struct CanvasPalette {
     pub node_body: Color,
     pub node_body_selected: Color,
     pub node_border: Color,
+    /// Border colour for the currently-selected node — pulled from
+    /// `Visuals::accent` so the View → Color swatch shows up clearly
+    /// in the editor.
+    pub node_border_selected: Color,
     pub node_title_fallback: Color,
     pub label_text: Color,
 }
@@ -440,6 +444,7 @@ impl CanvasPalette {
             node_body,
             node_body_selected,
             node_border,
+            node_border_selected: v.accent,
             node_title_fallback: v.accent,
             label_text: v.text_color,
         }
