@@ -152,23 +152,16 @@ impl Widget for WindowTitleBar {
             ctx.fill();
         }
 
-        // Collapse / expand chevron on the left.
-        let chev_x = 12.0;
-        let chev_cy = h * 0.5;
-        let chev_sz = 4.0;
-        ctx.set_stroke_color(v.window_title_text);
-        ctx.set_line_width(1.5);
-        ctx.begin_path();
-        if st.collapsed {
-            ctx.move_to(chev_x, chev_cy - chev_sz);
-            ctx.line_to(chev_x + chev_sz, chev_cy);
-            ctx.line_to(chev_x, chev_cy + chev_sz);
-        } else {
-            ctx.move_to(chev_x - chev_sz, chev_cy - chev_sz * 0.5);
-            ctx.line_to(chev_x, chev_cy + chev_sz * 0.5);
-            ctx.line_to(chev_x + chev_sz, chev_cy - chev_sz * 0.5);
-        }
-        ctx.stroke();
+        // Collapse / expand chevron on the left — shared helper so the
+        // chevron iconography stays in sync with NodeWidget's identical
+        // chevron in the node editor.
+        crate::widgets::window::chrome::paint_chevron(
+            ctx,
+            12.0,
+            h * 0.5,
+            st.collapsed,
+            v.window_title_text,
+        );
 
         // Title label colour — child paints itself via the framework's tree walk.
         self.children[0].set_label_color(st.title_color);

@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::draw::{layout_node_with_connections, SocketSide};
-use crate::model::{NoodleResult, NoodleView, NodeTypeView, NodeView, PropertyValue, SocketView};
-use agg_gui::Point;
+use crate::model::{NodeTypeView, NodeView, NoodleResult, NoodleView, PropertyValue, SocketView};
+use agg_gui::{Modifiers, MouseButton, Point};
 
 /// Trivial in-memory model for unit tests.
 #[derive(Default)]
@@ -264,6 +264,60 @@ fn dragging_with_snap_enabled_aligns_left_edge_to_neighbour() {
 }
 
 #[test]
+fn drag_release_clears_guides_and_invalidates_backbuffer() {
+    // After a snap engages, the user releases the drag.  The guide
+    // list must be empty AND the canvas's backbuffer must be marked
+    // dirty so the next paint re-rasters without the alignment line
+    // — otherwise the cached pixels keep showing the stale guide.
+    let (model, memory) = fixture_with_typed_handle();
+    let mut editor = NodeEditor::new(model);
+    editor.set_bounds(Rect::new(0.0, 0.0, 800.0, 600.0));
+    seed_nodes(
+        &mut editor,
+        &memory,
+        vec![
+            mk_node(1, "A", [50.0, 300.0]),
+            mk_node(2, "B", [400.0, 100.0]),
+        ],
+    );
+    agg_gui::snap::set_enabled(true);
+    editor.interaction = CanvasState::DraggingNode {
+        ids: vec![NodeId(1)],
+        start_positions: vec![[50.0, 300.0]],
+        start_canvas: [50.0, 300.0],
+    };
+    editor.on_mouse_move(Point::new(403.0, 300.0));
+    // Snap should have written a guide.
+    assert!(
+        !agg_gui::snap::guides_snapshot().is_empty(),
+        "drag-time snap should have written guides"
+    );
+    // Clear the backbuffer-dirty flag so the post-mouseup check can
+    // detect the invalidate.
+    if let Some(state) = editor.backbuffer_state_mut() {
+        state.dirty = false;
+    }
+    editor.on_mouse_up(
+        Point::new(403.0, 300.0),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    assert!(
+        agg_gui::snap::guides_snapshot().is_empty(),
+        "MouseUp must clear the snap-guide list"
+    );
+    let dirty = editor
+        .backbuffer_state_mut()
+        .map(|s| s.dirty)
+        .unwrap_or(false);
+    assert!(
+        dirty,
+        "MouseUp on a drag must invalidate the canvas backbuffer so the next paint re-rasters without the snap guide"
+    );
+    agg_gui::snap::set_enabled(false);
+}
+
+#[test]
 fn dragging_with_snap_disabled_does_not_align() {
     // Opposite control: with snap toggle OFF, the same drag must
     // leave the node at the raw cursor position — no edge attraction.
@@ -402,8 +456,7 @@ fn with_id_overrides_default() {
 // dialog would render twice (once here, once at the screen-level host)
 // and double-handle every event.
 
-const TEST_FONT_FOR_PICKER: &[u8] =
-    include_bytes!("../../../demo/assets/CascadiaCode.ttf");
+const TEST_FONT_FOR_PICKER: &[u8] = include_bytes!("../../../demo/assets/CascadiaCode.ttf");
 
 fn install_test_font_once() {
     use agg_gui::font_settings::{current_system_font, set_system_font};
@@ -554,9 +607,13 @@ fn resolve_noodle_endpoints_filters_by_socket_side_when_names_collide() {
         to_node: NodeId(2),
         to_socket: "Geometry".into(),
     };
-    let (from, to) = resolve_noodle_endpoints(&layouts, &noodle)
-        .expect("both endpoints must resolve");
-    assert_eq!(from.side, SocketSide::Output, "source endpoint is an output");
+    let (from, to) =
+        resolve_noodle_endpoints(&layouts, &noodle).expect("both endpoints must resolve");
+    assert_eq!(
+        from.side,
+        SocketSide::Output,
+        "source endpoint is an output"
+    );
     assert_eq!(
         to.side,
         SocketSide::Input,

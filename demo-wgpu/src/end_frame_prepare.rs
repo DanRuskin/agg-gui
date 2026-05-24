@@ -70,8 +70,18 @@ pub(crate) fn prepare_all(
                 };
                 let ub = alloc_uniform(device, queue, arenas, bytemuck::bytes_of(&uniforms));
                 let bg0 = mk_uniform_bg(device, &pipelines.solid_bgl, &ub);
-                let vb = alloc_vertex(device, queue, arenas, bytemuck::cast_slice(verts.as_slice()));
-                let ib = alloc_index(device, queue, arenas, bytemuck::cast_slice(indices.as_slice()));
+                let vb = alloc_vertex(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(verts.as_slice()),
+                );
+                let ib = alloc_index(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(indices.as_slice()),
+                );
                 out.push(Prepared::Solid {
                     vb,
                     ib,
@@ -99,8 +109,18 @@ pub(crate) fn prepare_all(
                 };
                 let ub = alloc_uniform(device, queue, arenas, bytemuck::bytes_of(&uniforms));
                 let bg0 = mk_uniform_bg(device, &pipelines.aa_solid_bgl, &ub);
-                let vb = alloc_vertex(device, queue, arenas, bytemuck::cast_slice(verts.as_slice()));
-                let ib = alloc_index(device, queue, arenas, bytemuck::cast_slice(indices.as_slice()));
+                let vb = alloc_vertex(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(verts.as_slice()),
+                );
+                let ib = alloc_index(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(indices.as_slice()),
+                );
                 out.push(Prepared::AaSolid {
                     vb,
                     ib,
@@ -162,8 +182,18 @@ pub(crate) fn prepare_all(
                         },
                     ],
                 });
-                let vb = alloc_vertex(device, queue, arenas, bytemuck::cast_slice(verts.as_slice()));
-                let ib = alloc_index(device, queue, arenas, bytemuck::cast_slice(indices.as_slice()));
+                let vb = alloc_vertex(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(verts.as_slice()),
+                );
+                let ib = alloc_index(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(indices.as_slice()),
+                );
                 out.push(Prepared::Gradient {
                     _ramp_tex: ramp_tex,
                     _ramp_view: ramp_view,
@@ -210,7 +240,12 @@ pub(crate) fn prepare_all(
                         },
                     ],
                 });
-                let vb = alloc_vertex(device, queue, arenas, bytemuck::cast_slice(verts.as_slice()));
+                let vb = alloc_vertex(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(verts.as_slice()),
+                );
                 out.push(Prepared::Textured {
                     _texture: Arc::clone(texture),
                     _view: view.clone(),
@@ -254,7 +289,12 @@ pub(crate) fn prepare_all(
                     ],
                 });
                 let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
-                let vb = alloc_vertex(device, queue, arenas, bytemuck::cast_slice(verts.as_slice()));
+                let vb = alloc_vertex(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(verts.as_slice()),
+                );
                 let ib = alloc_index(device, queue, arenas, bytemuck::cast_slice(&idx));
                 out.push(Prepared::LcdMask {
                     _texture: Arc::clone(texture),
@@ -304,7 +344,12 @@ pub(crate) fn prepare_all(
                     ],
                 });
                 let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
-                let vb = alloc_vertex(device, queue, arenas, bytemuck::cast_slice(verts.as_slice()));
+                let vb = alloc_vertex(
+                    device,
+                    queue,
+                    arenas,
+                    bytemuck::cast_slice(verts.as_slice()),
+                );
                 let ib = alloc_index(device, queue, arenas, bytemuck::cast_slice(&idx));
                 out.push(Prepared::LcbMask {
                     _color_tex: Arc::clone(color_tex),

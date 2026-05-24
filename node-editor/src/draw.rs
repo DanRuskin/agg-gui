@@ -31,9 +31,7 @@
 
 use agg_gui::{Color, DrawCtx};
 
-use crate::model::{
-    NodeGraphModel, NodeId, NodeView, PropertyValue, PropertyView, SocketTypeId,
-};
+use crate::model::{NodeGraphModel, NodeId, NodeView, PropertyValue, PropertyView, SocketTypeId};
 
 // --- Layout constants ------------------------------------------------------
 
@@ -162,6 +160,10 @@ pub struct NodeLayoutInfo {
     pub rows: Vec<NodeRow>,
     pub display_name: String,
     pub category: String,
+    /// True when this layout was produced for a collapsed node — the
+    /// body is title-bar-only and rows hold sockets only (anchored at
+    /// the title-bar side-center for noodle endpoints).
+    pub collapsed: bool,
 }
 
 impl NodeLayoutInfo {
@@ -223,11 +225,69 @@ pub fn layout_node(node: &NodeView) -> NodeLayoutInfo {
 /// are currently connected. Bound inline editors on connected inputs
 /// are suppressed so the row reads as "data is flowing in here" without
 /// the extra editor noise.
-pub fn layout_node_with_connections<F>(node: &NodeView, mut is_input_connected: F) -> NodeLayoutInfo
+pub fn layout_node_with_connections<F>(node: &NodeView, is_input_connected: F) -> NodeLayoutInfo
+where
+    F: FnMut(&str) -> bool,
+{
+    layout_node_with_state(node, is_input_connected, /* collapsed */ false)
+}
+
+/// Full layout with both connection-aware editor suppression and a
+/// per-node collapsed flag. A collapsed node draws as a title-bar-only
+/// strip; its sockets all anchor at the title-bar's side-center so
+/// existing noodles still have endpoints to resolve against. Property
+/// rows and inline editors are dropped entirely while collapsed.
+pub fn layout_node_with_state<F>(
+    node: &NodeView,
+    mut is_input_connected: F,
+    collapsed: bool,
+) -> NodeLayoutInfo
 where
     F: FnMut(&str) -> bool,
 {
     let top_left = node.position;
+
+    if collapsed {
+        // Single-row layout: just the title bar. Sockets collapse to
+        // the bar's side-center (one point per side) so the noodle
+        // bezier endpoints land on the chrome.
+        let height = TITLE_HEIGHT;
+        let center_y = top_left[1] - TITLE_HEIGHT * 0.5;
+        let mut rows: Vec<NodeRow> = Vec::with_capacity(node.outputs.len() + node.inputs.len());
+        for s in &node.outputs {
+            rows.push(NodeRow::Output(SocketLayout {
+                side: SocketSide::Output,
+                name: s.name.clone(),
+                display_label: s.label().to_string(),
+                socket_type: s.socket_type,
+                center: [top_left[0] + NODE_WIDTH, center_y],
+            }));
+        }
+        for s in &node.inputs {
+            // Suppress the editor regardless of connection state — there's
+            // no row to host it on.
+            let _ = is_input_connected(&s.name);
+            rows.push(NodeRow::Input {
+                socket: SocketLayout {
+                    side: SocketSide::Input,
+                    name: s.name.clone(),
+                    display_label: s.label().to_string(),
+                    socket_type: s.socket_type,
+                    center: [top_left[0], center_y],
+                },
+                editor: None,
+            });
+        }
+        return NodeLayoutInfo {
+            node_id: node.id,
+            top_left,
+            size: [NODE_WIDTH, height],
+            rows,
+            display_name: node.display_name.clone(),
+            category: node.category.clone(),
+            collapsed: true,
+        };
+    }
 
     // Partition properties by bound input.
     let bound_properties: std::collections::HashMap<&str, &PropertyView> = node
@@ -309,6 +369,7 @@ where
         rows,
         display_name: node.display_name.clone(),
         category: node.category.clone(),
+        collapsed: false,
     }
 }
 
@@ -650,4 +711,3 @@ pub fn draw_bezier_connection(
     ctx.cubic_to(cp1[0], cp1[1], cp2[0], cp2[1], to[0], to[1]);
     ctx.stroke();
 }
-

@@ -16,3 +16,4 @@ path = "src/lib.rs"
 
 [dependencies]
 agg-gui = { path = "../agg-gui" }
+web-time = "1"

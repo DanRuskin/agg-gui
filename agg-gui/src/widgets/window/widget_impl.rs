@@ -438,26 +438,11 @@ impl Widget for Window {
         // bounds.height == TITLE_H when collapsed (adjusted on toggle).
         let h = self.bounds.height;
 
-        // Drop shadow — stacked rounded rects approximating a Gaussian blur.
-        // Outer layers inflate outward and fade with a (1−t)² falloff; drawn
-        // outside-in so the denser core overlays the softer halo.
-        let base = v.window_shadow;
-        for i in (0..SHADOW_STEPS).rev() {
-            let t = i as f64 / SHADOW_STEPS as f64;
-            let infl = t * SHADOW_BLUR;
-            let falloff = (1.0 - t).powi(2) as f32;
-            let alpha = base.a * falloff / SHADOW_STEPS as f32 * 6.0;
-            ctx.set_fill_color(Color::rgba(base.r, base.g, base.b, alpha));
-            ctx.begin_path();
-            ctx.rounded_rect(
-                SHADOW_DX - infl,
-                -SHADOW_DY - infl,
-                w + 2.0 * infl,
-                h + 2.0 * infl,
-                CORNER_R + infl,
-            );
-            ctx.fill();
-        }
+        // Drop shadow + body fill go through the shared chrome helpers so
+        // every "framed" widget (Window, NodeWidget, etc.) renders the same
+        // halo + rounded body.
+        let style = super::chrome::ChromeStyle::from_visuals(&v);
+        super::chrome::paint_chrome_shadow(ctx, w, h, &style);
 
         self.foreground_layer_active.set(false);
         if ctx.supports_compositing_layers() {
@@ -467,19 +452,7 @@ impl Widget for Window {
 
         // Window body. Expanded windows leave the top strip to `WindowTitleBar`
         // so the top corner alpha comes from one shape, not overlapping fills.
-        let content_h = (h - TITLE_H).max(0.0);
-        if content_h > 0.0 {
-            ctx.set_fill_color(v.window_fill);
-            ctx.begin_path();
-            ctx.rounded_rect(0.0, 0.0, w, content_h, CORNER_R);
-            ctx.rect(
-                0.0,
-                (content_h - CORNER_R).max(0.0),
-                w,
-                CORNER_R.min(content_h),
-            );
-            ctx.fill();
-        }
+        super::chrome::paint_chrome_body(ctx, w, h, &style, self.collapsed);
 
         ctx.set_layer_rounded_clip(0.0, 0.0, w, h, CORNER_R);
 
@@ -509,11 +482,7 @@ impl Widget for Window {
 
         // Outer border frames both body and title region.
         ctx.set_fill_color(v.window_fill); // restore default fill — stroke follows
-        ctx.set_stroke_color(v.window_stroke);
-        ctx.set_line_width(1.0);
-        ctx.begin_path();
-        ctx.rounded_rect(0.5, 0.5, (w - 1.0).max(0.0), (h - 1.0).max(0.0), CORNER_R);
-        ctx.stroke();
+        super::chrome::paint_chrome_border(ctx, w, h, &style);
     }
 
     // paint_overlay: draws the resize handle dots + edge highlights on top of content.

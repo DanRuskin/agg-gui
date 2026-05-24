@@ -40,7 +40,7 @@ use agg_gui::{
 };
 
 use crate::draw::{
-    draw_bezier_connection, draw_canvas_grid, layout_node_with_connections, CanvasPalette,
+    draw_bezier_connection, draw_canvas_grid, layout_node_with_state, CanvasPalette,
     NodeLayoutInfo, PropLayout, SocketLayout, SocketSide,
 };
 use crate::model::{NodeGraphModel, NodeId, NoodleView, SocketTypeId};
@@ -142,6 +142,14 @@ pub struct NodeEditor {
     canvas_offset: [f64; 2],
     canvas_scale: f64,
     selected: HashSet<NodeId>,
+    /// Nodes the user has collapsed via the title-bar chevron or
+    /// double-click. Collapsed nodes paint as title-bar-only and their
+    /// sockets all anchor at the title-bar side-center so existing
+    /// noodles still resolve to an endpoint.
+    collapsed_nodes: HashSet<NodeId>,
+    /// Most recent left-click in widget-local coords + time, used to
+    /// detect double-clicks on a node's title bar (toggle collapse).
+    last_click: Option<(agg_gui::Point, web_time::Instant)>,
     palette: CanvasPalette,
     interaction: CanvasState,
     /// Spacebar pan modifier — when held, mouse-left drag pans the canvas
@@ -216,6 +224,8 @@ impl NodeEditor {
             canvas_offset: [0.0, 0.0],
             canvas_scale: 1.0,
             selected: HashSet::new(),
+            collapsed_nodes: HashSet::new(),
+            last_click: None,
             palette: CanvasPalette::dark(),
             interaction: CanvasState::Idle,
             space_held: false,
@@ -310,9 +320,12 @@ impl NodeEditor {
         let mut layouts: Vec<NodeLayoutInfo> = nodes
             .iter()
             .map(|n| {
-                layout_node_with_connections(n, |sock| {
-                    connected.contains(&(n.id, sock.to_string()))
-                })
+                let collapsed = self.collapsed_nodes.contains(&n.id);
+                layout_node_with_state(
+                    n,
+                    |sock| connected.contains(&(n.id, sock.to_string())),
+                    collapsed,
+                )
             })
             .collect();
         layouts.sort_by_key(|l| {
@@ -393,6 +406,7 @@ impl NodeEditor {
             l.rows.len().hash(&mut h);
             let sel = self.selected.contains(&l.node_id) || ext_sel == Some(l.node_id);
             sel.hash(&mut h);
+            l.collapsed.hash(&mut h);
         }
         self.canvas_offset[0].to_bits().hash(&mut h);
         self.canvas_offset[1].to_bits().hash(&mut h);

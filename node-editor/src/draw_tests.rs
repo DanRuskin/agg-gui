@@ -115,7 +115,10 @@ fn layout_places_input_left_output_right() {
     assert_eq!(info.top_left, [100.0, 200.0]);
     let sockets: Vec<&SocketLayout> = info.sockets().collect();
     assert_eq!(sockets.len(), 2);
-    let input = sockets.iter().find(|s| s.side == SocketSide::Input).unwrap();
+    let input = sockets
+        .iter()
+        .find(|s| s.side == SocketSide::Input)
+        .unwrap();
     let output = sockets
         .iter()
         .find(|s| s.side == SocketSide::Output)

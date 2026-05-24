@@ -14,8 +14,13 @@ use std::sync::Arc;
 
 use agg_gui::{Color, EventResult, Key, Modifiers, MouseButton, Point};
 
-use crate::draw::SocketSide;
+use crate::draw::{SocketSide, NodeLayoutInfo, TITLE_HEIGHT};
 use crate::model::{EditorHint, NodeId, PropertyValue};
+
+/// Window for double-click detection in milliseconds — matches the
+/// constant `agg_gui::widgets::window::DBL_CLICK_MS` so a click in a
+/// Window title bar and a click in a node title bar feel identical.
+const DBL_CLICK_MS: u128 = 500;
 
 use super::{CanvasState, NodeEditor, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP};
 
@@ -83,6 +88,36 @@ impl NodeEditor {
                     }
                 }
                 if let Some(node_id) = self.hit_node(&layouts, canvas_pos) {
+                    // Chevron click on the title bar → toggle collapse
+                    // without starting a drag.  Also handle double-click
+                    // anywhere in the title bar (matches Window's
+                    // collapse gesture).
+                    if hit_chevron(&layouts, node_id, canvas_pos) {
+                        self.toggle_collapsed(node_id);
+                        self.last_click = None;
+                        return EventResult::Consumed;
+                    }
+                    if hit_title_bar(&layouts, node_id, canvas_pos) {
+                        let now = web_time::Instant::now();
+                        let is_double = self
+                            .last_click
+                            .as_ref()
+                            .map(|(prev_pos, prev_time)| {
+                                let dt = now
+                                    .duration_since(*prev_time)
+                                    .as_millis();
+                                let dx = (pos.x - prev_pos.x).abs();
+                                let dy = (pos.y - prev_pos.y).abs();
+                                dt <= DBL_CLICK_MS && dx < 6.0 && dy < 6.0
+                            })
+                            .unwrap_or(false);
+                        if is_double {
+                            self.toggle_collapsed(node_id);
+                            self.last_click = None;
+                            return EventResult::Consumed;
+                        }
+                        self.last_click = Some((pos, now));
+                    }
                     if !modifiers.shift && !self.selected.contains(&node_id) {
                         self.selected.clear();
                     }
@@ -278,13 +313,26 @@ impl NodeEditor {
             }
             (_, CanvasState::DraggingNode { .. }) => {
                 // Drag ended — clear any snap guides the drag handler
-                // wrote during the move, so the overlay doesn't keep
-                // painting a stale alignment line.
+                // wrote during the move, then force a repaint.
+                //
+                // The canvas retains its painted pixels in a GL FBO
+                // backbuffer that's only re-rasterised when the
+                // fingerprint changes (model state, selection, etc.).
+                // Clearing the guide list doesn't touch the
+                // fingerprint, so without an explicit invalidate the
+                // next paint blits the cached image — including the
+                // stale guides drawn during the drag.  Invalidate +
+                // request_draw together ensure the next frame
+                // re-rasters with an empty guide list and the host
+                // event loop wakes up to paint it.
                 agg_gui::snap::clear_guides();
+                self.backbuffer.invalidate();
+                agg_gui::animation::request_draw();
                 EventResult::Consumed
             }
-            (_, CanvasState::PanningCanvas { .. })
-            | (_, CanvasState::DraggingProperty { .. }) => EventResult::Consumed,
+            (_, CanvasState::PanningCanvas { .. }) | (_, CanvasState::DraggingProperty { .. }) => {
+                EventResult::Consumed
+            }
             (_, _) => EventResult::Ignored,
         }
     }
@@ -438,6 +486,49 @@ fn color_to_property(c: Option<Color>, original: [f32; 4]) -> PropertyValue {
     }
 }
 
+/// True when `canvas_pos` lands inside the title-bar strip of the given
+/// node's layout. The title bar occupies the top [`TITLE_HEIGHT`] of
+/// the node body in canvas-space (Y-up: `top_left.y` is the top edge).
+fn hit_title_bar(layouts: &[NodeLayoutInfo], node_id: NodeId, canvas_pos: [f64; 2]) -> bool {
+    let Some(l) = layouts.iter().find(|l| l.node_id == node_id) else {
+        return false;
+    };
+    let x0 = l.top_left[0];
+    let x1 = x0 + l.size[0];
+    let y_top = l.top_left[1];
+    let y_bot = y_top - TITLE_HEIGHT;
+    canvas_pos[0] >= x0 && canvas_pos[0] <= x1 && canvas_pos[1] >= y_bot && canvas_pos[1] <= y_top
+}
+
+/// True when `canvas_pos` lands on the title bar's collapse / expand
+/// chevron. Mirrors [`agg_gui::widgets::window::chrome_chevron_hit`]
+/// but expressed in canvas-space and against the node's title strip.
+fn hit_chevron(layouts: &[NodeLayoutInfo], node_id: NodeId, canvas_pos: [f64; 2]) -> bool {
+    if !hit_title_bar(layouts, node_id, canvas_pos) {
+        return false;
+    }
+    let Some(l) = layouts.iter().find(|l| l.node_id == node_id) else {
+        return false;
+    };
+    // Convert to title-bar-local coords: x relative to bar's left edge,
+    // y relative to bar's bottom edge (Y-up).
+    let local_x = canvas_pos[0] - l.top_left[0];
+    let local_y = canvas_pos[1] - (l.top_left[1] - TITLE_HEIGHT);
+    agg_gui::widgets::window::chrome_chevron_hit(local_x, local_y, TITLE_HEIGHT)
+}
+
+impl NodeEditor {
+    /// Toggle the per-node collapse flag and invalidate the retained
+    /// canvas backbuffer so the change is visible next frame.
+    pub(super) fn toggle_collapsed(&mut self, id: NodeId) {
+        if !self.collapsed_nodes.insert(id) {
+            self.collapsed_nodes.remove(&id);
+        }
+        self.backbuffer.invalidate();
+        agg_gui::animation::request_draw();
+    }
+}
+
 /// Run a single-node drag through the snap engine and overwrite
 /// `position` with the snapped top-left corner.
 ///
@@ -460,19 +551,19 @@ fn snap_single_node(
     };
     let size = moving_layout.size;
     let raw_top_left = *position;
-    let moving_rect = Rect::new(
-        raw_top_left[0],
-        raw_top_left[1] - size[1],
-        size[0],
-        size[1],
-    );
+    let moving_rect = Rect::new(raw_top_left[0], raw_top_left[1] - size[1], size[0], size[1]);
     let targets: Vec<(SnapId, Rect)> = layouts
         .iter()
         .filter(|l| l.node_id != moving_id)
         .map(|l| {
             (
                 SnapId(l.node_id.0),
-                Rect::new(l.top_left[0], l.top_left[1] - l.size[1], l.size[0], l.size[1]),
+                Rect::new(
+                    l.top_left[0],
+                    l.top_left[1] - l.size[1],
+                    l.size[0],
+                    l.size[1],
+                ),
             )
         })
         .collect();

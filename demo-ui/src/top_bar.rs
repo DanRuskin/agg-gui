@@ -22,9 +22,8 @@ use std::sync::Arc;
 use agg_gui::widget::{BackbufferCache, BackbufferMode};
 use agg_gui::widgets::menu::MenuStyle;
 use agg_gui::{
-    set_visuals, AccentColor, DrawCtx, Event, EventResult, FlexRow, Font, Key,
-    MenuBar, MenuEntry, MenuItem, Modifiers, Rect, Size, SizedBox, ThemePreference, TopMenu,
-    Visuals, Widget,
+    set_visuals, AccentColor, DrawCtx, Event, EventResult, FlexRow, Font, Key, MenuBar, MenuEntry,
+    MenuItem, Modifiers, Rect, Size, SizedBox, ThemePreference, TopMenu, Visuals, Widget,
 };
 
 // ── Theme helpers (re-exported from the previous module) ─────────────────────
@@ -380,11 +379,9 @@ fn build_menus(
             .into(),
     ];
 
-    let help_items = vec![
-        MenuItem::action("View on GitHub", "help.github")
-            .icon('\u{F09B}')
-            .into(),
-    ];
+    let help_items = vec![MenuItem::action("View on GitHub", "help.github")
+        .icon('\u{F09B}')
+        .into()];
 
     vec![
         TopMenu::new("View", view_items),

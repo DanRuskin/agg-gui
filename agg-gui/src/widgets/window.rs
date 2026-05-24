@@ -51,7 +51,6 @@ use std::sync::Arc;
 
 use web_time::Instant;
 
-use crate::color::Color;
 use crate::cursor::{set_cursor_icon, CursorIcon};
 use crate::draw_ctx::DrawCtx;
 use crate::event::{Event, EventResult, MouseButton};
@@ -72,7 +71,6 @@ const CORNER_R: f64 = 8.0;
 const SHADOW_BLUR: f64 = 14.0;
 const SHADOW_DX: f64 = 2.0;
 const SHADOW_DY: f64 = 6.0;
-const SHADOW_STEPS: usize = 10;
 const VISIBILITY_FADE_SECS: f64 = 0.18;
 const CLOSE_R: f64 = 6.0;
 const CLOSE_PAD: f64 = 10.0;
@@ -734,4 +732,10 @@ fn resize_cursor(dir: ResizeDir) -> CursorIcon {
 }
 
 mod builder;
+pub mod chrome;
 mod widget_impl;
+
+pub use chrome::{
+    chrome_chevron_hit, paint_chevron, paint_chrome_body, paint_chrome_border,
+    paint_chrome_shadow, paint_chrome_title_bar, ChromeStyle,
+};

@@ -2,9 +2,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agg_gui::{
-    Button, DrawCtx, Event, EventResult, Font, HAnchor, Label, Rect, Size, Widget,
-};
+use agg_gui::{Button, DrawCtx, Event, EventResult, Font, HAnchor, Label, Rect, Size, Widget};
 
 // The "Mean CPU usage" label + frame-time sparkline, the Mode header, the
 // Reactive/Continuous segmented selector, and the dynamic description label
@@ -289,4 +287,3 @@ impl Widget for MsaaRow {
         EventResult::Ignored
     }
 }
-

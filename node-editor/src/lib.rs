@@ -43,7 +43,7 @@ pub mod widget;
 
 pub use draw::CanvasPalette;
 pub use model::{
-    NoodleResult, NoodleView, EditorHint, NodeGraphModel, NodeId, NodeTypeView, NodeView,
+    EditorHint, NodeGraphModel, NodeId, NodeTypeView, NodeView, NoodleResult, NoodleView,
     PropertyValue, PropertyView, SocketTypeId, SocketView,
 };
 pub use widget::{NodeEditor, SharedModel};

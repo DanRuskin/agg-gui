@@ -1,23 +1,33 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// Tests target real Google Chrome (channel "chrome") rather than the bundled
+// chromium-headless-shell.  The bundled shell ships only bare SwiftShader-GL,
+// which fails wgpu's shader validation on the demo's 'solid' vertex pipeline
+// and kills WASM init before the first frame paints.  Real Chrome routes
+// WebGL2 through ANGLE and compiles the wgpu-generated shaders cleanly.
+// GitHub-hosted ubuntu-latest ships Google Chrome pre-installed, so deploy
+// CI just needs Playwright's OS deps (`playwright install-deps chrome`).
+const CHROME_USE = {
+  ...devices["Desktop Chrome"],
+  channel: "chrome",
+  headless: true,
+};
+
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: false,
   retries: 0,
-  timeout: 30_000,
+  timeout: 60_000,
 
   use: {
     baseURL: "http://localhost:3001",
-    // Headless Chromium for speed — no cross-browser needed.
-    ...devices["Desktop Chrome"],
-    headless: true,
+    ...CHROME_USE,
   },
 
-  // Single project: headless Chromium only.
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: CHROME_USE,
     },
   ],
 

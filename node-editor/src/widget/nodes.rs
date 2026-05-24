@@ -56,6 +56,10 @@ pub struct NodeWidget {
     display_name: String,
     category: String,
     selected: bool,
+    /// True when the user has folded this node to title-bar-only. Drives
+    /// both the paint pass (skip body fill, round all four corners on the
+    /// header) and the row-rebuild path (header is the only child).
+    collapsed: bool,
     ctx: NodePaintContext,
 }
 
@@ -102,17 +106,22 @@ impl NodeWidget {
             screen_h,
             layout.display_name.clone(),
             layout.category.clone(),
+            layout.collapsed,
             ctx.clone(),
         )));
 
-        for (row_index, row) in layout.rows.iter().enumerate() {
-            children.push(Box::new(NodeRowWidget::from_row(
-                row,
-                row_index,
-                screen_w,
-                screen_h,
-                ctx.clone(),
-            )));
+        // Collapsed nodes drop row children entirely — the body is gone,
+        // sockets are anchored on the title bar only for noodle resolution.
+        if !layout.collapsed {
+            for (row_index, row) in layout.rows.iter().enumerate() {
+                children.push(Box::new(NodeRowWidget::from_row(
+                    row,
+                    row_index,
+                    screen_w,
+                    screen_h,
+                    ctx.clone(),
+                )));
+            }
         }
 
         Self {
@@ -125,6 +134,7 @@ impl NodeWidget {
             display_name: layout.display_name.clone(),
             category: layout.category.clone(),
             selected,
+            collapsed: layout.collapsed,
             ctx,
         }
     }
@@ -192,23 +202,30 @@ impl Widget for NodeWidget {
         if w <= 0.0 || h <= 0.0 {
             return;
         }
-        let body_color = if self.selected {
+        // Build a chrome style from the live visuals, then override the
+        // node-specific colours (selected body tint, palette border, and
+        // node corner radius which is tighter than a Window's). The
+        // shared chrome helpers handle shadow + rounded body + border.
+        let v = ctx.visuals();
+        let mut style = agg_gui::widgets::window::ChromeStyle::from_visuals(&v);
+        let s = self.ctx.scale;
+        style.corner_radius = NODE_RADIUS * s;
+        style.title_height = TITLE_HEIGHT * s;
+        style.shadow_blur *= s;
+        style.shadow_dx *= s;
+        style.shadow_dy *= s;
+        style.body_color = if self.selected {
             self.ctx.palette.node_body_selected
         } else {
             self.ctx.palette.node_body
         };
-        let r = NODE_RADIUS * self.ctx.scale;
-        // Body fill.
-        ctx.set_fill_color(body_color);
-        ctx.begin_path();
-        ctx.rounded_rect(0.0, 0.0, w, h, r);
-        ctx.fill();
-        // Border.
-        ctx.set_stroke_color(self.ctx.palette.node_border);
-        ctx.set_line_width(1.0);
-        ctx.begin_path();
-        ctx.rounded_rect(0.0, 0.0, w, h, r);
-        ctx.stroke();
+        style.border_color = self.ctx.palette.node_border;
+
+        agg_gui::widgets::window::paint_chrome_shadow(ctx, w, h, &style);
+        agg_gui::widgets::window::paint_chrome_body(ctx, w, h, &style, self.collapsed);
+        // Header paints its own bar fill on top of the body — chrome_body
+        // leaves the title strip empty so the header colour wins cleanly.
+        agg_gui::widgets::window::paint_chrome_border(ctx, w, h, &style);
     }
 
     fn on_event(&mut self, _: &Event) -> EventResult {
@@ -228,11 +245,21 @@ pub struct NodeHeaderWidget {
     children: Vec<Box<dyn Widget>>,
     title: String,
     category: String,
+    /// Matches `NodeWidget::collapsed`. The header chrome rounds all four
+    /// corners + skips the bottom separator when collapsed.
+    collapsed: bool,
     ctx: NodePaintContext,
 }
 
 impl NodeHeaderWidget {
-    fn new(node_w: f64, node_h: f64, title: String, category: String, ctx: NodePaintContext) -> Self {
+    fn new(
+        node_w: f64,
+        node_h: f64,
+        title: String,
+        category: String,
+        collapsed: bool,
+        ctx: NodePaintContext,
+    ) -> Self {
         // `node_w` and `node_h` are already in screen-space (the
         // caller pre-scaled them); the header's logical height
         // `TITLE_HEIGHT` needs the same treatment.
@@ -244,6 +271,7 @@ impl NodeHeaderWidget {
             children: Vec::new(),
             title,
             category,
+            collapsed,
             ctx,
         }
     }
@@ -278,26 +306,30 @@ impl Widget for NodeHeaderWidget {
         let w = self.bounds.width;
         let h = self.bounds.height;
         let s = self.ctx.scale;
-        let r = NODE_RADIUS * s;
         let title_color =
             (self.ctx.title_colors)(&self.category, self.ctx.palette.node_title_fallback);
-        // Rounded top corners by painting a rounded rect then masking
-        // the bottom strip with a rectangle.  Visually identical to
-        // `draw_node_chrome`'s previous logic.
-        ctx.set_fill_color(title_color);
-        ctx.begin_path();
-        ctx.rounded_rect(0.0, 0.0, w, h, r);
-        ctx.fill();
-        ctx.set_fill_color(title_color);
-        ctx.begin_path();
-        ctx.rect(0.0, 0.0, w, r);
-        ctx.fill();
 
-        ctx.set_fill_color(self.ctx.palette.label_text);
-        ctx.set_font_size(TITLE_FONT_SIZE * s);
-        // Text baseline ~4px above the header's bottom, matching the
-        // previous procedural layout (scaled).
-        ctx.fill_text(&self.title, 10.0 * s, h * 0.5 - 4.0 * s);
+        // Shared chrome title-bar paint: fill, chevron, label. We pass
+        // the bar's local (0, 0) origin since NodeHeaderWidget is drawn
+        // in its own translated space by the framework. The category
+        // colour overrides the visuals default, and the label uses the
+        // palette's label_text so it tracks the node-editor theme.
+        let v = ctx.visuals();
+        let mut style = agg_gui::widgets::window::ChromeStyle::from_visuals(&v);
+        style.corner_radius = NODE_RADIUS * s;
+        style.title_height = h;
+        style.title_color = title_color;
+        style.title_text_color = self.ctx.palette.label_text;
+        agg_gui::widgets::window::paint_chrome_title_bar(
+            ctx,
+            0.0,
+            0.0,
+            w,
+            &style,
+            self.collapsed,
+            &self.title,
+            TITLE_FONT_SIZE * s,
+        );
     }
     fn on_event(&mut self, _: &Event) -> EventResult {
         EventResult::Ignored
@@ -360,11 +392,7 @@ impl NodeRowWidget {
                     row_h,
                     ctx.clone(),
                 )));
-                (
-                    format!("output:{}", socket.name),
-                    RowKind::Output,
-                    children,
-                )
+                (format!("output:{}", socket.name), RowKind::Output, children)
             }
             NodeRow::Input { socket, editor } => {
                 let mut children: Vec<Box<dyn Widget>> = Vec::new();
@@ -406,11 +434,7 @@ impl NodeRowWidget {
                     ctx.clone(),
                     /* show_label */ true,
                 )));
-                (
-                    format!("prop:{}", prop.name),
-                    RowKind::Property,
-                    children,
-                )
+                (format!("prop:{}", prop.name), RowKind::Property, children)
             }
         };
 
@@ -676,5 +700,3 @@ impl Widget for RowLabelWidget {
         EventResult::Ignored
     }
 }
-
-
