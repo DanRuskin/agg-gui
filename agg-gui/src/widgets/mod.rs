@@ -19,6 +19,7 @@ pub mod menu;
 pub mod performance;
 pub mod primitives;
 pub mod progress_bar;
+pub mod property_row;
 pub mod radio_group;
 pub mod resize;
 pub mod scroll_view;
@@ -62,6 +63,7 @@ pub use performance::{
 };
 pub use primitives::{Padding, Separator, SizedBox, Spacer, Stack};
 pub use progress_bar::ProgressBar;
+pub use property_row::{EditorKind, NodeFieldAttrs, NumberAttrs};
 pub use radio_group::RadioGroup;
 pub use resize::Resize;
 pub use scroll_view::{
