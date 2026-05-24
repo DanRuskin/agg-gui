@@ -462,24 +462,31 @@ pub fn render(width: u32, height: u32, frame_ms: f64) {
                     // screenshots succeed.
                     wgpu_ctx.set_surface_texture(scene_texture);
                     begin_frame(wgpu_ctx, scene_view);
+                    // `try_borrow_mut` so a previously-panicked event
+                    // handler that left `DEMO_APP` borrowed silently
+                    // skips the render-app step instead of panicking
+                    // again.  The end-of-frame blit + screenshot
+                    // bookkeeping below still runs so the swapchain
+                    // doesn't stall on its current-texture handle.
                     DEMO_APP.with(|app_cell| {
-                        let mut app_borrow = app_cell.borrow_mut();
-                        if let Some(app) = app_borrow.as_mut() {
-                            render_app_frame(
-                                wgpu_ctx,
-                                app,
-                                width,
-                                height,
-                                frame_ms,
-                                show_inspector,
-                                &nodes,
-                                &hb,
-                                &base_edits,
-                                #[cfg(feature = "reflect")]
-                                inspector_edits_rc
-                                    .as_ref()
-                                    .expect("INSPECTOR_EDITS must be initialised with reflect on"),
-                            );
+                        if let Ok(mut app_borrow) = app_cell.try_borrow_mut() {
+                            if let Some(app) = app_borrow.as_mut() {
+                                render_app_frame(
+                                    wgpu_ctx,
+                                    app,
+                                    width,
+                                    height,
+                                    frame_ms,
+                                    show_inspector,
+                                    &nodes,
+                                    &hb,
+                                    &base_edits,
+                                    #[cfg(feature = "reflect")]
+                                    inspector_edits_rc.as_ref().expect(
+                                        "INSPECTOR_EDITS must be initialised with reflect on",
+                                    ),
+                                );
+                            }
                         }
                     });
                     wgpu_ctx.end_frame();
