@@ -33,6 +33,7 @@ fn make_node() -> NodeView {
             max: Some(10.0),
             bound_input: None,
             editor: None,
+            editor_kind: None,
         }],
     }
 }
@@ -69,6 +70,7 @@ fn make_extrude_like() -> NodeView {
             max: Some(40.0),
             bound_input: Some("Height".into()),
             editor: None,
+            editor_kind: None,
         }],
     }
 }

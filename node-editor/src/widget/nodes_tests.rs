@@ -61,6 +61,7 @@ fn make_node() -> NodeView {
             max: Some(40.0),
             bound_input: None,
             editor: None,
+            editor_kind: None,
         }],
     }
 }

@@ -63,7 +63,9 @@ pub use performance::{
 };
 pub use primitives::{Padding, Separator, SizedBox, Spacer, Stack};
 pub use progress_bar::ProgressBar;
-pub use property_row::{EditorKind, NodeFieldAttrs, NumberAttrs, VisibleWhen};
+pub use property_row::{
+    paint_editor_only, paint_row, EditorKind, NodeFieldAttrs, NumberAttrs, RowValue, VisibleWhen,
+};
 pub use radio_group::RadioGroup;
 pub use resize::Resize;
 pub use scroll_view::{

@@ -74,6 +74,11 @@ pub struct SocketLayout {
 #[derive(Clone, Debug)]
 pub struct PropLayout {
     pub name: String,
+    /// Optional display label override — `None` falls back to `name`.
+    /// Reflects MatterCAD's `[DisplayName("…")]` attribute (the
+    /// host-side property panel uses `display_label` whenever the
+    /// schema declared one).
+    pub display_label: Option<String>,
     /// Numeric range, copied from the model's `PropertyView`. Used to
     /// clamp drag deltas on number drags.
     pub min: Option<f64>,
@@ -83,6 +88,10 @@ pub struct PropLayout {
     /// Drives richer popups (today: the ColorWheelPicker dialog on
     /// `EditorHint::Color`).
     pub editor: Option<crate::model::EditorHint>,
+    /// Full editor description from agg-gui's property-row vocabulary
+    /// — drives the per-kind row renderers (`paint_row`). `None`
+    /// means the row falls back to default value-pill paint.
+    pub editor_kind: Option<agg_gui::widgets::EditorKind>,
     /// Canvas-space top-left (y at the row top edge) + size of the
     /// hit-test rectangle. Y-up: `top_left.y` is the row's top edge,
     /// `top_left.y - size.y` is the bottom edge.
@@ -91,6 +100,12 @@ pub struct PropLayout {
 }
 
 impl PropLayout {
+    /// The text the renderer should show as the row's label —
+    /// `display_label` when present, else `name`.
+    pub fn label(&self) -> &str {
+        self.display_label.as_deref().unwrap_or(&self.name)
+    }
+
     pub fn contains(&self, canvas_pos: [f64; 2]) -> bool {
         let x0 = self.top_left[0];
         let y1 = self.top_left[1];
@@ -352,10 +367,12 @@ where
         let row_top_y = top_left[1] - TITLE_HEIGHT - row_index * ROW_HEIGHT;
         rows.push(NodeRow::Property(PropLayout {
             name: p.name.clone(),
+            display_label: p.display_label.clone(),
             min: p.min,
             max: p.max,
             current: p.current.clone(),
             editor: p.editor,
+            editor_kind: p.editor_kind.clone(),
             top_left: [top_left[0] + 1.0, row_top_y],
             size: [NODE_WIDTH - 2.0, ROW_HEIGHT],
         }));
@@ -378,10 +395,12 @@ fn input_editor_layout(top_left: [f64; 2], row_index: f64, p: &PropertyView) -> 
     let editor_x = top_left[0] + NODE_WIDTH - EDITOR_WIDTH - SOCKET_RADIUS;
     PropLayout {
         name: p.name.clone(),
+        display_label: p.display_label.clone(),
         min: p.min,
         max: p.max,
         current: p.current.clone(),
         editor: p.editor,
+        editor_kind: p.editor_kind.clone(),
         top_left: [editor_x, row_top_y],
         size: [EDITOR_WIDTH, ROW_HEIGHT],
     }

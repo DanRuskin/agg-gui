@@ -1,12 +1,23 @@
-//! `ValueEditorWidget` — the inline number / colour / bool pill drawn
-//! on an input or property row.  Extracted from `nodes.rs` to keep
-//! that file under the project's 800-line cap.
+//! `ValueEditorWidget` — the inline editor for a property row.
+//!
+//! Painting routes through agg-gui's per-`EditorKind` row renderers
+//! ([`agg_gui::widgets::paint_row`]). The widget itself owns layout
+//! (where the row sits inside the node) and value translation
+//! ([`PropertyValue`] → [`RowValue`]); the renderer paints label +
+//! editor according to the kind.
+//!
+//! The widget is intentionally narrow — drag interaction is still
+//! routed through `NodeEditor` because the canvas-space hit-testing
+//! already exists there. A future pass can move event handling into
+//! per-kind widgets too.
 
-use agg_gui::{Color, DrawCtx, Event, EventResult, Rect, Size, Widget, WidgetBase};
+use agg_gui::{
+    widgets::{paint_editor_only, paint_row, EditorKind, RowValue},
+    DrawCtx, Event, EventResult, Rect, Size, Widget, WidgetBase,
+};
 
 use super::node_paint_context::NodePaintContext;
-use super::nodes::{LABEL_FONT_SIZE, ROW_PADDING_X};
-use crate::draw::{PropLayout, SOCKET_RADIUS};
+use crate::draw::PropLayout;
 use crate::model::PropertyValue;
 
 pub struct ValueEditorWidget {
@@ -14,9 +25,11 @@ pub struct ValueEditorWidget {
     base: WidgetBase,
     children: Vec<Box<dyn Widget>>,
     prop: PropLayout,
-    /// When `true` the editor draws its own row label on the left side —
-    /// used for unbound property rows that don't have a sibling
-    /// `RowLabelWidget`.
+    /// `true` when the row is full-width and the renderer owns the
+    /// label (unbound property rows). `false` when a sibling
+    /// `RowLabelWidget` paints the label next to the socket dot
+    /// (bound input rows) — the renderer skips label paint to avoid
+    /// double-drawing.
     show_label: bool,
     ctx: NodePaintContext,
 }
@@ -29,15 +42,16 @@ impl ValueEditorWidget {
         ctx: NodePaintContext,
         show_label: bool,
     ) -> Self {
-        // `node_w` / `row_h` are screen-space; the PropLayout still
-        // carries canvas-space metrics, so we scale them to match.
+        // Full-width row when the renderer owns its own label.
+        // Bound-input editors still get a narrow inset (they sit on
+        // an input socket's row alongside the socket's `RowLabelWidget`).
         let s = ctx.scale;
-        let width = prop.size[0] * s;
-        let row_left = node_w - width - SOCKET_RADIUS * s;
         let inset_px = 1.0 * s;
         let (x, w) = if show_label {
             (inset_px, node_w - 2.0 * inset_px)
         } else {
+            let width = prop.size[0] * s;
+            let row_left = node_w - width - crate::draw::SOCKET_RADIUS * s;
             (row_left, width)
         };
         let bounds = Rect::new(x, inset_px, w, row_h - 2.0 * inset_px);
@@ -48,6 +62,33 @@ impl ValueEditorWidget {
             prop,
             show_label,
             ctx,
+        }
+    }
+
+    /// Translate the row's [`PropertyValue`] into the agg-gui
+    /// [`RowValue`] borrow form so the dispatcher can paint it.
+    fn row_value(&self) -> RowValue<'_> {
+        match &self.prop.current {
+            PropertyValue::Number(n) => RowValue::Number(*n),
+            PropertyValue::Bool(b) => RowValue::Bool(*b),
+            PropertyValue::Color(c) => RowValue::Color(*c),
+            PropertyValue::Other { display } => RowValue::Display(display.as_str()),
+        }
+    }
+
+    /// Resolve which [`EditorKind`] this row should paint with. Hosts
+    /// that forward a full schema-side kind get exactly what they
+    /// declared; rows without one fall back to a sensible default
+    /// inferred from the value type.
+    fn resolved_editor_kind(&self) -> EditorKind {
+        if let Some(kind) = &self.prop.editor_kind {
+            return kind.clone();
+        }
+        match &self.prop.current {
+            PropertyValue::Number(_) => EditorKind::NumberDrag(Default::default()),
+            PropertyValue::Bool(_) => EditorKind::Toggle,
+            PropertyValue::Color(_) => EditorKind::ColorPicker,
+            PropertyValue::Other { .. } => EditorKind::Display,
         }
     }
 }
@@ -77,7 +118,8 @@ impl Widget for ValueEditorWidget {
     fn properties(&self) -> Vec<(&'static str, String)> {
         vec![
             ("property", self.prop.name.clone()),
-            ("value", format_value(&self.prop.current)),
+            ("label", self.prop.label().to_string()),
+            ("editor_kind", format!("{:?}", self.resolved_editor_kind())),
         ]
     }
     fn layout(&mut self, _: Size) -> Size {
@@ -89,109 +131,22 @@ impl Widget for ValueEditorWidget {
         if w <= 0.0 || h <= 0.0 {
             return;
         }
-        let s = self.ctx.scale;
-        let body = self.ctx.palette.node_body;
-        let body_lum = 0.299 * body.r + 0.587 * body.g + 0.114 * body.b;
-        let pill_bg = if body_lum < 0.5 {
-            Color::rgba(0.15, 0.16, 0.20, 0.9)
-        } else {
-            Color::rgba(0.93, 0.93, 0.94, 0.9)
-        };
-
-        // Bool rows get a toggle-switch pill — a rounded track with a
-        // circular thumb. Far more readable than the previous
-        // "true" / "false" text and matches the MatterCAD-inspired
-        // panel look.
-        if let PropertyValue::Bool(b) = &self.prop.current {
-            let track_h = (h * 0.7).min(h - 4.0 * s);
-            let track_y = (h - track_h) * 0.5;
-            // Track colour follows the on/off state: filled accent
-            // colour when on, neutral grey when off.
-            let track_off = if body_lum < 0.5 {
-                Color::rgba(0.30, 0.32, 0.36, 1.0)
-            } else {
-                Color::rgba(0.82, 0.83, 0.85, 1.0)
-            };
-            let track_on = Color::rgba(0.28, 0.55, 0.95, 1.0);
-            ctx.set_fill_color(if *b { track_on } else { track_off });
-            ctx.begin_path();
-            ctx.rounded_rect(0.0, track_y, w, track_h, track_h * 0.5);
-            ctx.fill();
-
-            // Thumb — a white circle on the right when on, on the
-            // left when off. Slight inset from the track edge.
-            let thumb_d = (track_h - 4.0 * s).max(6.0 * s);
-            let thumb_y = (h - thumb_d) * 0.5;
-            let thumb_x = if *b {
-                (w - thumb_d - 2.0 * s).max(0.0)
-            } else {
-                2.0 * s
-            };
-            ctx.set_fill_color(Color::rgba(0.98, 0.98, 0.98, 1.0));
-            ctx.begin_path();
-            ctx.rounded_rect(thumb_x, thumb_y, thumb_d, thumb_d, thumb_d * 0.5);
-            ctx.fill();
-            return;
-        }
-
-        ctx.set_fill_color(pill_bg);
-        ctx.begin_path();
-        ctx.rounded_rect(0.0, 0.0, w, h, 3.0 * s);
-        ctx.fill();
-
-        if let PropertyValue::Color(c) = &self.prop.current {
-            let inset = 3.0 * s;
-            ctx.set_fill_color(Color::rgba(c[0], c[1], c[2], c[3]));
-            ctx.begin_path();
-            ctx.rounded_rect(
-                inset,
-                inset,
-                (w - 2.0 * inset).max(0.0),
-                (h - 2.0 * inset).max(0.0),
-                2.0 * s,
-            );
-            ctx.fill();
-            return;
-        }
-
-        // Optional left-aligned label (only for unbound property rows).
+        let area = Rect::new(0.0, 0.0, w, h);
+        let kind = self.resolved_editor_kind();
+        let value = self.row_value();
+        // Bound input rows already have a `RowLabelWidget` painting
+        // the label next to the socket dot — skip label paint here
+        // so we don't double-draw it. Unbound property rows own the
+        // whole row width and ask for the label inside.
         if self.show_label {
-            ctx.set_fill_color(self.ctx.palette.label_text);
-            ctx.set_font_size(LABEL_FONT_SIZE * s);
-            ctx.fill_text(&self.prop.name, ROW_PADDING_X * s, h * 0.5 - 4.0 * s);
+            paint_row(ctx, area, self.prop.label(), value, &kind, self.ctx.scale);
+        } else {
+            paint_editor_only(ctx, area, value, &kind, self.ctx.scale);
         }
-
-        let value_str = format_value(&self.prop.current);
-        if value_str.is_empty() {
-            return;
-        }
-        ctx.set_fill_color(self.ctx.palette.label_text);
-        ctx.set_font_size(LABEL_FONT_SIZE * s);
-        let est = (value_str.len() as f64) * 6.0 * s;
-        let x = (w - est - 6.0 * s).max(0.0);
-        ctx.fill_text(&value_str, x, h * 0.5 - 4.0 * s);
     }
     fn on_event(&mut self, _: &Event) -> EventResult {
         // Drag-edit dispatch still happens through `NodeEditor` because
         // canvas-space hit-testing already exists there.
         EventResult::Ignored
-    }
-}
-
-fn format_value(v: &PropertyValue) -> String {
-    match v {
-        PropertyValue::Number(n) => {
-            if n.fract().abs() < 1e-6 {
-                format!("{}", *n as i64)
-            } else {
-                format!("{:.3}", n)
-            }
-        }
-        // Bool rows are drawn as a toggle-switch pill (see `paint`); the
-        // text formatter never gets called for Bool. Returning empty
-        // string keeps the contract simple if a caller does invoke it.
-        PropertyValue::Bool(_) => String::new(),
-        PropertyValue::Color(_) => String::new(),
-        PropertyValue::Other { display } => display.clone(),
     }
 }

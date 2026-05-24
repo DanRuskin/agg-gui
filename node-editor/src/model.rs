@@ -125,6 +125,11 @@ pub struct PropertyView {
     /// editor (e.g. a colour wheel) instead of the default inline
     /// behaviour.  Hosts forward their schema's editor metadata here.
     pub editor: Option<EditorHint>,
+    /// Full schema-side editor description — used by the per-kind row
+    /// renderers (`paint_row` in agg-gui). When `None` the canvas
+    /// falls back to its default text/value pill paint. Hosts
+    /// declaring a `EditorKind::Slider` here get a slider row, etc.
+    pub editor_kind: Option<agg_gui::widgets::EditorKind>,
 }
 
 impl PropertyView {

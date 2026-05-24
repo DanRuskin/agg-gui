@@ -32,5 +32,9 @@
 //! including section headers, advanced gating, and tooltips.
 
 mod editor;
+mod render;
+mod value;
 
 pub use editor::{EditorKind, NodeFieldAttrs, NumberAttrs, VisibleWhen};
+pub use render::{paint_editor_only, paint_row};
+pub use value::RowValue;
