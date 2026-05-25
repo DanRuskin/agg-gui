@@ -573,10 +573,20 @@ impl Widget for NodeEditor {
         // child paint pass sees the editor's normal local space —
         // NodeWidget bounds are already in screen-space (pre-baked by
         // `layout`) so they don't want this transform composed on
-        // top.  Order matters: scale first, then translate.
+        // top.
+        //
+        // Order matters: `translate(offset)` first, then `scale(s)`.
+        // ctx transforms right-multiply, so `T then S` produces the
+        // matrix `T * S` — applied to a canvas point P: `T * S * P =
+        // scale * P + offset`, exactly matching the screen position
+        // `NodeWidget::from_layout_transformed` bakes for the
+        // socket-dot widgets. Reversing the order applies `offset *
+        // scale` instead and the bezier endpoints drift away from the
+        // dots whenever `canvas_offset` is non-zero or `canvas_scale`
+        // is not 1.
         ctx.save();
-        ctx.scale(self.canvas_scale, self.canvas_scale);
         ctx.translate(self.canvas_offset[0], self.canvas_offset[1]);
+        ctx.scale(self.canvas_scale, self.canvas_scale);
 
         let inv_scale = 1.0 / self.canvas_scale;
         let visible_min = [
