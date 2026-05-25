@@ -58,6 +58,15 @@ pub fn paint_row(
     editor: &EditorKind,
     scale: f64,
 ) {
+    // Empty label = renderer gets the full row width. This is what
+    // MatterCAD's `[DisplayName("")]` + `[ReadOnly]` combo on a string
+    // row produces: a paragraph that wraps across the entire node
+    // body. Splitting label/editor when there's no label would clip
+    // the text to half the row for no reason.
+    if label.is_empty() {
+        dispatch_editor(ctx, area, value, editor, scale);
+        return;
+    }
     let (label_rect, editor_rect) = split_label_editor(area, scale);
     paint_label(ctx, label_rect, label, scale);
     dispatch_editor(ctx, editor_rect, value, editor, scale);

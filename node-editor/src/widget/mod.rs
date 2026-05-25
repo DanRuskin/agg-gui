@@ -13,6 +13,7 @@
 //! under the 800-line guardrail.
 
 mod events;
+mod fingerprint;
 mod host_hooks;
 mod node_paint_context;
 pub mod nodes;
@@ -41,9 +42,11 @@ use agg_gui::{
 
 use crate::draw::{
     draw_bezier_connection, draw_canvas_grid, layout_node_with_state, CanvasPalette,
-    NodeLayoutInfo, NodeRow, PropLayout, SocketLayout, SocketSide,
+    NodeLayoutInfo, PropLayout, SocketLayout, SocketSide,
 };
-use crate::model::{NodeGraphModel, NodeId, NoodleView, PropertyValue, SocketTypeId};
+use crate::model::{NodeGraphModel, NodeId, NoodleView, SocketTypeId};
+
+use fingerprint::hash_row;
 use crate::widget::nodes::{NodePaintContext, NodeWidget};
 
 const ZOOM_MIN: f64 = 0.15;
@@ -376,16 +379,6 @@ impl NodeEditor {
             }
         }
         None
-    }
-
-    /// Action callback for the right-click popup — handles
-    /// `"add.{type_id}"` entries by routing through the model.
-    fn handle_popup_action(&mut self, action: &str) {
-        if let Some(type_id) = action.strip_prefix("add.") {
-            let pos = self.popup_canvas_pos;
-            let mut model = self.model.lock().unwrap();
-            let _ = model.add_node(type_id, pos);
-        }
     }
 
     /// Hash of every input that affects how the children's paint looks
@@ -782,49 +775,3 @@ impl Widget for NodeEditor {
     }
 }
 
-/// Hash a single composed row's user-visible state into the
-/// canvas's paint fingerprint. Property values must participate so
-/// that drag-mutating a slider invalidates the cached child widget
-/// tree and the pill repaints with the fresh number.
-fn hash_row<H: std::hash::Hasher>(row: &NodeRow, h: &mut H) {
-    use std::hash::Hash;
-    match row {
-        NodeRow::Output(s) | NodeRow::Input { socket: s, .. } => {
-            s.name.hash(h);
-            s.display_label.hash(h);
-            s.socket_type.0.hash(h);
-            if let NodeRow::Input { editor: Some(e), .. } = row {
-                hash_prop_layout(e, h);
-            }
-        }
-        NodeRow::Property(p) => {
-            hash_prop_layout(p, h);
-        }
-    }
-}
-
-fn hash_prop_layout<H: std::hash::Hasher>(p: &PropLayout, h: &mut H) {
-    use std::hash::Hash;
-    p.name.hash(h);
-    p.display_label.hash(h);
-    match &p.current {
-        PropertyValue::Number(n) => {
-            0u8.hash(h);
-            n.to_bits().hash(h);
-        }
-        PropertyValue::Bool(b) => {
-            1u8.hash(h);
-            b.hash(h);
-        }
-        PropertyValue::Color(c) => {
-            2u8.hash(h);
-            for v in c.iter() {
-                v.to_bits().hash(h);
-            }
-        }
-        PropertyValue::Other { display } => {
-            3u8.hash(h);
-            display.hash(h);
-        }
-    }
-}

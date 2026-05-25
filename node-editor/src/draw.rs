@@ -35,6 +35,8 @@ use crate::model::{NodeGraphModel, NodeId, NodeView, PropertyValue, PropertyView
 
 // --- Layout constants ------------------------------------------------------
 
+/// Minimum width every node renders at. Nodes whose labels need
+/// more space auto-grow past this — see [`compute_node_width`].
 pub const NODE_WIDTH: f64 = 200.0;
 pub const TITLE_HEIGHT: f64 = 26.0;
 pub const ROW_HEIGHT: f64 = 22.0;
@@ -228,6 +230,36 @@ impl NodeLayoutInfo {
     }
 }
 
+/// Estimated rendered width of one ASCII glyph at the body font
+/// size. Matches the constant used throughout the renderers; kept in
+/// one place so width computation stays consistent.
+const GLYPH_WIDTH: f64 = 6.5;
+
+/// Compute the auto-sized width for `node`. The width is the bigger of
+/// [`NODE_WIDTH`] and "longest label + reserved editor area + edge
+/// padding" so a node like Extrude (with a `Bottom Segments` row)
+/// never clips its label into the editor pill.
+fn compute_node_width(node: &NodeView) -> f64 {
+    let mut max_label = node.display_name.chars().count();
+    for s in &node.outputs {
+        max_label = max_label.max(s.label().chars().count());
+    }
+    for s in &node.inputs {
+        max_label = max_label.max(s.label().chars().count());
+    }
+    for p in &node.properties {
+        max_label = max_label.max(p.label().chars().count());
+    }
+    // Padding budget:
+    //   - 12 px socket dot + ROW_PADDING_X gap on the left
+    //   - EDITOR_WIDTH for the inline pill on the right
+    //   - 16 px of right-edge breathing room so the pill isn't flush
+    //     against the node border
+    let label_w = max_label as f64 * GLYPH_WIDTH + 24.0;
+    let computed = label_w + EDITOR_WIDTH + 16.0;
+    computed.max(NODE_WIDTH)
+}
+
 /// Compute layout for a single node. The node's `position` is its
 /// top-left in canvas-space. Rows stack from the top under the title
 /// bar in this order: output sockets, input sockets, then unbound
@@ -261,6 +293,7 @@ where
     F: FnMut(&str) -> bool,
 {
     let top_left = node.position;
+    let node_width = compute_node_width(node);
 
     if collapsed {
         // Single-row layout: just the title bar. Sockets collapse to
@@ -275,7 +308,7 @@ where
                 name: s.name.clone(),
                 display_label: s.label().to_string(),
                 socket_type: s.socket_type,
-                center: [top_left[0] + NODE_WIDTH, center_y],
+                center: [top_left[0] + node_width, center_y],
             }));
         }
         for s in &node.inputs {
@@ -296,7 +329,7 @@ where
         return NodeLayoutInfo {
             node_id: node.id,
             top_left,
-            size: [NODE_WIDTH, height],
+            size: [node_width, height],
             rows,
             display_name: node.display_name.clone(),
             category: node.category.clone(),
@@ -304,103 +337,128 @@ where
         };
     }
 
-    // Partition properties by bound input. A property whose
-    // `bound_input` names an input socket that doesn't exist on this
-    // node falls back to being treated as unbound — the property still
-    // renders as its own row instead of vanishing. This handles two
-    // common cases gracefully:
-    //   1. Cached instances minted under an older schema that didn't
-    //      yet have the matching sockets.
-    //   2. Schema declares a default `bound_input` but the host node
-    //      type opted out of adding the socket.
-    let input_names: std::collections::HashSet<&str> =
-        node.inputs.iter().map(|s| s.name.as_str()).collect();
-    let bound_properties: std::collections::HashMap<&str, &PropertyView> = node
+    // Row ordering: the node's `properties()` declaration order is the
+    // source of truth for body row order. Inputs sockets without a
+    // matching property (e.g. Extrude's `Paths` geometry input) stack
+    // at the top of the body — the conventional spot for inputs that
+    // don't carry an inline fallback. Everything else flows in the
+    // order the schema declared it, so a node like Cylinder can place
+    // its `advanced` toggle right above the rows that toggle gates.
+    let input_socket_by_name: std::collections::HashMap<&str, &crate::model::SocketView> =
+        node.inputs.iter().map(|s| (s.name.as_str(), s)).collect();
+    let bound_input_names: std::collections::HashSet<&str> = node
         .properties
         .iter()
         .filter_map(|p| {
             p.bound_input
                 .as_deref()
-                .filter(|name| input_names.contains(name))
-                .map(|s| (s, p))
+                .filter(|name| input_socket_by_name.contains_key(name))
         })
         .collect();
-    let unbound_props: Vec<&PropertyView> = node
-        .properties
+    let bare_inputs: Vec<&crate::model::SocketView> = node
+        .inputs
         .iter()
-        .filter(|p| match p.bound_input.as_deref() {
-            None => true,
-            Some(name) => !input_names.contains(name),
-        })
+        .filter(|s| !bound_input_names.contains(s.name.as_str()))
         .collect();
 
     let output_rows = node.outputs.len();
-    let input_rows = node.inputs.len();
-    let prop_rows = unbound_props.len();
-    let total_rows = (output_rows + input_rows + prop_rows) as f64;
-    let height = TITLE_HEIGHT + total_rows * ROW_HEIGHT + NODE_BOTTOM_PAD;
+    let bare_input_rows = bare_inputs.len();
+    let prop_rows = node.properties.len();
 
-    let mut rows: Vec<NodeRow> = Vec::with_capacity(output_rows + input_rows + prop_rows);
-    let mut row_index = 0.0;
+    let mut rows: Vec<NodeRow> = Vec::with_capacity(output_rows + bare_input_rows + prop_rows);
+    // Cumulative offset from the body's top edge in screen-space-equivalent
+    // canvas units. Rows can claim more than one `ROW_HEIGHT` (e.g. a
+    // read-only hint message wraps to multiple lines) so the layout
+    // tracks an explicit Y instead of multiplying a row index.
+    let mut y_offset = 0.0_f64;
 
-    // Outputs first.
+    // Outputs first — fixed row height.
     for s in &node.outputs {
-        let center_y = top_left[1] - TITLE_HEIGHT - (row_index + 0.5) * ROW_HEIGHT;
+        let center_y = top_left[1] - TITLE_HEIGHT - y_offset - ROW_HEIGHT * 0.5;
         rows.push(NodeRow::Output(SocketLayout {
             side: SocketSide::Output,
             name: s.name.clone(),
             display_label: s.label().to_string(),
             socket_type: s.socket_type,
-            center: [top_left[0] + NODE_WIDTH, center_y],
+            center: [top_left[0] + node_width, center_y],
         }));
-        row_index += 1.0;
+        y_offset += ROW_HEIGHT;
     }
 
-    // Inputs next, with optional bound editors.
-    for s in &node.inputs {
-        let center_y = top_left[1] - TITLE_HEIGHT - (row_index + 0.5) * ROW_HEIGHT;
-        let socket = SocketLayout {
-            side: SocketSide::Input,
-            name: s.name.clone(),
-            display_label: s.label().to_string(),
-            socket_type: s.socket_type,
-            center: [top_left[0], center_y],
-        };
-        let editor = bound_properties.get(s.name.as_str()).and_then(|p| {
+    // Bare input sockets (no matching property) — render socket + label,
+    // no inline editor. Position retained from the input list order.
+    for s in bare_inputs {
+        let center_y = top_left[1] - TITLE_HEIGHT - y_offset - ROW_HEIGHT * 0.5;
+        rows.push(NodeRow::Input {
+            socket: SocketLayout {
+                side: SocketSide::Input,
+                name: s.name.clone(),
+                display_label: s.label().to_string(),
+                socket_type: s.socket_type,
+                center: [top_left[0], center_y],
+            },
+            editor: None,
+        });
+        y_offset += ROW_HEIGHT;
+    }
+
+    // Properties in declaration order. Each one becomes either:
+    //   - an Input row (with bound editor) when its `bound_input`
+    //     matches a real input socket — gives the row the colored
+    //     socket dot + socket-side label.
+    //   - a Property row when no socket matches — full-width row with
+    //     label + editor owned by the renderer.
+    //
+    // Per-row height comes from `row_height_for_property` so multi-line
+    // read-only strings get a taller row instead of clipping into the
+    // next one.
+    for p in &node.properties {
+        let row_h = row_height_for_property(p);
+        let bound_socket = p
+            .bound_input
+            .as_deref()
+            .and_then(|name| input_socket_by_name.get(name).copied());
+        if let Some(s) = bound_socket {
+            let center_y = top_left[1] - TITLE_HEIGHT - y_offset - ROW_HEIGHT * 0.5;
+            let socket = SocketLayout {
+                side: SocketSide::Input,
+                name: s.name.clone(),
+                display_label: s.label().to_string(),
+                socket_type: s.socket_type,
+                center: [top_left[0], center_y],
+            };
             // Hide the inline editor when the socket is connected — the
             // upstream value wins. Static layout reserves the slot
             // either way; we just drop the hit-rect.
-            if is_input_connected(&s.name) {
+            let editor = if is_input_connected(&s.name) {
                 None
             } else {
-                Some(input_editor_layout(top_left, row_index, p))
-            }
-        });
-        rows.push(NodeRow::Input { socket, editor });
-        row_index += 1.0;
+                Some(input_editor_layout_y(top_left, y_offset, p, node_width))
+            };
+            rows.push(NodeRow::Input { socket, editor });
+        } else {
+            let row_top_y = top_left[1] - TITLE_HEIGHT - y_offset;
+            rows.push(NodeRow::Property(PropLayout {
+                name: p.name.clone(),
+                display_label: p.display_label.clone(),
+                min: p.min,
+                max: p.max,
+                current: p.current.clone(),
+                editor: p.editor,
+                editor_kind: p.editor_kind.clone(),
+                top_left: [top_left[0] + 1.0, row_top_y],
+                size: [node_width - 2.0, row_h],
+            }));
+        }
+        y_offset += row_h;
     }
 
-    // Unbound properties last.
-    for p in unbound_props {
-        let row_top_y = top_left[1] - TITLE_HEIGHT - row_index * ROW_HEIGHT;
-        rows.push(NodeRow::Property(PropLayout {
-            name: p.name.clone(),
-            display_label: p.display_label.clone(),
-            min: p.min,
-            max: p.max,
-            current: p.current.clone(),
-            editor: p.editor,
-            editor_kind: p.editor_kind.clone(),
-            top_left: [top_left[0] + 1.0, row_top_y],
-            size: [NODE_WIDTH - 2.0, ROW_HEIGHT],
-        }));
-        row_index += 1.0;
-    }
+    let height = TITLE_HEIGHT + y_offset + NODE_BOTTOM_PAD;
 
     NodeLayoutInfo {
         node_id: node.id,
         top_left,
-        size: [NODE_WIDTH, height],
+        size: [node_width, height],
         rows,
         display_name: node.display_name.clone(),
         category: node.category.clone(),
@@ -408,9 +466,34 @@ where
     }
 }
 
-fn input_editor_layout(top_left: [f64; 2], row_index: f64, p: &PropertyView) -> PropLayout {
-    let row_top_y = top_left[1] - TITLE_HEIGHT - row_index * ROW_HEIGHT;
-    let editor_x = top_left[0] + NODE_WIDTH - EDITOR_WIDTH - SOCKET_RADIUS;
+/// Pick the row height a given property wants — multi-line read-only
+/// strings (MatterCAD's `[ReadOnly] string` rows) get two rows of
+/// vertical real estate so a wrapped hint message fits without
+/// clipping the second line.
+fn row_height_for_property(p: &PropertyView) -> f64 {
+    use agg_gui::widgets::EditorKind;
+    let is_read_only = matches!(&p.editor_kind, Some(EditorKind::StringReadOnly));
+    if is_read_only {
+        // Two rows worth — enough headroom for the typical
+        // ~60-character hint message at the auto-sized node width.
+        // The renderer's word-wrap fills the available height.
+        ROW_HEIGHT * 2.0
+    } else {
+        ROW_HEIGHT
+    }
+}
+
+/// Position the inline editor pill on a bound-input row at the given
+/// cumulative Y offset from the body top. Replaces the older
+/// `input_editor_layout` which assumed every row was `ROW_HEIGHT`.
+fn input_editor_layout_y(
+    top_left: [f64; 2],
+    y_offset: f64,
+    p: &PropertyView,
+    node_width: f64,
+) -> PropLayout {
+    let row_top_y = top_left[1] - TITLE_HEIGHT - y_offset;
+    let editor_x = top_left[0] + node_width - EDITOR_WIDTH - SOCKET_RADIUS;
     PropLayout {
         name: p.name.clone(),
         display_label: p.display_label.clone(),
@@ -426,72 +509,7 @@ fn input_editor_layout(top_left: [f64; 2], row_index: f64, p: &PropertyView) -> 
 
 // --- Drawing ---------------------------------------------------------------
 
-/// Theme palette used by the canvas. Built from agg-gui's current visuals
-/// so light / dark mode toggles flow through automatically. Hosts that
-/// want different colours can construct one of these manually and pass
-/// it via [`crate::NodeEditor::set_palette`].
-pub struct CanvasPalette {
-    pub canvas_bg: Color,
-    pub canvas_grid: Color,
-    pub node_body: Color,
-    pub node_body_selected: Color,
-    pub node_border: Color,
-    /// Border colour for the currently-selected node — pulled from
-    /// `Visuals::accent` so the View → Color swatch shows up clearly
-    /// in the editor.
-    pub node_border_selected: Color,
-    pub node_title_fallback: Color,
-    pub label_text: Color,
-}
-
-impl CanvasPalette {
-    /// Build the palette from agg-gui's current visuals — adapts to
-    /// light or dark mode automatically.
-    pub fn from_visuals(v: &agg_gui::theme::Visuals) -> Self {
-        let dark = 0.299 * v.bg_color.r + 0.587 * v.bg_color.g + 0.114 * v.bg_color.b < 0.5;
-        let canvas_bg = if dark {
-            Color::rgb(0.13, 0.14, 0.16)
-        } else {
-            Color::rgb(0.96, 0.96, 0.97)
-        };
-        let grid_alpha = if dark { 0.06 } else { 0.30 };
-        let canvas_grid = if dark {
-            Color::rgba(1.0, 1.0, 1.0, grid_alpha)
-        } else {
-            Color::rgba(0.0, 0.0, 0.0, grid_alpha * 0.3)
-        };
-        let node_body = if dark {
-            Color::rgb(0.22, 0.23, 0.27)
-        } else {
-            Color::rgb(0.99, 0.99, 0.99)
-        };
-        let node_body_selected = if dark {
-            Color::rgb(0.28, 0.32, 0.38)
-        } else {
-            Color::rgb(0.92, 0.94, 1.0)
-        };
-        let node_border = if dark {
-            Color::rgba(0.0, 0.0, 0.0, 0.5)
-        } else {
-            Color::rgba(0.0, 0.0, 0.0, 0.18)
-        };
-        Self {
-            canvas_bg,
-            canvas_grid,
-            node_body,
-            node_body_selected,
-            node_border,
-            node_border_selected: v.accent,
-            node_title_fallback: v.accent,
-            label_text: v.text_color,
-        }
-    }
-
-    /// Backwards-compat shim used by simple call sites.
-    pub fn dark() -> Self {
-        Self::from_visuals(&agg_gui::theme::Visuals::dark())
-    }
-}
+pub use crate::palette::CanvasPalette;
 
 /// Draw an infinite grid backdrop. `cell_size` is in canvas units.
 pub fn draw_canvas_grid(

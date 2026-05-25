@@ -76,6 +76,12 @@ impl NodeEditor {
                             &prop.name,
                             PropertyValue::Bool(!b),
                         );
+                        // Toggle flip changes both the editor's pill
+                        // paint AND the visible-row set (other rows
+                        // gate on this property's value via the host
+                        // visibility hook). Force a redraw so the
+                        // change actually shows up on screen.
+                        agg_gui::animation::request_draw();
                         return EventResult::Consumed;
                     }
                     // Color row with the `Color` editor hint opens the
@@ -137,6 +143,19 @@ impl NodeEditor {
             }
             MouseButton::Right => {
                 self.popup_canvas_pos = canvas_pos;
+                // Right-click on a node selects it and offers a
+                // node-context menu (Delete + Add Node submenu); on
+                // empty canvas, the plain Add-Node menu opens.
+                if let Some(node_id) = self.hit_node(&layouts, canvas_pos) {
+                    if !modifiers.shift {
+                        self.selected.clear();
+                    }
+                    self.selected.insert(node_id);
+                    self.notify_primary_selection(Some(node_id));
+                    self.rebuild_popup_for_node_context();
+                } else {
+                    self.rebuild_popup_for_empty_canvas();
+                }
                 self.popup.open_at(pos);
                 EventResult::Consumed
             }
@@ -371,7 +390,10 @@ impl NodeEditor {
                 self.space_held = true;
                 EventResult::Consumed
             }
-            Key::Delete => {
+            Key::Delete | Key::Backspace => {
+                // Backspace is the canonical "delete selection" key on
+                // macOS; Delete on Windows / Linux. Accepting both keeps
+                // the muscle memory consistent across platforms.
                 if self.selected.is_empty() {
                     return EventResult::Ignored;
                 }

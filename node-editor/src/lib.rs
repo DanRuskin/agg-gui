@@ -39,6 +39,7 @@ pub mod draw;
 #[cfg(test)]
 mod draw_tests;
 pub mod model;
+mod palette;
 pub mod widget;
 
 pub use draw::CanvasPalette;
