@@ -57,6 +57,7 @@ pub(crate) fn paint_editor(
 /// Hit-rect for the toggle pill — hosts use this to map a click on
 /// the row into a toggle flip. Mirrors the geometry in
 /// [`paint_editor`].
+#[allow(dead_code)]
 pub fn hit_rect(editor_area: Rect, scale: f64) -> Rect {
     let track_w = TRACK_W * scale;
     let track_h = TRACK_H * scale;

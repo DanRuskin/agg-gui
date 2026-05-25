@@ -579,6 +579,7 @@ pub(crate) mod test_hook {
     use crate::animation::Tween;
     use state::KeyboardState;
 
+    #[allow(dead_code)]
     pub fn force_layer(layer: Layer) {
         with_state_mut(|s| s.current_layer = layer);
     }

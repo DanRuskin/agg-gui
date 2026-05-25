@@ -31,6 +31,7 @@ pub(crate) fn paint_editor(
 
 /// Hit-rect for the matrix pill, for hosts wiring click → open
 /// transform popup.
+#[allow(dead_code)]
 pub fn hit_rect(editor_area: Rect, scale: f64) -> Rect {
     editor_pill_rect(editor_area, scale)
 }

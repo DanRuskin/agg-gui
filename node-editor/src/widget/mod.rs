@@ -44,7 +44,7 @@ use agg_gui::{
 use crate::draw::{
     layout_node_with_state, CanvasPalette, NodeLayoutInfo, PropLayout, SocketLayout, SocketSide,
 };
-use crate::model::{NodeGraphModel, NodeId, NoodleView, SocketTypeId};
+use crate::model::{NodeGraphModel, NodeId, SocketTypeId};
 
 use fingerprint::hash_row;
 use crate::widget::nodes::{NodePaintContext, NodeWidget};
@@ -98,6 +98,7 @@ enum CanvasState {
     },
 }
 
+#[cfg(test)]
 pub(crate) use hover::resolve_noodle_endpoints;
 
 /// The reusable node-editor widget.

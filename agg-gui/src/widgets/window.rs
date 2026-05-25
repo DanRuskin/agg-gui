@@ -57,7 +57,7 @@ use crate::event::{Event, EventResult, MouseButton};
 use crate::geometry::{Point, Rect, Size};
 use crate::layout_props::{HAnchor, Insets, VAnchor, WidgetBase};
 use crate::text::Font;
-use crate::widget::{paint_subtree, BackbufferKind, BackbufferSpec, BackbufferState, Widget};
+use crate::widget::{BackbufferKind, BackbufferSpec, BackbufferState, Widget};
 use crate::widgets::window_title_bar::{TitleBarView, WindowTitleBar};
 
 /// Round all four components of a Rect to the nearest integer so widgets

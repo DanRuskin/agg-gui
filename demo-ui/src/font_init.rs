@@ -20,7 +20,6 @@ use crate::windows;
 /// state-persistence layer.
 pub struct FontInitCells {
     pub font_name: Rc<RefCell<Option<String>>>,
-    pub font_index: Rc<Cell<usize>>,
     pub font_size_scale: Rc<Cell<f64>>,
     pub lcd_enabled: Rc<Cell<bool>>,
     pub hinting_enabled: Rc<Cell<bool>>,
@@ -117,7 +116,6 @@ pub fn init(initial_state: Option<&SavedState>, platform: PlatformHooks) -> Font
 
     FontInitCells {
         font_name,
-        font_index,
         font_size_scale,
         lcd_enabled,
         hinting_enabled,

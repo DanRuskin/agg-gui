@@ -160,7 +160,7 @@ fn letters_layer(shifted: bool) -> Layout {
         ('p', 'P'),
     ]));
 
-    let mut row2 = row_keys(&[
+    let row2 = row_keys(&[
         ('a', 'A'),
         ('s', 'S'),
         ('d', 'D'),

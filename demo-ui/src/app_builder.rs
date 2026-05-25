@@ -132,7 +132,6 @@ pub fn build_demo_ui(
     };
     let crate::font_init::FontInitCells {
         font_name: font_name_cell,
-        font_index: _,
         font_size_scale: font_size_scale_cell,
         lcd_enabled: lcd_enabled_cell,
         hinting_enabled: hinting_enabled_cell,
